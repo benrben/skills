@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "arch-map": {
+      "command": "/Users/benreich/skills/skills/engineering/improve-codebase-architecture/arch-map/.venv/bin/python",
+      "args": ["-m", "arch_map.server"]
+    }
+  }
+}

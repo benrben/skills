@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>arch-map · network</title>
+    <style>
+      /* Self-contained — no external CDNs, so it renders inside a sandboxed MCP Apps iframe. */
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: #fafaf9; color: #0f172a;
+        font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      .wrap { max-width: 1040px; margin: 0 auto; padding: 18px 20px 28px; }
+      header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+        border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; }
+      h1 { font: 600 22px/1 ui-serif, Georgia, serif; margin: 0; letter-spacing: -.01em; }
+      h1 .muted { color: #94a3b8; font-weight: 400; }
+      .sub { color: #64748b; font-size: 12px; margin-top: 4px; }
+      .count { text-align: right; }
+      .count .n { font: 600 30px/1 ui-serif, Georgia, serif; color: #047857; }
+      .count .l { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; }
+
+      .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 14px 0 6px; }
+      .chip { font-size: 12px; padding: 4px 11px; border: 1px solid #cbd5e1; border-radius: 999px;
+        background: #fff; cursor: pointer; user-select: none; transition: all .15s; }
+      .chip:hover { border-color: #94a3b8; }
+      .chip.on { background: #0f172a; color: #fff; border-color: #0f172a; }
+      .spacer { flex: 1; }
+      .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: #64748b; align-items: center; }
+      .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 4px; }
+
+      .stage { position: relative; margin-top: 10px; border: 1px solid #e2e8f0; border-radius: 14px;
+        background:
+          radial-gradient(circle at 1px 1px, #eceef1 1px, transparent 0) 0 0 / 22px 22px,
+          #ffffff; overflow: hidden; }
+      svg { display: block; width: 100%; height: 600px; cursor: grab; }
+      svg:active { cursor: grabbing; }
+      .node .card { transition: filter .12s; }
+      .viewbtn { position: absolute; top: 10px; right: 10px; z-index: 5; font-size: 11px;
+        padding: 4px 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff;
+        cursor: pointer; color: #475569; }
+      .viewbtn:hover { border-color: #94a3b8; background: #f8fafc; }
+
+      .node { cursor: pointer; }
+      .node text { font-size: 11px; font-weight: 500; fill: #0f172a; pointer-events: none; }
+      .node .seamlbl { font-size: 9px; fill: #64748b; text-transform: uppercase; letter-spacing: .05em;
+        opacity: 0; transition: opacity .12s; }                  /* hidden at rest */
+      .edge { fill: none; stroke: #94a3b8; stroke-width: 1.5; opacity: 0; transition: opacity .12s; }
+      .edge.leak { stroke: #dc2626; stroke-dasharray: 5 4; opacity: .85; }  /* leaks always visible */
+      .haloUpd { fill: none; stroke: #3b82f6; stroke-width: 2; opacity: .8; }
+      .covbg { fill: none; stroke: #e2e8f0; stroke-width: 3.5; }
+      .cov { fill: none; stroke: #22c55e; stroke-width: 3.5; stroke-linecap: round;
+        transform: rotate(-90deg); transform-origin: center; }
+      .ring { fill: none; stroke-width: 3; }
+
+      /* edges hidden at rest -> shown for the hovered node's neighbourhood, or all via the toggle */
+      svg.hovering .edge.lit { opacity: .9; }
+      svg.showedges .edge { opacity: .38; }
+      svg.showedges .edge.leak { opacity: .7; }
+      /* labels: only the hovered node's neighbourhood, all when few nodes (.labeled), or search hits */
+      svg.hovering .node.lit .seamlbl,
+      svg.labeled .seamlbl,
+      .node.match .seamlbl { opacity: 1; }
+      /* dim / highlight states driven on the <svg> element */
+      svg.hovering .node:not(.lit) { opacity: .2; }
+      svg.filtering .node.off { opacity: .12; }
+      svg.searching .node:not(.match) { opacity: .1; }
+      svg.searching .edge { opacity: 0 !important; }
+
+      .search { font-size: 12px; padding: 4px 10px; border: 1px solid #cbd5e1; border-radius: 999px;
+        width: 150px; outline: none; }
+      .search:focus { border-color: #6366f1; }
+      .dep { display: inline-block; font: 12px/1.5 ui-monospace, Menlo, monospace; color: #4338ca;
+        background: #eef2ff; border-radius: 6px; padding: 2px 7px; margin: 2px 3px 0 0; cursor: pointer; }
+      .dep:hover { background: #e0e7ff; }
+
+      .tray { margin-top: 14px; }
+      .tray h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; margin: 0 0 6px; }
+      .orphans { display: flex; flex-wrap: wrap; gap: 8px; }
+      .orphan { border: 1px dashed #cbd5e1; border-radius: 10px; padding: 8px 12px; background: #f8fafc;
+        opacity: .85; cursor: pointer; }
+      .orphan b { font-weight: 600; }
+      .orphan span { display: block; font-size: 11px; color: #94a3b8; }
+      .hint { font-size: 11px; color: #94a3b8; margin-top: 14px; }
+
+      /* drawer */
+      .drawer { position: fixed; top: 0; right: 0; height: 100%; width: 380px; max-width: 92vw;
+        background: #fff; border-left: 1px solid #e2e8f0; box-shadow: -16px 0 40px rgba(15,23,42,.12);
+        transform: translateX(110%); transition: transform .26s cubic-bezier(.4,0,.2,1);
+        overflow-y: auto; z-index: 30; }
+      .drawer.open { transform: none; }
+      .drawer .pad { padding: 22px; }
+      .x { float: right; font-size: 24px; line-height: 1; color: #94a3b8; cursor: pointer; background: none; border: 0; }
+      .tag { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 6px; margin: 2px 4px 2px 0; }
+      .kv { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; margin: 14px 0 2px; }
+      .bar { width: 100%; height: 7px; border-radius: 99px; background: #e2e8f0; overflow: hidden; }
+      .bar > i { display: block; height: 100%; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #475569; }
+      .card { margin-top: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fafaf9; padding: 16px; }
+      .card h3 { font: 600 16px/1.2 ui-serif, Georgia, serif; margin: 8px 0 4px; }
+      .card p { font-size: 13px; color: #475569; margin: 4px 0; }
+      .wins { list-style: none; padding: 0; margin: 12px 0 0; }
+      .wins li { font-size: 13px; color: #334155; display: flex; gap: 8px; margin: 3px 0; }
+      .wins li::before { content: "✓"; color: #059669; }
+      .grill { margin-top: 14px; width: 100%; padding: 9px; border: 0; border-radius: 9px;
+        background: #0f172a; color: #fff; font-size: 13px; cursor: pointer; }
+      .grill:hover { background: #334155; }
+      /* interactive CRUD controls */
+      .step { display:inline-block; width:18px; height:18px; line-height:16px; text-align:center;
+        border:1px solid #cbd5e1; border-radius:5px; font-size:12px; cursor:pointer; margin-left:4px;
+        color:#475569; background:#fff; }
+      .step:hover { border-color:#94a3b8; background:#f8fafc; }
+      #delZone { margin-top:16px; }
+      .del { padding:8px 12px; border:1px solid #fecaca; border-radius:9px; background:#fff;
+        color:#b91c1c; font-size:13px; cursor:pointer; }
+      .del:hover { background:#fef2f2; }
+      .del.yes { border-color:#dc2626; background:#dc2626; color:#fff; }
+      .del.no { border-color:#cbd5e1; color:#475569; }
+      .delq { font-size:12px; color:#b91c1c; margin-right:8px; }
+      .addbtn { font-size:12px; padding:4px 11px; border:1px solid #0f172a; border-radius:999px;
+        background:#0f172a; color:#fff; cursor:pointer; }
+      .addbtn:hover { background:#334155; }
+      .addform { display:none; gap:6px; align-items:center; width:100%; margin:8px 0 2px; flex-wrap:wrap; }
+      .addform.open { display:flex; }
+      .addform input { font-size:12px; padding:5px 8px; border:1px solid #cbd5e1; border-radius:7px; }
+      .addform button { font-size:12px; padding:5px 11px; border:0; border-radius:7px;
+        background:#059669; color:#fff; cursor:pointer; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@dagrejs/dagre@1.1.4/dist/dagre.min.js"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div>
+          <h1><span class="muted">arch-map ·</span> <span id="repo">…</span></h1>
+          <div class="sub">network of modules · node size = depth · ring = test coverage · <a href="/" style="color:#4f46e5;text-decoration:none">decisions ↗</a></div>
+        </div>
+        <div class="count"><div class="n" id="suggN">0</div><div class="l">open suggestions</div></div>
+      </header>
+
+      <div class="toolbar">
+        <span style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;margin-right:4px">filter</span>
+        <span class="chip on" data-f="all">All</span>
+        <span class="chip" data-f="suggest">⚠ Suggestions</span>
+        <span class="chip" data-f="updated">Updated</span>
+        <span class="chip" data-f="leak">Leaks</span>
+        <span class="chip" data-f="lowcov">Low coverage</span>
+        <span class="chip" data-f="orphan">Not connected</span>
+        <input id="search" class="search" placeholder="search modules…" oninput="searchNodes(this.value)" />
+        <button class="chip" id="edgesToggle" onclick="toggleEdges()" title="dependency edges show on hover; toggle to show them all">⇢ all edges</button>
+        <button class="addbtn" onclick="toggleAddForm()">+ Module</button>
+        <span class="spacer"></span>
+        <div class="legend">
+          <span><i style="background:#1e293b"></i>deep</span>
+          <span><i style="background:#fde68a;border:1px solid #f59e0b"></i>shallow</span>
+          <span><i style="background:none;border:2px solid #22c55e"></i>coverage</span>
+          <span><i style="background:none;border:2px solid #3b82f6"></i>updated</span>
+          <span style="color:#dc2626">— leak</span>
+        </div>
+      </div>
+
+      <div class="addform" id="addForm">
+        <input id="nmId" placeholder="id (e.g. order-cache)" size="16" />
+        <input id="nmLabel" placeholder="label" size="12" />
+        <input id="nmDomain" placeholder="domain" size="12" />
+        <button onclick="submitAddModule()">Add module</button>
+      </div>
+
+      <div class="stage">
+        <button class="viewbtn" onclick="resetView()" title="fit to view">⤢ fit</button>
+        <svg id="net">
+          <defs>
+            <marker id="arr" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6" fill="none" stroke="#94a3b8" stroke-width="1.4"/>
+            </marker>
+            <marker id="arrLeak" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6" fill="none" stroke="#dc2626" stroke-width="1.4"/>
+            </marker>
+          </defs>
+          <rect id="panbg" x="0" y="0" width="100%" height="100%" fill="transparent" style="pointer-events:all"></rect>
+          <g id="viewport">
+            <g id="edges"></g>
+            <g id="nodes"></g>
+          </g>
+        </svg>
+      </div>
+
+      <div class="tray">
+        <h3>Not connected (orphans)</h3>
+        <div class="orphans" id="tray"></div>
+      </div>
+
+      <div class="hint">Top→bottom = dependency depth · hover a card to trace its edges (or toggle <b>⇢ all edges</b>) · <span style="color:#dc2626">red dashed = leak</span> · drag to pan, scroll to zoom, <b>⤢ fit</b> to reset · click a card for detail.</div>
+    </div>
+
+    <aside class="drawer" id="drawer"><div class="pad" id="drawerBody"></div></aside>
+
+    <script>
+      // ---- empty placeholder; the host pushes the live model via app.ontoolresult ----
+      const SAMPLE = {"repo":"arch-map","modules":[],"orphans":[],"openSuggestions":[]};
+
+      // ---- the real MCP Apps host bridge lives in the module <script> at the
+      //      bottom of <body> (it imports @modelcontextprotocol/ext-apps and runs
+      //      App.connect()). This render script just exposes load() on window so
+      //      the bridge can push live model data into the graph.
+
+      const NS = "http://www.w3.org/2000/svg";
+      const CARD_W = 132, CARD_H = 38;
+      const tier = d => d >= 0.65 ? "deep" : d >= 0.4 ? "mid" : "shallow";
+      const FILL = { deep: "#1e293b", mid: "#64748b", shallow: "#fde68a" };
+      const STROKE = { deep: "#0f172a", mid: "#475569", shallow: "#f59e0b" };
+      const TXT = { deep: "#fff", mid: "#fff", shallow: "#1e293b" };
+      const SUGG = { "Strong": "#059669", "Worth exploring": "#d97706", "Speculative": "#94a3b8" };
+
+      let MODEL = null, hovered = null, filter = "all";
+      let view = { x: 0, y: 0, k: 1 }, graphW = 1000, graphH = 520;
+      let lastSig = null, firstRender = true, prevLive = 0;
+      let nodePos = {}, urlSearchApplied = false;   // nodePos: id -> {x,y} of each card's centre
+      const svg = document.getElementById("net");
+      const viewport = document.getElementById("viewport");
+      const fitLabel = s => s.length > 17 ? s.slice(0, 16) + "…" : s;
+
+      function load(model) {
+        const sig = JSON.stringify(model);
+        if (sig === lastSig) return;          // nothing changed -> skip the whole re-render
+        lastSig = sig;
+        MODEL = model;
+        document.getElementById("repo").textContent = model.repo;
+        document.getElementById("suggN").textContent = (model.openSuggestions || []).length;
+        buildGraph();
+        buildTray();
+        applyUrlSearch();
+      }
+
+      // ---------- layered DAG layout (dagre): deterministic, top-down by dependency ----------
+      function buildGraph() {
+        const live = MODEL.modules.filter(m => !m.orphan);
+        const byId = Object.fromEntries(live.map(m => [m.id, m]));
+        const gE = document.getElementById("edges"), gN = document.getElementById("nodes");
+        gE.innerHTML = ""; gN.innerHTML = "";
+        if (typeof dagre === "undefined" || !live.length) { graphW = 1000; graphH = 520; resetView(); firstRender = false; prevLive = 0; return; }
+
+        const g = new dagre.graphlib.Graph();
+        g.setGraph({ rankdir: "TB", nodesep: 20, ranksep: 96, marginx: 28, marginy: 28 });
+        g.setDefaultEdgeLabel(() => ({}));
+        live.forEach(m => g.setNode(m.id, { width: CARD_W, height: CARD_H }));
+        const leaks = [];
+        live.forEach(m => {
+          (m.dependsOn || []).forEach(t => { if (byId[t]) g.setEdge(m.id, t); });   // m depends on t -> m above t
+          (m.leaksTo || []).forEach(t => { if (byId[t]) leaks.push([m.id, t]); });
+        });
+        dagre.layout(g);
+
+        const adj = {}; live.forEach(m => adj[m.id] = new Set([m.id]));
+        g.edges().forEach(e => { adj[e.v].add(e.w); adj[e.w].add(e.v); });
+        leaks.forEach(([s, t]) => { adj[s].add(t); adj[t].add(s); });
+
+        // dependency edges: orthogonal polylines through dagre's routed points
+        g.edges().forEach(e => {
+          const pts = g.edge(e).points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+          const pl = document.createElementNS(NS, "polyline");
+          pl.setAttribute("class", "edge"); pl.setAttribute("points", pts);
+          pl.setAttribute("marker-end", "url(#arr)");
+          pl.dataset.s = e.v; pl.dataset.t = e.w;
+          gE.appendChild(pl);
+        });
+        // leaks: orthogonal (right-angle) red back-edges — easier to follow than diagonals
+        leaks.forEach(([s, t]) => {
+          const a = g.node(s), b = g.node(t);
+          const midY = ((a.y + b.y) / 2).toFixed(1);
+          const pl = document.createElementNS(NS, "polyline");
+          pl.setAttribute("class", "edge leak");
+          pl.setAttribute("points", `${a.x},${a.y} ${a.x},${midY} ${b.x},${midY} ${b.x},${b.y}`);
+          pl.setAttribute("marker-end", "url(#arrLeak)");
+          pl.dataset.s = s; pl.dataset.t = t;
+          gE.appendChild(pl);
+        });
+
+        // node cards: fill = depth tier, bottom bar = coverage, ring = suggestion, blue outline = updated
+        nodePos = {};
+        live.forEach(m => {
+          const n = g.node(m.id), t = tier(m.depth);
+          nodePos[m.id] = { x: n.x, y: n.y };
+          const el = document.createElementNS(NS, "g");
+          el.setAttribute("class", "node"); el.dataset.id = m.id;
+          el.setAttribute("transform", `translate(${(n.x - CARD_W / 2).toFixed(1)},${(n.y - CARD_H / 2).toFixed(1)})`);
+          const cov = Math.round(m.coverage * CARD_W);
+          el.innerHTML = `
+            <title>${m.label} — ${m.domain}${m.suggestion ? " · ⚠ " + m.suggestion.title : ""}</title>
+            ${m.updated ? `<rect class="haloUpd" x="-3" y="-3" width="${CARD_W + 6}" height="${CARD_H + 6}" rx="9"></rect>` : ``}
+            <rect class="card" width="${CARD_W}" height="${CARD_H}" rx="7" fill="${FILL[t]}" stroke="${m.suggestion ? SUGG[m.suggestion.strength] : STROKE[t]}" stroke-width="${m.suggestion ? 2.5 : 1.2}"></rect>
+            <rect x="0" y="${CARD_H - 3}" width="${CARD_W}" height="3" fill="#e2e8f0"></rect>
+            <rect x="0" y="${CARD_H - 3}" width="${cov}" height="3" fill="#22c55e"></rect>
+            <text x="${CARD_W / 2}" y="${CARD_H / 2}" text-anchor="middle" dominant-baseline="central" fill="${TXT[t]}" font-size="10">${fitLabel(m.label)}</text>
+            <text class="seamlbl" x="${CARD_W / 2}" y="${CARD_H + 11}" text-anchor="middle">${m.id}</text>
+            ${m.suggestion ? `<text x="${CARD_W - 11}" y="13" font-size="12">⚠️</text>` : ``}`;
+          gN.appendChild(el);
+          attachNode(el, m.id, adj);
+        });
+
+        graphW = g.graph().width || 1000;
+        graphH = g.graph().height || 520;
+        svg.classList.toggle("labeled", live.length <= 14);
+        if (firstRender || prevLive === 0) resetView(); else applyView();  // fit all on first load, keep pan/zoom after
+        firstRender = false; prevLive = live.length;
+        applyFilter();
+      }
+
+      // ---------- pan / zoom (drag background, wheel to zoom, ⤢ fit to reset) ----------
+      function applyView() {
+        viewport.setAttribute("transform", `translate(${view.x.toFixed(1)},${view.y.toFixed(1)}) scale(${view.k.toFixed(3)})`);
+      }
+      function resetView() {   // ⤢ fit — fill the viewport, but never below a readable card size
+        const r = svg.getBoundingClientRect();
+        const fitK = Math.min(r.width / graphW, r.height / graphH);
+        view.k = Math.min(Math.max(fitK, 0.78), 1.4);   // floor keeps cards legible; pan to see the rest
+        view.x = (r.width - graphW * view.k) / 2;
+        view.y = (r.height - graphH * view.k) / 2;
+        applyView();
+      }
+      window.resetView = resetView;
+      let panning = null;
+      svg.addEventListener("pointerdown", e => {
+        if (e.target.closest(".node")) return;
+        panning = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+      });
+      window.addEventListener("pointermove", e => {
+        if (!panning) return;
+        view.x = panning.vx + (e.clientX - panning.x);
+        view.y = panning.vy + (e.clientY - panning.y);
+        applyView();
+      });
+      window.addEventListener("pointerup", () => (panning = null));
+      svg.addEventListener("wheel", e => {
+        e.preventDefault();
+        if (e.shiftKey) { view.x -= (e.deltaY || e.deltaX); applyView(); return; }  // shift+scroll = horizontal pan
+        const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+        const k2 = Math.max(0.2, Math.min(3, view.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+        view.x = mx - (mx - view.x) * (k2 / view.k);
+        view.y = my - (my - view.y) * (k2 / view.k);
+        view.k = k2; applyView();
+      }, { passive: false });
+
+      // ---------- interaction ----------
+      function attachNode(g, id, adj) {
+        g.addEventListener("mouseenter", () => {
+          hovered = id; svg.classList.add("hovering");
+          document.querySelectorAll(".node").forEach(el => el.classList.toggle("lit", adj[id].has(el.dataset.id)));
+          svg.querySelectorAll("#edges .edge").forEach(line =>
+            line.classList.toggle("lit", line.dataset.s === id || line.dataset.t === id));
+        });
+        g.addEventListener("mouseleave", () => {
+          hovered = null; svg.classList.remove("hovering");
+          document.querySelectorAll(".node").forEach(el => el.classList.remove("lit"));
+          document.querySelectorAll(".edge").forEach(el => el.classList.remove("lit"));
+        });
+        g.addEventListener("click", () => openDrawer(id));
+      }
+
+      // ---------- filters ----------
+      document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
+        document.querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
+        c.classList.add("on"); filter = c.dataset.f; applyFilter();
+      }));
+      function matches(m) {
+        switch (filter) {
+          case "suggest": return !!m.suggestion;
+          case "updated": return m.updated;
+          case "leak": return (m.leaksTo || []).length > 0;
+          case "lowcov": return m.coverage < 0.5;
+          case "orphan": return m.orphan;
+          default: return true;
+        }
+      }
+      function applyFilter() {
+        svg.classList.toggle("filtering", filter !== "all");
+        const byId = Object.fromEntries(MODEL.modules.map(m => [m.id, m]));
+        document.querySelectorAll(".node").forEach(el => {
+          el.classList.toggle("off", !matches(byId[el.dataset.id]));
+        });
+        document.querySelectorAll(".orphan").forEach(el => {
+          el.style.display = (filter === "all" || filter === "orphan") ? "" : "none";
+        });
+      }
+
+      // ---------- search + edge toggle ----------
+      function centerOn(p) {   // bring a point (graph coords) to the middle of the viewport
+        const r = svg.getBoundingClientRect();
+        view.x = r.width / 2 - p.x * view.k;
+        view.y = r.height / 2 - p.y * view.k;
+        applyView();
+      }
+      function searchNodes(q) {
+        q = (q || "").trim().toLowerCase();
+        const net = document.getElementById("net");
+        net.classList.toggle("searching", !!q);
+        let first = null;
+        document.querySelectorAll(".node").forEach(el => {
+          const m = MODEL.modules.find(x => x.id === el.dataset.id);
+          const hit = q && m && ((m.label || "").toLowerCase().includes(q) || (m.id || "").toLowerCase().includes(q));
+          el.classList.toggle("match", !!hit);
+          if (hit && !first) first = el.dataset.id;
+        });
+        if (first && nodePos[first]) centerOn(nodePos[first]);   // scroll the match into view
+      }
+      function toggleEdges() {
+        const on = document.getElementById("net").classList.toggle("showedges");
+        document.getElementById("edgesToggle").classList.toggle("on", on);
+      }
+      function applyUrlSearch() {   // ?q=foo deep-links a search and centres the match
+        if (urlSearchApplied || !MODEL || !MODEL.modules.length) return;
+        urlSearchApplied = true;
+        const q = new URLSearchParams(location.search).get("q");
+        if (!q) return;
+        const box = document.getElementById("search");
+        if (box) box.value = q;
+        searchNodes(q);
+      }
+
+      // ---------- orphan tray ----------
+      function buildTray() {
+        const tray = document.getElementById("tray");
+        const orphans = MODEL.modules.filter(m => m.orphan);
+        tray.innerHTML = orphans.length ? "" : `<span style="font-size:12px;color:#94a3b8">none — every module is connected.</span>`;
+        orphans.forEach(m => {
+          const d = document.createElement("div");
+          d.className = "orphan"; d.dataset.id = m.id;
+          d.innerHTML = `<b>${m.label}</b><span>${m.domain} · no callers, no deps</span>`;
+          d.addEventListener("click", () => openDrawer(m.id));
+          tray.appendChild(d);
+        });
+      }
+
+      // ---------- drawer ----------
+      const drawer = document.getElementById("drawer");
+      function openDrawer(id) {
+        const m = MODEL.modules.find(x => x.id === id), t = tier(m.depth), s = m.suggestion;
+        const barColor = t === "deep" ? "#059669" : t === "mid" ? "#64748b" : "#f59e0b";
+        const depChip = ids => (ids && ids.length)
+          ? ids.map(d => `<span class="dep" onclick="openDrawer('${d}')">${d}</span>`).join("") : "—";
+        const usedBy = MODEL.modules.filter(x => (x.dependsOn || []).includes(id) || (x.leaksTo || []).includes(id)).map(x => x.id);
+        let h = `
+          <button class="x" onclick="document.getElementById('drawer').classList.remove('open')">×</button>
+          <div class="kv">module</div>
+          <h1 style="font-size:24px">${m.label}</h1>
+          <div style="margin-top:8px">
+            <span class="tag" style="background:${FILL[t]};color:${TXT[t]}">${t.toUpperCase()}</span>
+            <span class="tag" style="background:#f1f5f9;color:#475569">${m.seam}</span>
+            ${m.updated ? `<span class="tag" style="background:#dbeafe;color:#1d4ed8">updated</span>` : ``}
+            ${m.orphan ? `<span class="tag" style="background:#f1f5f9;color:#64748b">not connected</span>` : ``}
+            ${(m.leaksTo || []).length ? `<span class="tag" style="background:#fee2e2;color:#b91c1c">leaks ↗ ${m.leaksTo.join(", ")}</span>` : ``}
+          </div>
+          <div class="kv">interface</div><div style="font-size:13px;color:#334155">${m.iface}</div>
+          <div class="kv">depth <span class="step" onclick="stepDepth('${m.id}',-0.1)">−</span><span class="step" onclick="stepDepth('${m.id}',0.1)">+</span></div><div class="bar"><i style="width:${Math.round(m.depth*100)}%;background:${barColor}"></i></div>
+          <div class="kv">test coverage <span class="step" onclick="stepCoverage('${m.id}',-0.1)">−</span><span class="step" onclick="stepCoverage('${m.id}',0.1)">+</span></div><div class="bar"><i style="width:${Math.round(m.coverage*100)}%;background:#22c55e"></i></div>
+          <div class="kv">files</div><div class="mono">${m.files.join("<br>")}</div>
+          <div class="kv">depends on</div><div>${depChip(m.dependsOn)}</div>
+          <div class="kv">used by</div><div>${depChip(usedBy)}</div>
+          <div class="kv">tests</div><div style="font-size:13px;color:#334155">${m.tests}</div>`;
+        if (s) {
+          h += `
+            <div class="card">
+              <span class="tag" style="background:${SUGG[s.strength]};color:#fff">${s.strength}</span>
+              <span class="tag" style="background:#fff;border:1px solid #e2e8f0;color:#64748b">${s.category}</span>
+              <h3>${s.title}</h3>
+              <p><b>Problem.</b> ${s.problem}</p>
+              <p><b>Solution.</b> ${s.solution}</p>
+              <ul class="wins">${s.wins.map(w => `<li>${w}</li>`).join("")}</ul>
+              <button class="grill" onclick="grill('${m.id}')">Grill this candidate →</button>
+            </div>`;
+        } else {
+          h += `<div class="card" style="color:#94a3b8;font-style:italic">No open suggestion — ${m.orphan ? "but it's not connected; consider deleting it (deletion test)." : "this module is already deep enough."}</div>`;
+        }
+        h += `<div id="delZone"><button class="del" onclick="confirmDelete('${m.id}')">Delete module</button></div>`;
+        document.getElementById("drawerBody").innerHTML = h;
+        drawer.classList.add("open");
+      }
+
+      // ---------- interactive CRUD: clicks call back into the server; the
+      //            returned model is pushed to the graph, so it redraws live ----------
+      function stepDepth(id, delta) {
+        const m = MODEL.modules.find(x => x.id === id); if (!m) return;
+        const v = Math.max(0, Math.min(1, +(m.depth + delta).toFixed(2)));
+        window.archMapCall("update_module", { module: id, fields: { depth: v } });
+      }
+      function stepCoverage(id, delta) {
+        const m = MODEL.modules.find(x => x.id === id); if (!m) return;
+        const v = Math.max(0, Math.min(1, +(m.coverage + delta).toFixed(2)));
+        window.archMapCall("update_module", { module: id, fields: { coverage: v } });
+      }
+      function confirmDelete(id) {
+        const z = document.getElementById("delZone"); if (!z) return;
+        z.innerHTML = '<span class="delq">Delete this module?</span>'
+          + '<button class="del yes" onclick="window.archMapCall(\'delete_module\',{module:\'' + id + '\'})">Yes, delete</button> '
+          + '<button class="del no" onclick="openDrawer(\'' + id + '\')">Cancel</button>';
+      }
+      function toggleAddForm() { document.getElementById("addForm").classList.toggle("open"); }
+      function submitAddModule() {
+        const v = (i) => (document.getElementById(i).value || "").trim();
+        const id = v("nmId"); if (!id) return;
+        window.archMapCall("add_module", { id, label: v("nmLabel") || id, domain: v("nmDomain") || "general" });
+        ["nmId", "nmLabel", "nmDomain"].forEach((i) => (document.getElementById(i).value = ""));
+        document.getElementById("addForm").classList.remove("open");
+      }
+
+      // Standalone fallbacks; the module bridge below overrides these with real
+      // app.callServerTool calls when running inside an MCP Apps host.
+      window.archMapCall = function (name, args) {
+        alert(name + "(" + JSON.stringify(args || {}) + ")\n(standalone preview — in a host this calls the "
+          + name + " tool and the graph redraws from the result)");
+      };
+      window.grill = (id) => window.archMapCall("start_grilling", { module: id });
+      document.addEventListener("keydown", e => { if (e.key === "Escape") drawer.classList.remove("open"); });
+
+      // ---------- boot ----------
+      // Render the bundled sample immediately. Inside a host the module bridge
+      // below connects and replaces it with the live model via app.ontoolresult.
+      window.archMapLoad = load;   // exposed for the host bridge
+      load(SAMPLE);
+    </script>
+
+    <!-- ===== MCP Apps host bridge (real protocol) ===========================
+         A host renders this iframe, then waits for the app to complete the
+         ui/initialize handshake via @modelcontextprotocol/ext-apps' App.connect().
+         The previous code assumed a window.app global (which does not exist), so
+         the handshake never happened and hosts fell back to showing text. This
+         module imports the real App client (the CSP allows cdn.jsdelivr.net),
+         pushes the live model into load(), and routes the Grill button back to
+         the start_grilling tool. In a plain browser the import throws and the
+         bundled sample stays on screen. -->
+    <script type="module">
+      // HTTP mode: when served by arch_map.web (no MCP host), pull the live model
+      // from /api/model, route interactions to /api/tool, and poll for changes
+      // made elsewhere — the decisions app and the desktop share the same state.
+      const httpInit = async () => {
+        let r;
+        try { r = await fetch("/api/model"); } catch (_) { return false; }
+        if (!r.ok) return false;                                  // bare file, no server
+        window.archMapLoad(await r.json());
+        window.archMapCall = async (name, args) => {
+          const res = await fetch("/api/tool", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name, arguments: args || {} }),
+          });
+          const m = await res.json();
+          if (m && m.modules) window.archMapLoad(m);
+          return m;
+        };
+        window.grill = (id) => window.archMapCall("start_grilling", { module: id });
+        setInterval(async () => {                                 // pick up external edits
+          try { const m = await (await fetch("/api/model")).json();
+                if (m && m.modules) window.archMapLoad(m); } catch (_) {}
+        }, 2500);
+        return true;
+      };
+
+      try {
+        const { App } = await import(
+          "https://cdn.jsdelivr.net/npm/@modelcontextprotocol/ext-apps@1.7.2/+esm"
+        );
+        const app = new App({ name: "arch-map", version: "1.0.0" });
+
+        const apply = (result) => {
+          let model = result && result.structuredContent;
+          if (!model && result && Array.isArray(result.content)) {
+            const t = result.content.find((c) => c && c.type === "text");
+            if (t && t.text) { try { model = JSON.parse(t.text); } catch (_) {} }
+          }
+          if (model && model.modules) window.archMapLoad(model);
+        };
+
+        app.ontoolresult = apply;                                  // host pushes tool results
+        window.archMapCall = async (name, args) => {               // UI -> server (host mode)
+          const r = await app.callServerTool({ name, arguments: args || {} });
+          apply(r);
+          return r;
+        };
+        window.grill = (id) => window.archMapCall("start_grilling", { module: id });
+
+        // Race the handshake against a timeout: a real host answers fast; a plain
+        // browser never will, so we fall back to HTTP mode instead of hanging.
+        const connected = await Promise.race([
+          app.connect().then(() => true),
+          new Promise((res) => setTimeout(() => res(false), 1500)),
+        ]);
+        if (connected) {
+          try { apply(await app.callServerTool({ name: "show_map", arguments: {} })); } catch (_) {}
+        } else {
+          await httpInit();
+        }
+      } catch (_) {
+        await httpInit();   // App import failed (bare file / offline) -> try HTTP
+      }
+    </script>
+  </body>
+</html>

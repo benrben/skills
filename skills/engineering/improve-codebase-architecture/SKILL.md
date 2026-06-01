@@ -69,6 +69,17 @@ See [HTML-REPORT.md](HTML-REPORT.md) for the full HTML scaffold, diagram pattern
 
 Do NOT propose interfaces yet. After the file is written, ask the user: "Which of these would you like to explore?"
 
+### 2a. (Optional) Drive a living map instead of a one-shot report
+
+The skill ships a companion FastMCP server in [arch-map/](arch-map/) that turns the one-shot report into a **persistent, agent-maintained network map**. When a UI-capable MCP host is connected (Claude desktop/web, VS Code Insiders, Goose), prefer it over the static HTML — it renders the whole codebase as a graph and you keep it current by calling tools rather than rewriting a file. It's registered for this repo in `.mcp.json` as `arch-map`.
+
+- `show_map()` — render the network. Node size = depth, green ring = coverage, blue halo = updated, ⚠ ring = open suggestion (coloured by strength), red edge = leak, orphan tray = **not connected**.
+- `flag_deepening(module, title, strength, category, problem, solution, wins)` — attach a candidate. Same `Strong` / `Worth exploring` / `Speculative` strengths and the same [LANGUAGE.md](LANGUAGE.md) vocabulary as the report.
+- `set_depth` / `set_coverage` / `mark_updated` — keep the model honest as you explore.
+- `resolve(suggestion_id)` — clear a candidate the grilling loop rejected.
+
+Clicking **Grill this candidate →** on a node calls `start_grilling` and drops into step 3. See [arch-map/README.md](arch-map/README.md) for setup and the host caveat — a terminal session can drive the tools but can't render the graph.
+
 ### 3. Grilling loop
 
 Once the user picks a candidate, drop into a grilling conversation. Walk the design tree with them — constraints, dependencies, the shape of the deepened module, what sits behind the seam, what tests survive.
