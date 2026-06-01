@@ -62,6 +62,7 @@ HERE = Path(__file__).parent
 # history.
 STUDIO_DIR = (HERE / "ui" / "studio").resolve()
 STUDIO_INDEX = STUDIO_DIR / "index.html"
+VIEW_INDEX = STUDIO_DIR / "view.html"   # on-brand ad-hoc view renderer (tables / charts)
 _ASSET_CT = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -272,28 +273,31 @@ _UI_CSP = (
     )
     if _HAS_APPS else None
 )
-UI_APP = AppConfig(resourceUri=UI_URI, csp=_UI_CSP) if _HAS_APPS else None  # tools -> point at the UI
-UI_RESOURCE_APP = AppConfig(csp=_UI_CSP) if _HAS_APPS else None             # resource -> is the UI
+UI_APP = AppConfig(resourceUri=UI_URI, csp=_UI_CSP) if _HAS_APPS else None  # studio tools -> point at the studio UI
+UI_RESOURCE_APP = AppConfig(csp=_UI_CSP) if _HAS_APPS else None             # resource -> is a UI (shared by both)
+# The ad-hoc view renderer is a second UI: render_view points at it; it shares the CSP.
+VIEW_URI = "ui://arch/view.html"
+VIEW_APP = AppConfig(resourceUri=VIEW_URI, csp=_UI_CSP) if _HAS_APPS else None
 # Spread these into the decorators instead of hard-coding `app=...`: without the
 # fastmcp[apps] extra there's no MCP-App link (the host falls back to text), and a
 # FastMCP that predates the `app=` kwarg would otherwise raise on import. The HTTP
 # studio (custom routes + /api) doesn't need apps and works either way.
 _APP = {"app": UI_APP} if _HAS_APPS else {}
+_VIEW_APP = {"app": VIEW_APP} if _HAS_APPS else {}
 _RES_APP = {"app": UI_RESOURCE_APP} if _HAS_APPS else {}
 
 
-def _inline_studio_app() -> str:
-    """Build the self-contained studio for the MCP-App sandbox.
+def _inline_app(index_path: Path) -> str:
+    """Inline a ui/studio page for the MCP-App sandbox.
 
-    A host renders this resource in a sandboxed iframe that can't reach the HTTP
-    server, so we inline the studio's own CSS/JS (read fresh, so edits propagate)
-    rather than linking `/assets/*`. A flag set just before state.js flips its data
-    layer into **host mode** — it connects to the host via @modelcontextprotocol/
-    ext-apps and drives everything through the tools (get_model / set_depth /
-    add_module / decide / …) instead of /api. The dagre + ext-apps CDN tags stay;
-    they're whitelisted by _UI_CSP. This reuses the exact studio the browser serves
-    at `/`, so the inline render mirrors it."""
-    html = STUDIO_INDEX.read_text(encoding="utf-8")
+    A host renders the resource in a sandboxed iframe that can't reach the HTTP
+    server, so we inline its `/assets/*` CSS/JS (read fresh, so edits propagate)
+    and set window.__ARCH_APP__ before any script runs. That flag flips the page's
+    data layer into **host mode** — it connects via @modelcontextprotocol/ext-apps
+    and drives everything through tools instead of /api. The dagre + ext-apps CDN
+    tags stay (whitelisted by _UI_CSP). Same files the browser serves, so the inline
+    render mirrors the browser exactly."""
+    html = index_path.read_text(encoding="utf-8")
 
     def _rel(p: str) -> str:                       # "/assets/shared/ui.css" -> "shared/ui.css"
         return p.lstrip("/").removeprefix("assets/")
@@ -302,13 +306,12 @@ def _inline_studio_app() -> str:
         return f"<style>\n{(STUDIO_DIR / _rel(m.group(1))).read_text(encoding='utf-8')}\n</style>"
 
     def _js(m) -> str:
-        rel = _rel(m.group(1))
-        flag = "window.__ARCH_APP__ = true;\n" if rel.endswith("state.js") else ""
-        return f"<script>\n{flag}{(STUDIO_DIR / rel).read_text(encoding='utf-8')}\n</script>"
+        return f"<script>\n{(STUDIO_DIR / _rel(m.group(1))).read_text(encoding='utf-8')}\n</script>"
 
     html = re.sub(r'<link rel="stylesheet" href="(/assets/[^"]+)">', _css, html)
     html = re.sub(r'<script src="(/assets/[^"]+)"></script>', _js, html)
-    return html
+    # flip into host mode before any script runs (works for pages with or without state.js)
+    return html.replace("</head>", "<script>window.__ARCH_APP__ = true;</script>\n</head>", 1)
 
 
 @mcp.resource(UI_URI, mime_type="text/html;profile=mcp-app", **_RES_APP)
@@ -317,7 +320,95 @@ def studio_ui() -> str:
     sandboxed iframe and drives it through the tools: show_map names the map,
     get_model feeds the full model, and set_depth / add_module / decide / resolve /
     … mutate it — every change re-rendered with the studio's own components."""
-    return _inline_studio_app()
+    return _inline_app(STUDIO_INDEX)
+
+
+@mcp.resource(VIEW_URI, mime_type="text/html;profile=mcp-app", **_RES_APP)
+def view_ui() -> str:
+    """The on-brand ad-hoc view renderer (tables / bar charts), inlined for the
+    MCP-App sandbox. render_view pushes a prepared view into it; it draws with the
+    studio's design tokens, so generative views match the studio."""
+    return _inline_app(VIEW_INDEX)
+
+
+# --- Ad-hoc views: shape a map's data into an on-brand table / bar chart --------
+# Both the render_view tool (MCP-App hosts) and GET /api/view (browser) call this,
+# so the model picks WHAT to show (a declarative spec) and the view renderer draws
+# it with the studio's design tokens — the "generative" lane, but on-brand.
+_STRENGTH_KEY = {"Strong": "strong", "Worth exploring": "worth", "Speculative": "speculative"}
+_VIEW_COLS = ("id", "label", "domain", "depth", "coverage", "tests", "files", "suggestion")
+
+
+def _view_filter(modules: list[dict], of: str, model: dict) -> list[dict]:
+    """Select modules by a simple predicate keyword (or a domain name)."""
+    of = (of or "all").lower()
+    orphans = set(model.get("orphans", []))
+
+    def keep(m: dict) -> bool:
+        d, c = (m.get("depth") or 0), (m.get("coverage") or 0)
+        if of in ("", "all"): return True
+        if of in ("orphans", "orphan", "not-connected"): return m["id"] in orphans
+        if of == "leaks": return bool(m.get("leaksTo"))
+        if of in ("suggestions", "proposals", "open"): return bool(m.get("suggestion"))
+        if of == "updated": return bool(m.get("updated"))
+        if of in ("low-coverage", "low"): return c < 0.4
+        if of == "shallow": return d < 0.34
+        if of == "mid": return 0.34 <= d < 0.67
+        if of == "deep": return d >= 0.67
+        return m.get("domain") == of           # otherwise treat as a domain name
+    return [m for m in modules if keep(m)]
+
+
+def _build_view(model: dict, spec: dict) -> dict:
+    """Turn a {kind, of, ...} spec + a full model into a prepared view payload the
+    renderer draws verbatim (numbers already scaled to 0..100 for display)."""
+    kind = (spec.get("kind") or "table").lower()
+    of = spec.get("of") or spec.get("filter") or "all"
+    sel = _view_filter(model.get("modules", []), of, model)
+    label = "all modules" if str(of).lower() in ("", "all") else of
+    out = {"kind": kind, "title": spec.get("title") or f"{kind} · {label}",
+           "repo": model.get("repo", ""), "count": len(sel)}
+
+    if kind == "bar":
+        metric = (spec.get("metric") or "depth").lower()        # depth | coverage
+        group = (spec.get("groupBy") or spec.get("group") or "module").lower()
+        out["metric"], out["groupBy"] = metric, group
+        if group == "domain":
+            agg = spec.get("agg") or "avg"                       # avg | count
+            buckets: dict[str, list[float]] = {}
+            for m in sel:
+                buckets.setdefault(m.get("domain", "—"), []).append(m.get(metric) or 0)
+            if agg == "count":
+                mx = max((len(v) for v in buckets.values()), default=1) or 1
+                bars = [{"label": d, "value": str(len(v)), "pct": round(len(v) / mx * 100)} for d, v in buckets.items()]
+            else:
+                bars = [{"label": d, "value": f"{round(sum(v) / len(v) * 100)}%", "pct": round(sum(v) / len(v) * 100)} for d, v in buckets.items()]
+        else:
+            bars = [{"label": m["id"], "value": f"{round((m.get(metric) or 0) * 100)}%", "pct": round((m.get(metric) or 0) * 100)} for m in sel]
+        bars.sort(key=lambda b: b["pct"], reverse=True)
+        out["bars"] = bars
+    else:                                                        # table (default)
+        cols = [c for c in (spec.get("columns") or ["id", "domain", "depth", "coverage"]) if c in _VIEW_COLS]
+        cols = cols or ["id", "domain", "depth", "coverage"]
+        rows = []
+        for m in sel:
+            row = {}
+            for c in cols:
+                if c in ("depth", "coverage"): row[c] = round((m.get(c) or 0) * 100)
+                elif c == "suggestion":
+                    s = m.get("suggestion")
+                    row[c] = {"strength": _STRENGTH_KEY.get(s["strength"], "speculative"), "label": s["strength"]} if s else None
+                elif c == "files": row[c] = len(m.get("files") or [])
+                elif c == "tests": row[c] = "✓" if (m.get("tests") or "").strip() else ""
+                else: row[c] = m.get(c)
+            rows.append(row)
+        sby = spec.get("sortBy") or spec.get("sort")
+        sdir = spec.get("sortDir", "asc")
+        if isinstance(sby, dict): sdir, sby = sby.get("dir", "asc"), sby.get("by")
+        if sby in cols:
+            rows.sort(key=lambda r: (r.get(sby) is None, r.get(sby)), reverse=(sdir == "desc"))
+        out["columns"], out["rows"] = cols, rows
+    return out
 
 
 # --- Tools the project-agent drives. Every tool takes `map` — the named map it
@@ -396,6 +487,26 @@ def get_model(map: str) -> dict:
     v = REGISTRY.ensure(map).to_dict()
     v["map"] = map
     return v
+
+
+@mcp.tool(**_VIEW_APP)
+def render_view(map: str, spec: dict) -> dict:
+    """Render an on-brand ad-hoc VIEW of a map — a table or bar chart drawn with the
+    studio's own design (not generic widgets). `spec` is declarative:
+
+      kind:    "table" (default) | "bar"
+      of:      which modules — "all" | "orphans" | "leaks" | "suggestions" |
+               "updated" | "low-coverage" | "shallow" | "mid" | "deep" | <domain>
+      title:   optional heading
+      table:   columns=[id,label,domain,depth,coverage,tests,files,suggestion],
+               sortBy=<column>, sortDir="asc"|"desc"
+      bar:     metric="depth"|"coverage", groupBy="module"|"domain", agg="avg"|"count"
+
+    e.g. render_view(map, {"kind":"table","of":"low-coverage","columns":["id","domain","coverage"],"sortBy":"coverage","sortDir":"asc"})
+         render_view(map, {"kind":"bar","metric":"coverage","groupBy":"domain","agg":"avg"})"""
+    payload = _build_view(REGISTRY.store(map).to_dict(), spec or {})
+    payload["map"] = map
+    return payload
 
 
 @mcp.tool(**_APP)
@@ -642,6 +753,29 @@ async def api_model(request):
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     return JSONResponse(store.to_dict())
+
+
+@mcp.custom_route("/view", ["GET"])
+async def view_page(request):
+    """Browser view of an ad-hoc table/chart, e.g. /view?map=…&kind=bar&metric=coverage&groupBy=domain."""
+    return HTMLResponse(VIEW_INDEX.read_text(encoding="utf-8"))
+
+
+@mcp.custom_route("/api/view", ["GET"])
+async def api_view(request):
+    """Shape a map into a prepared view payload (same logic render_view uses)."""
+    q = request.query_params
+    spec = {"kind": q.get("kind"), "of": q.get("of") or q.get("filter"), "title": q.get("title"),
+            "metric": q.get("metric"), "groupBy": q.get("groupBy") or q.get("group"), "agg": q.get("agg"),
+            "sortBy": q.get("sortBy") or q.get("sort"), "sortDir": q.get("sortDir")}
+    if q.get("columns"):
+        spec["columns"] = [c.strip() for c in q["columns"].split(",") if c.strip()]
+    spec = {k: v for k, v in spec.items() if v is not None}
+    try:
+        store = REGISTRY.resolve(q.get("map"))
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return JSONResponse(_build_view(store.to_dict(), spec))
 
 
 @mcp.custom_route("/api/act", ["POST"])

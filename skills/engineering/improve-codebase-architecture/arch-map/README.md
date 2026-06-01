@@ -69,6 +69,7 @@ All take `map` — the project map to act on (see above).
 | `mark_updated(map, module, updated=True)` | toggle the updated halo |
 | `resolve(map, suggestion_id)` | dismiss a suggestion |
 | `add_module` / `update_module` / `delete_module` (+ bulk `*_modules`) | module CRUD on `map` |
+| `render_view(map, spec)` | on-brand ad-hoc **view** — a table or bar chart of the map, drawn with the studio's design (the on-brand answer to "chart depth", "table of orphans"). Browser: `/view?map=…&kind=bar&metric=coverage&groupBy=domain` |
 | `start_grilling(map, module)` | UI callback → hands off to the grilling loop |
 
 ## Run
