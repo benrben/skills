@@ -335,3 +335,30 @@
 .onb-foot .spacer { flex: 1; }
 .onb-foot .skip { font-size: 12.5px; color: var(--text-faint); background: none; border: 0; }
 .onb-foot .skip:hover { color: var(--text-dim); }
+
+/* --- Fathom: planned (intended-plane) nodes, grilling status, plan tags --- */
+.node.planned {
+  border-style: dashed;
+  border-color: var(--accent-ring, var(--border-strong));
+  background: var(--panel-2, var(--panel));
+  opacity: .82;
+}
+.node.planned .node-id::before { content: "◇ "; color: var(--text-faint); }
+
+.cand-status {
+  margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: .05em; border: 1px solid var(--border-strong);
+  color: var(--text-dim); background: var(--panel-2, var(--panel));
+}
+.cand-status.requested { color: var(--warn, #b8860b); border-color: var(--warn, #b8860b); }
+.cand-status.grilling { color: var(--accent); border-color: var(--accent); }
+.cand-status.grilled { color: var(--text-faint); }
+
+.planned-tag {
+  font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: .05em; padding: 0 6px; border-radius: 999px;
+  border: 1px dashed var(--border-strong); color: var(--text-faint);
+}
+
+.cand-more { margin-top: 8px; font-size: 11px; color: var(--text-faint); font-style: italic; }

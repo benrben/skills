@@ -105,28 +105,33 @@
     return fields;
   }
 
+  function normSug(s) {
+    return {
+      sid: s.id,
+      strength: STRENGTH_TO_KEY[s.strength] || strengthKey(s.strength),
+      title: s.title || "", problem: s.problem || "", solution: s.solution || "",
+      wins: Array.isArray(s.wins) ? s.wins : [],
+      status: s.status || "open", decision: s.decision || "", note: s.note || "",
+    };
+  }
   function normalize(raw) {
     const decisions = {};
     const modules = (raw.modules || []).map((m) => {
-      const s = m.suggestion;
-      let suggestion = null;
-      if (s) {
-        const key = STRENGTH_TO_KEY[s.strength] || strengthKey(s.strength);
-        suggestion = {
-          sid: s.id,
-          strength: key,
-          title: s.title || "",
-          problem: s.problem || "",
-          solution: s.solution || "",
-          wins: Array.isArray(s.wins) ? s.wins : [],
+      // The backend keeps a QUEUE of candidates per module (m.suggestions); fall
+      // back to the back-compat single m.suggestion for older payloads.
+      const raws = (Array.isArray(m.suggestions) && m.suggestions.length)
+        ? m.suggestions : (m.suggestion ? [m.suggestion] : []);
+      const suggestions = raws.map(normSug);
+      // primary = first still-open candidate (drives the ⚠ ring + the inspector card)
+      const suggestion = suggestions.find((x) => !x.decision && x.status !== "done") || null;
+      // a decided candidate still shows its verdict badge (the durable record)
+      const decided = suggestions.find((x) => x.decision);
+      if (decided) {
+        decisions[m.id] = {
+          verdict: DECISION_TO_VERDICT[decided.decision] || decided.decision,
+          reason: decided.note || "",
+          at: null,
         };
-        if (s.decision) {
-          decisions[m.id] = {
-            verdict: DECISION_TO_VERDICT[s.decision] || s.decision,
-            reason: s.note || "",
-            at: null,
-          };
-        }
       }
       return {
         id: m.id,
@@ -135,12 +140,15 @@
         depth: Math.round((m.depth || 0) * 100),
         coverage: Math.round((m.coverage || 0) * 100),
         updated: !!m.updated,
+        plane: m.plane || "actual",
+        lifecycle: m.lifecycle || "built",
         interface: m.iface || "",
         files: Array.isArray(m.files) ? m.files : [],
         tests: testsToArray(m.tests),
         dependsOn: Array.isArray(m.dependsOn) ? m.dependsOn : [],
         leaks: Array.isArray(m.leaksTo) ? m.leaksTo : [],
         suggestion,
+        suggestions,
       };
     });
     return { repo: raw.repo || "", modules, decisions, seq: (cur.seq || 0) + 1 };

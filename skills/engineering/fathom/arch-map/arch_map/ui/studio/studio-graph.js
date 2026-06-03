@@ -77,7 +77,7 @@ window.Studio = window.Studio || {};
   function makeNode(m) {
     const tier = tierOf(m.depth);
     const el = document.createElement("div");
-    el.className = `node tier-${tier}${m.updated ? " updated" : ""}`;
+    el.className = `node tier-${tier}${m.updated ? " updated" : ""}${m.plane === "intended" ? " planned" : ""}`;
     el.dataset.id = m.id;
     el.innerHTML = nodeInner(m);
     el.title = `${m.label} — ${m.domain}`;
@@ -101,7 +101,7 @@ window.Studio = window.Studio || {};
     layout.placedIds.forEach((id) => {
       const m = S.model.modules.find((x) => x.id === id), el = nodeEl[id];
       if (!m || !el) return;
-      el.className = `node tier-${tierOf(m.depth)}${m.updated ? " updated" : ""}`;
+      el.className = `node tier-${tierOf(m.depth)}${m.updated ? " updated" : ""}${m.plane === "intended" ? " planned" : ""}`;
       el.innerHTML = nodeInner(m);
     });
     refreshVisualState();

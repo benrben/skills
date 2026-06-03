@@ -159,7 +159,7 @@ window.Studio = window.Studio || {};
     if (open) {
       const st = STRENGTHS[m.suggestion.strength];
       sug = `<div class="sug-block ${m.suggestion.strength}">
-          <div class="sug-hd"><span class="strength-tag ${m.suggestion.strength}">${st.label}</span></div>
+          <div class="sug-hd"><span class="strength-tag ${m.suggestion.strength}">${st.label}</span>${m.suggestion.status && m.suggestion.status !== "open" ? `<span class="cand-status ${m.suggestion.status}">${m.suggestion.status}</span>` : ""}</div>
           <div class="sug-bd">
             <p class="sug-title">${m.suggestion.title}</p>
             <p><b>Problem.</b> ${m.suggestion.problem}</p>
@@ -175,7 +175,7 @@ window.Studio = window.Studio || {};
 
     els.inspPane.innerHTML = `
       <div class="insp-head">
-        <div class="it"><div><div class="insp-id">${m.id}</div><div class="insp-label">${m.label} · ${m.domain}</div></div></div>
+        <div class="it"><div><div class="insp-id">${m.id}</div><div class="insp-label">${m.label} · ${m.domain}${m.plane === "intended" ? ' · <span class="planned-tag">planned</span>' : ""}</div></div></div>
         <div class="insp-tags">${tags.join("")}</div>
       </div>
       <div class="insp-body">
@@ -189,7 +189,7 @@ window.Studio = window.Studio || {};
         <div class="dr-sec"><h5>Used by</h5>${usedPills}</div>
         <div class="dr-sec"><h5>Files</h5><div class="file-list">${(m.files || []).map((f) => `<code>${f}</code>`).join("") || "<span class='no-sug' style='padding:9px'>none</span>"}</div></div>
         <div class="dr-sec"><h5>Tests</h5><div class="test-list">${(m.tests || []).map((t) => `<code>${t}</code>`).join("") || "<span class='no-sug' style='padding:9px'>no tests</span>"}</div></div>
-        <div class="dr-sec"><h5>Agent proposal</h5>${sug}</div>
+        <div class="dr-sec"><h5>Agent proposal</h5>${sug}${(m.suggestions && m.suggestions.length > 1) ? `<div class="cand-more">+${m.suggestions.length - 1} more candidate(s) on this module (history kept)</div>` : ""}</div>
         <div class="danger-zone" id="dz"></div>
       </div>`;
 
