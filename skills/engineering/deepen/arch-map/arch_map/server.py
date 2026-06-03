@@ -723,6 +723,15 @@ def grilling_queue(map: str) -> dict:
 
 
 @mcp.tool(**_APP)
+def mark_grilling(map: str, suggestion_id: str) -> dict:
+    """Mark a candidate as actively being grilled (status -> 'grilling'). Call at the
+    start of the /deepen grilling loop; grilling_done closes it out. Re-renders."""
+    store = REGISTRY.store(map)
+    store.mark_grilling(suggestion_id)
+    return _ack(store)
+
+
+@mcp.tool(**_APP)
 def grilling_done(map: str, suggestion_id: str, decision: str, note: str = "", adr: str = "") -> dict:
     """Close a grilling loop: mark the candidate grilled and record the verdict
     (accepted | deferred | rejected) + reason (+ optional docs/adr/NNNN path), then
