@@ -1,6 +1,11 @@
 {
   "name": "fathom",
   "skills": [
-    "./skills/engineering/deepen"
+    "./skills/engineering/map",
+    "./skills/engineering/understand",
+    "./skills/engineering/deepen",
+    "./skills/engineering/plan",
+    "./skills/engineering/code",
+    "./skills/engineering/adr-writer"
   ]
 }

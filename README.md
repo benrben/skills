@@ -10,17 +10,14 @@ Every skill speaks one vocabulary ([LANGUAGE.md](./skills/engineering/deepen/LAN
 
 ## The suite
 
-**Shipped:**
+Six skills, one lifecycle — **map → understand → deepen → plan → code**, with `adr-writer` recording decisions. All speak one vocabulary and share one model.
 
-- [`deepen`](./skills/engineering/deepen/SKILL.md) — find friction in existing shallow modules, present candidates, and **grill** the chosen one; updates `CONTEXT.md` and offers ADRs as decisions crystallize.
-
-**Designed, in progress** (see the design notes in this branch):
-
-- `map` — build and keep honest the **actual** model of what the codebase IS (seed via exploration; reconcile on demand).
-- `understand` — a read-only guided tour of a map (entry interfaces, deepest modules, hot-spots).
-- `plan` — design the **intended** deep-module graph for new or changing work, before code.
-- `code` — execute a chosen deepening (refactor shallow→deep, or build to a planned interface). The only skill that edits source.
-- `adr-writer` — record load-bearing decisions as `docs/adr/NNNN-*.md`.
+- [`map`](./skills/engineering/map/SKILL.md) — build and keep honest the **actual** model of what the codebase IS (seed via exploration; reconcile on demand). The only writer of the actual plane besides `code`.
+- [`understand`](./skills/engineering/understand/SKILL.md) — a read-only guided tour of a map (entry interfaces, deepest modules, leak hot-spots). The front door; writes nothing.
+- [`deepen`](./skills/engineering/deepen/SKILL.md) — find friction in **existing** shallow modules, present candidates, and **grill** the chosen one; records decisions and offers ADRs as they crystallize.
+- [`plan`](./skills/engineering/plan/SKILL.md) — design the **intended** deep-module graph for new or changing work (seams, interfaces, sequenced build steps), before code.
+- [`code`](./skills/engineering/code/SKILL.md) — execute a chosen deepening (refactor shallow→deep, or build to a planned interface). The **only** skill that edits source.
+- [`adr-writer`](./skills/engineering/adr-writer/SKILL.md) — record load-bearing decisions as `docs/adr/NNNN-*.md` (general-purpose; the Fathom skills offer it).
 
 ## The spine: `arch-map`
 

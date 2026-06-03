@@ -1,11 +1,11 @@
 ---
 name: deepen
-description: Find deepening opportunities in a codebase, informed by the domain language in CONTEXT.md and the decisions in docs/adr/. Use when the user wants to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable and AI-navigable.
+description: Find friction in a codebase's EXISTING shallow modules, present deepening candidates, and grill the chosen one until it's accepted, deferred, or rejected — turning shallow modules (interface ≈ as complex as the implementation) into deep ones for testability and AI-navigability. Reads an existing arch-map; records decisions and offers ADRs as they crystallize. Use when the user wants to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable. Do NOT use for: seeding or reconciling the map of what the code IS (use fathom:map), designing the intended structure for new/changing work from scratch (use fathom:plan), or editing source to carry out a deepening (use fathom:code) — deepen decides WHETHER and grills HOW, it never writes source.
 ---
 
-# Improve Codebase Architecture
+# Deepen
 
-Surface architectural friction and propose **deepening opportunities** — refactors that turn shallow modules into deep ones. The aim is testability and AI-navigability.
+Surface architectural friction in **existing** modules and propose **deepening opportunities** — refactors that turn shallow modules into deep ones. The aim is testability and AI-navigability. `deepen` is the friction-finder of the Fathom suite: it reads the map of what the code *is*, flags candidates, and grills the chosen one to a decision. It does not build the map (that's **fathom:map**), design new structure (that's **fathom:plan**), or edit source (that's **fathom:code**).
 
 ## Glossary
 
@@ -32,9 +32,14 @@ This skill is _informed_ by the project's domain model. The domain language give
 
 ### 1. Explore
 
-Read the project's domain glossary and any ADRs in the area you're touching first.
+Read the project's domain glossary (`CONTEXT.md`) and any ADRs in the area you're touching first, so you name modules the way the project does and don't re-litigate settled decisions.
 
-Then use the Agent tool with `subagent_type=Explore` to walk the codebase. Don't follow rigid heuristics — explore organically and note where you experience friction:
+`deepen` reads an **existing** map of the actual codebase — it does not build one. So before exploring, check whether a map already exists with `list_maps()`:
+
+- **A map exists for this project** → resume it (reuse that `map` id). That map is the actual-plane model of what the code *is*; start from its shallow nodes, leak edges, and low-coverage rings rather than re-walking everything cold.
+- **No map exists** → there's nothing to deepen against yet. Hand baseline-seeding to **fathom:map**, which walks the codebase with Explore subagents and populates the actual plane (`create_project` → `add_modules` → `set_depth`/`set_coverage`). Once it returns the seeded `map` id, come back here and resume it. (Do **not** seed the map yourself — keeping the actual plane is fathom:map's job, and grilling against a model someone else built honest is the whole point of the shared spine.)
+
+If you are working without the map at all (no MCP host, one-shot review), use the Agent tool with `subagent_type=Explore` to walk the codebase directly. Don't follow rigid heuristics — explore organically and note where you experience friction:
 
 - Where does understanding one concept require bouncing between many small modules?
 - Where are modules **shallow** — interface nearly as complex as the implementation?
@@ -46,11 +51,13 @@ Apply the **deletion test** to anything you suspect is shallow: would deleting i
 
 ### 2. Present candidates as an HTML report
 
+If you're driving a living map (step 2a), flag candidates onto the map instead of (or alongside) writing this report; the studio renders them. Use the report when there's no map and you want a one-shot artifact.
+
 Write a self-contained HTML file to the OS temp directory so nothing lands in the repo. Resolve the temp dir from `$TMPDIR`, falling back to `/tmp` (or `%TEMP%` on Windows), and write to `<tmpdir>/architecture-review-<timestamp>.html` so each run gets a fresh file. Open it for the user — `xdg-open <path>` on Linux, `open <path>` on macOS, `start <path>` on Windows — and tell them the absolute path.
 
 The report uses **Tailwind via CDN** for layout and styling, and **Mermaid via CDN** for diagrams where a graph/flow/sequence reliably communicates the structure. Mix Mermaid with hand-crafted CSS/SVG visuals — use Mermaid when relationships are graph-shaped (call graphs, dependencies, sequences), and hand-built divs/SVG when you want something more editorial (mass diagrams, cross-sections, collapse animations). Each candidate gets a **before/after visualisation**. Be visual.
 
-For each candidate, the same template as before, but rendered as a card:
+For each candidate, render a card with:
 
 - **Files** — which files/modules are involved
 - **Problem** — why the current architecture is causing friction
@@ -67,26 +74,73 @@ End the report with a **Top recommendation** section: which candidate you'd tack
 
 See [HTML-REPORT.md](HTML-REPORT.md) for the full HTML scaffold, diagram patterns, and styling guidance.
 
-Do NOT propose interfaces yet. After the file is written, ask the user: "Which of these would you like to explore?"
+Do NOT propose interfaces yet. After the candidates are presented, ask the user: "Which of these would you like to explore?"
 
-### 2a. (Optional) Drive a living map instead of a one-shot report
+### 2a. (Preferred) Flag candidates onto the living map
 
-The skill ships a companion FastMCP server in [arch-map/](arch-map/) that turns the one-shot report into a **persistent, agent-maintained network map**. When a UI-capable MCP host is connected (Claude desktop/web, VS Code Insiders, Goose), prefer it over the static HTML — it renders the whole codebase as a graph and you keep it current by calling tools rather than rewriting a file. It's registered for this repo in `.mcp.json` as `arch-map`.
+The suite ships a companion FastMCP server in [arch-map/](arch-map/) — the shared, file-backed **spine** every Fathom skill reads and writes. When a UI-capable MCP host is connected (Claude desktop/web, VS Code Insiders, Goose), prefer it over the static HTML: the map renders the whole codebase as a graph and your candidates show up as ⚠ rings on the nodes they touch, where they survive across sessions and skills. It's registered for this repo in `.mcp.json` as `arch-map`.
 
-- `show_map()` — render the network. Node size = depth, green ring = coverage, blue halo = updated, ⚠ ring = open suggestion (coloured by strength), red edge = leak, orphan tray = **not connected**.
-- `flag_deepening(module, title, strength, category, problem, solution, wins)` — attach a candidate. Same `Strong` / `Worth exploring` / `Speculative` strengths and the same [LANGUAGE.md](LANGUAGE.md) vocabulary as the report.
-- `set_depth` / `set_coverage` / `mark_updated` — keep the model honest as you explore.
-- `resolve(suggestion_id)` — clear a candidate the grilling loop rejected.
+Use the **same vocabulary as everywhere else** — module, interface, depth, seam, adapter, leverage, locality ([LANGUAGE.md](LANGUAGE.md)) — and the **same domain names** from `CONTEXT.md`. A module's `domain` field is the `CONTEXT.md` context it belongs to; its `label` is the domain concept ("Order intake"), never "FooBarHandler".
 
-Clicking **Grill this candidate →** on a node calls `start_grilling` and drops into step 3. See [arch-map/README.md](arch-map/README.md) for setup and the host caveat — a terminal session can drive the tools but can't render the graph.
+**The map is shared and file-backed — there is no per-agent state, and every tool takes the map id as its first argument (`map`).** So you must name the map on every call.
+
+#### Resume the map (don't seed it)
+
+`deepen` operates on the **actual plane** that **fathom:map** built. You only ever *read* and *annotate* it here — you do not create modules or set their depth/coverage from scratch.
+
+1. `list_maps()` — find the map for this project and reuse its `map` id. (If none exists, hand off to **fathom:map** to seed it first — see step 1.)
+2. `show_map(map)` — render the network. Node size = depth, green ring = coverage, blue halo = updated, ⚠ ring = open suggestion (coloured by strength), red edge = leak, orphan tray = **not connected**. The shallow nodes, leak edges, and thin coverage rings are your candidate list.
+3. `get_model(map)` (full model) or `get_module(map, module)` (one node) when you need the interface text, files, tests, and any existing suggestions back **in your context** — a tool result rendered into the studio does not reach you on its own (see "The tool result is invisible to the model" below).
+
+#### Flag a candidate per friction you found
+
+For each shallow/leaky module that survived the deletion test, attach a deepening candidate:
+
+```
+flag_deepening(
+  map,                       # the resumed map id
+  module,                    # the existing node it deepens
+  title,                     # short headline, e.g. "Fold validation behind the Order intake seam"
+  strength,                  # "Strong" | "Worth exploring" | "Speculative" — exact strings; the badge colour keys off them
+  category,                  # the dependency category at the seam — see DEEPENING.md: in-process | local-substitutable | ports & adapters | true external
+  problem,                   # the friction, in LANGUAGE.md terms (shallow, leak, no locality)
+  solution,                  # the deepening, in plain English
+  wins=[...],                # list of strings: the leverage/locality/testability wins
+)
+```
+
+`flag_deepening` is the map equivalent of a report card — emit one for each candidate. It derives the suggestion id deterministically as `f"{module}-{strength}"` lower-cased with spaces dashed (e.g. module `order-intake`, strength `Strong` → `order-intake-strong`); that's the `suggestion_id` you pass to `decide`/`resolve`/`grilling_done` later. A module can hold several candidates at once.
+
+You may sharpen the **annotations** as you go — `mark_updated(map, module)` to flag a node you re-examined; `update_module(map, module, {iface: "...", leaksTo: [...]})` to record a leak or tighten the interface text you now understand better. But do **not** invent new modules, re-baseline depth, or reconcile the plane — if the map is stale or wrong about what the code *is*, that's a fathom:map job; ask the user to re-run it.
+
+#### The tool result is invisible to the model
+
+In an MCP-App host, a tool result is delivered to the rendering **iframe** (it drives the studio's redraw) and resolves the call — it does **not** add anything to the conversation or to your context. So treat these tools as side effects plus optional data retrieval, and read state back with `get_model` / `show_map` / `get_module` when you need it in context. `render_view(map, spec)` draws an on-brand ad-hoc table/bar chart, e.g. `render_view(map, {"kind":"table","of":"shallow","columns":["id","domain","depth","coverage"],"sortBy":"depth","sortDir":"asc"})`.
+
+#### The grill hand-off
+
+Clicking **Grill this candidate →** on a node calls `start_grilling(map, module)`. It persists that node's first open candidate as `requested` (so any surface can pick it up) and returns the prompt that drops into step 3. What that does depends on the host:
+
+- **MCP-App host (Claude desktop/web, VS Code Insiders, Goose):** the studio iframe handles the click. Per the MCP-Apps bridge, only `app.sendMessage` (`ui/message`) actually posts a conversation message **and triggers a follow-up agent turn** — it is the single trigger that starts the grilling loop. It is feature-gated on `app.getHostCapabilities()?.message`, and the message `role` is hardcoded to **`"user"`** (the only value the host accepts). `app.updateModelContext` (`ui/update-model-context`, gated on `?.updateModelContext`) stages the candidate's full body into your context **without** triggering a turn; `app.callServerTool` (gated on `?.serverTools`) runs side effects whose results stay in the iframe. So: stage context with `updateModelContext`, run side effects with `callServerTool`, and let `sendMessage` be the one thing that hands control to the agent.
+- **Browser studio (HTTP):** a browser cannot trigger an agent turn, so the button only persists the candidate as `requested` and hands back the canonical prompt plus a `/deepen resume <map>` line for the user to paste into their agent.
+- **Plain terminal (Claude Code):** you can call every tool, but the host can't render the iframe — there's no graph and no clickable button. Discover candidates a UI flagged with `grilling_queue(map)`, or just begin step 3 directly when the user picks one.
+
+See [arch-map/README.md](arch-map/README.md) for setup and the host caveat.
 
 ### 3. Grilling loop
 
-Once the user picks a candidate, drop into a grilling conversation. Walk the design tree with them — constraints, dependencies, the shape of the deepened module, what sits behind the seam, what tests survive.
+If you're driving the living map, **resume it first**: `list_maps()` to find the `map`, then `grilling_queue(map)` to see candidates a studio/browser flagged but no agent has picked up, and `get_model(map)` (or `get_module(map, module)`) to pull the chosen candidate's full body — interface, depth, coverage, and the open suggestion's `problem`/`solution`/`wins` — back into your context (a tool result rendered into the studio doesn't reach you on its own). If you arrived via the **Grill this candidate →** button, `start_grilling(map, module)` already named the map and module in the hand-off prompt. As you begin, call `mark_grilling(map, suggestion_id)` so the candidate's status reflects that it's being grilled.
+
+Now drop into a grilling conversation. Walk the design tree with the user — constraints, dependencies and their [DEEPENING.md](DEEPENING.md) category, the shape of the deepened module, what sits behind the seam, what tests survive. Pressure the candidate: one adapter or two? Does the deletion test still hold once you see the call sites? Is the interface really the test surface, or are you testing past it?
 
 Side effects happen inline as decisions crystallize:
 
-- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `CONTEXT.md` — same discipline as `/grill-with-docs` (see [CONTEXT-FORMAT.md](CONTEXT-FORMAT.md)). Create the file lazily if it doesn't exist.
+- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `CONTEXT.md`, following the discipline in [CONTEXT-FORMAT.md](CONTEXT-FORMAT.md) (be opinionated, keep definitions tight, only project-specific terms). Create the file lazily if it doesn't exist. On a map, also nudge the node's text to match via `update_module(map, module, {label: "...", domain: "..."})` — but do not re-baseline its depth/coverage (that's fathom:map's plane to keep).
 - **Sharpening a fuzzy term during the conversation?** Update `CONTEXT.md` right there.
-- **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. See [ADR-FORMAT.md](ADR-FORMAT.md).
-- **Want to explore alternative interfaces for the deepened module?** See [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md).
+- **User accepts or defers the candidate?** Record the verdict on the map. The simplest path is `decide(map, suggestion_id, "accepted", note="…")` or `decide(map, suggestion_id, "deferred", note="…")` — the decision and reason stick to the candidate and show in the studio's proposal queue; pass `""` as the decision to re-open one. If you grilled it through `start_grilling`/`mark_grilling`, close the loop atomically with `grilling_done(map, suggestion_id, "accepted", note="…")` instead, which marks it grilled and records the verdict in one call. **An accepted candidate is a hand-off to fathom:code** — `deepen` decides *whether* and grills *how*; carrying out the refactor (shallow→deep, then `realize_module` to reconcile the map) belongs to fathom:code, the only skill that edits source. Tell the user that's the next step.
+- **User rejects the candidate with a load-bearing reason?** Two things, in this order:
+  1. **Record the rejection on the map** with `decide(map, suggestion_id, "rejected", note=reason)` — **never `resolve()`**. `resolve(map, suggestion_id)` dismisses the candidate (status `done`) and is for the *never-load-bearing* case ("not worth it right now"); it keeps no reason a future reviewer can act on. `decide(... "rejected", note=…)` keeps the candidate as the durable record **with the reason attached**, so the next explorer — and the next scan — sees *why* it was rejected and doesn't re-suggest it.
+  2. **Offer an ADR** when the reason qualifies, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when all three ADR tests hold — **hard to reverse, surprising without context, the result of a real trade-off** ([ADR-FORMAT.md](ADR-FORMAT.md)). Skip ephemeral reasons ("not worth it right now") and self-evident ones. Writing the ADR file itself is **fathom:adr-writer's** job — it owns the `docs/adr/NNNN-slug.md` numbering and template; `deepen` only offers and hands off. Once written, point the rejection at it so the map and the ADR cross-reference each other: close via `grilling_done(map, suggestion_id, "rejected", note="…", adr="docs/adr/0007-keep-ordering-and-billing-decoupled.md")`, or set the note to reference the path if you used plain `decide`.
+- **Want to explore alternative interfaces for the deepened module?** That's design-it-twice work on the **intended** structure — hand off to **fathom:plan** ([INTERFACE-DESIGN.md](INTERFACE-DESIGN.md) describes the parallel-sub-agent pattern it uses). `deepen` grills the candidate to a decision; designing the new interface graph from scratch is fathom:plan's job, and building it is fathom:code's.
+
+(There is no separate "mark grilled" tool to call by hand — `grilling_done(...)` records a grilled candidate's outcome, and `decide(...)` records a decision taken outside the grilling lifecycle.)
