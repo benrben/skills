@@ -28,7 +28,7 @@ Only write an ADR when **all three** hold:
 2. **Surprising without context** — a future reader will look at the code and wonder "why on earth did they do it this way?". If it isn't surprising, nobody will wonder.
 3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons. If there was no real alternative, there is nothing to record beyond "we did the obvious thing."
 
-What qualifies (see [./ADR-FORMAT.md](./ADR-FORMAT.md) for the full lists):
+What qualifies (see [./ADR-FORMAT.md](../fathom/ADR-FORMAT.md) for the full lists):
 
 - **Architectural shape** — "the write model is event-sourced, the read model is projected into Postgres."
 - **Integration patterns between contexts** — "Ordering and Billing communicate via domain events, not synchronous HTTP."
@@ -40,7 +40,7 @@ What qualifies (see [./ADR-FORMAT.md](./ADR-FORMAT.md) for the full lists):
 
 If the decision fails any gate, do not write a file. Tell the caller plainly why (e.g. "this is easy to reverse, so an ADR would just be noise") and stop. When the caller is a Fathom skill, still record the rejection reason on the spine (step 4) — the map should remember the *why* even when no ADR is warranted.
 
-When speaking about architecture in the ADR body, use the [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md) vocabulary — **module / interface / depth / seam / adapter / leverage / locality**, the **deletion test**, *the interface is the test surface*, *one adapter is a hypothetical seam, two is a real one*. Never "component", "service", "API", or "boundary".
+When speaking about architecture in the ADR body, use the [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) vocabulary — **module / interface / depth / seam / adapter / leverage / locality**, the **deletion test**, *the interface is the test surface*, *one adapter is a hypothetical seam, two is a real one*. Never "component", "service", "API", or "boundary".
 
 ### 2. Pick the next number
 
@@ -55,7 +55,7 @@ The file is `docs/adr/NNNN-slug.md` — four-digit zero-padded number, a short k
 
 ### 3. Write a tight ADR
 
-Follow [./ADR-FORMAT.md](./ADR-FORMAT.md). The template is deliberately minimal:
+Follow [./ADR-FORMAT.md](../fathom/ADR-FORMAT.md). The template is deliberately minimal:
 
 ```md
 # {Short title of the decision}

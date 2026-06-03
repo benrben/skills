@@ -11,7 +11,7 @@ This is the suite's surveyor. It turns a repository into an accurate, persistent
 
 ## Glossary
 
-Speak only this vocabulary — never "component," "service," "API," or "boundary." Full definitions in [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md).
+Speak only this vocabulary — never "component," "service," "API," or "boundary." Full definitions in [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md).
 
 - **Module** — anything with an interface and an implementation (function, class, package, tier-spanning slice). Scale-agnostic: a single deep function and a whole slice can each be one node.
 - **Interface** — everything a caller must know to use the module: types, invariants, ordering, error modes, required config. Not just the type signature.
@@ -63,13 +63,13 @@ Call `list_maps()` and decide **resume vs create**:
 - **A map for this repo already exists** → resume it (this run is a health check / drift reconcile). Capture its `map` id.
 - **No map exists** → `create_project("<human repo name>")` and capture the returned `map` id (e.g. `"my-repo"`). Every later call passes it.
 
-Then read the repo's `CONTEXT.md` / `CONTEXT-MAP.md` so module domains and labels use the project's domain language ([../deepen/CONTEXT-FORMAT.md](../deepen/CONTEXT-FORMAT.md)), and skim `docs/adr/` so you treat recorded decisions as **facts about what is** — never as things to challenge or re-suggest ([../deepen/ADR-FORMAT.md](../deepen/ADR-FORMAT.md)).
+Then read the repo's `CONTEXT.md` / `CONTEXT-MAP.md` so module domains and labels use the project's domain language ([../fathom/CONTEXT-FORMAT.md](../fathom/CONTEXT-FORMAT.md)), and skim `docs/adr/` so you treat recorded decisions as **facts about what is** — never as things to challenge or re-suggest ([../fathom/ADR-FORMAT.md](../fathom/ADR-FORMAT.md)).
 
 If the map already exists, skip to **step 6 (Reconcile)**. A fresh map runs steps 2–5.
 
 ### 2. Seed — walk the real code (empty map only)
 
-Dispatch **Explore subagents** (Agent tool, `subagent_type=Explore`) to walk the codebase organically — by directory, by domain from `CONTEXT.md`, or by entry interfaces — not by rigid metrics. Brief each subagent in [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md) + `CONTEXT.md` vocabulary and ask it to report, per candidate module:
+Dispatch **Explore subagents** (Agent tool, `subagent_type=Explore`) to walk the codebase organically — by directory, by domain from `CONTEXT.md`, or by entry interfaces — not by rigid metrics. Brief each subagent in [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) + `CONTEXT.md` vocabulary and ask it to report, per candidate module:
 
 - the **files** that compose it,
 - its **interface** — everything a caller must know: types, invariants, ordering, error modes, required config,
@@ -85,7 +85,7 @@ Dispatch **Explore subagents** (Agent tool, `subagent_type=Explore`) to walk the
 - **size** — relative implementation mass.
 - **dependsOn** — real edges only, resolved by module id.
 - **leaksTo** — a judgement call about seam violations (rendered as a red edge).
-- **iface / seam / files / tests** — prose plus the file list. Use [../deepen/DEEPENING.md](../deepen/DEEPENING.md)'s dependency-category vocabulary only to **describe an edge accurately** (in-process, local-substitutable, ports & adapters, true external) — never to propose a fix.
+- **iface / seam / files / tests** — prose plus the file list. Use [../fathom/DEEPENING.md](../fathom/DEEPENING.md)'s dependency-category vocabulary only to **describe an edge accurately** (in-process, local-substitutable, ports & adapters, true external) — never to propose a fix.
 
 Record modules at the granularity that **earns its keep** — a module is scale-agnostic, so a tier-spanning slice and a single deep function can both be nodes. Name domains and labels with `CONTEXT.md` terms.
 
@@ -138,7 +138,7 @@ mark_updated("my-repo", "order-intake", False)
 
 ### 7. Maintain the domain language as a side effect
 
-If seeding or reconciling surfaces a **load-bearing concept** that `CONTEXT.md` doesn't name, add the term ([../deepen/CONTEXT-FORMAT.md](../deepen/CONTEXT-FORMAT.md) discipline; create the file lazily if it doesn't exist). Do **not** invent ADRs here — fathom:map records facts, not decisions. If reconciling reveals a decision worth recording, note it and hand off to [adr-writer](../adr-writer/SKILL.md).
+If seeding or reconciling surfaces a **load-bearing concept** that `CONTEXT.md` doesn't name, add the term ([../fathom/CONTEXT-FORMAT.md](../fathom/CONTEXT-FORMAT.md) discipline; create the file lazily if it doesn't exist). Do **not** invent ADRs here — fathom:map records facts, not decisions. If reconciling reveals a decision worth recording, note it and hand off to [adr-writer](../adr-writer/SKILL.md).
 
 ### 8. Close out and hand off
 

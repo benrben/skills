@@ -11,7 +11,7 @@ This is the **front door** of the Fathom suite. It reads the shared spine the ar
 
 ## Glossary
 
-Speak these terms exactly, the same way every Fathom skill does — don't drift into "component," "service," "API," or "boundary." Full definitions in [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md).
+Speak these terms exactly, the same way every Fathom skill does — don't drift into "component," "service," "API," or "boundary." Full definitions in [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md).
 
 - **Module** — anything with an interface and an implementation (function, class, package, slice).
 - **Interface** — everything a caller must know to use the module: types, invariants, error modes, ordering, required configuration. Not just the type signature.
@@ -22,7 +22,7 @@ Speak these terms exactly, the same way every Fathom skill does — don't drift 
 - **Leverage** — what callers get from depth.
 - **Locality** — what maintainers get from depth: change, bugs, and knowledge concentrated in one place.
 
-Two principles do most of the explaining on a tour (see [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md) for the full set):
+Two principles do most of the explaining on a tour (see [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) for the full set):
 
 - **The interface is the test surface.** A module's interface is what callers *and* tests cross — so coverage at the interface tells you how trustworthy the module is to lean on.
 - **The deletion test** explains *why* a deep module earns its keep: imagine deleting it and watch complexity reappear across N callers.
@@ -98,7 +98,7 @@ Scope each lens to what the user asked for. "Give me a tour" earns all three acr
 
 ### 4. Narrate the tour
 
-Tell the story in the project's own domain vocabulary (the `domain` and `label` fields, set from CONTEXT.md) and the architecture vocabulary from [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md). Talk about "the Order intake module," not "the OrderHandler" and not "the Order service."
+Tell the story in the project's own domain vocabulary (the `domain` and `label` fields, set from CONTEXT.md) and the architecture vocabulary from [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md). Talk about "the Order intake module," not "the OrderHandler" and not "the Order service."
 
 Structure a full tour as:
 

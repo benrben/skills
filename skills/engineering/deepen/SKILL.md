@@ -9,7 +9,7 @@ Surface architectural friction in **existing** modules and propose **deepening o
 
 ## Glossary
 
-Use these terms exactly in every suggestion. Consistent language is the point — don't drift into "component," "service," "API," or "boundary." Full definitions in [LANGUAGE.md](LANGUAGE.md).
+Use these terms exactly in every suggestion. Consistent language is the point — don't drift into "component," "service," "API," or "boundary." Full definitions in [LANGUAGE.md](../fathom/LANGUAGE.md).
 
 - **Module** — anything with an interface and an implementation (function, class, package, slice).
 - **Interface** — everything a caller must know to use the module: types, invariants, error modes, ordering, config. Not just the type signature.
@@ -20,7 +20,7 @@ Use these terms exactly in every suggestion. Consistent language is the point �
 - **Leverage** — what callers get from depth.
 - **Locality** — what maintainers get from depth: change, bugs, knowledge concentrated in one place.
 
-Key principles (see [LANGUAGE.md](LANGUAGE.md) for the full list):
+Key principles (see [LANGUAGE.md](../fathom/LANGUAGE.md) for the full list):
 
 - **Deletion test**: imagine deleting the module. If complexity vanishes, it was a pass-through. If complexity reappears across N callers, it was earning its keep.
 - **The interface is the test surface.**
@@ -68,19 +68,19 @@ For each candidate, render a card with:
 
 End the report with a **Top recommendation** section: which candidate you'd tackle first and why.
 
-**Use CONTEXT.md vocabulary for the domain, and [LANGUAGE.md](LANGUAGE.md) vocabulary for the architecture.** If `CONTEXT.md` defines "Order," talk about "the Order intake module" — not "the FooBarHandler," and not "the Order service."
+**Use CONTEXT.md vocabulary for the domain, and [LANGUAGE.md](../fathom/LANGUAGE.md) vocabulary for the architecture.** If `CONTEXT.md` defines "Order," talk about "the Order intake module" — not "the FooBarHandler," and not "the Order service."
 
 **ADR conflicts**: if a candidate contradicts an existing ADR, only surface it when the friction is real enough to warrant revisiting the ADR. Mark it clearly in the card (e.g. a warning callout: _"contradicts ADR-0007 — but worth reopening because…"_). Don't list every theoretical refactor an ADR forbids.
 
-See [HTML-REPORT.md](HTML-REPORT.md) for the full HTML scaffold, diagram patterns, and styling guidance.
+See [HTML-REPORT.md](../fathom/HTML-REPORT.md) for the full HTML scaffold, diagram patterns, and styling guidance.
 
 Do NOT propose interfaces yet. After the candidates are presented, ask the user: "Which of these would you like to explore?"
 
 ### 2a. (Preferred) Flag candidates onto the living map
 
-The suite ships a companion FastMCP server in [arch-map/](arch-map/) — the shared, file-backed **spine** every Fathom skill reads and writes. When a UI-capable MCP host is connected (Claude desktop/web, VS Code Insiders, Goose), prefer it over the static HTML: the map renders the whole codebase as a graph and your candidates show up as ⚠ rings on the nodes they touch, where they survive across sessions and skills. It's registered for this repo in `.mcp.json` as `arch-map`.
+The suite ships a companion FastMCP server in [arch-map/](../fathom/arch-map/) — the shared, file-backed **spine** every Fathom skill reads and writes. When a UI-capable MCP host is connected (Claude desktop/web, VS Code Insiders, Goose), prefer it over the static HTML: the map renders the whole codebase as a graph and your candidates show up as ⚠ rings on the nodes they touch, where they survive across sessions and skills. It's registered for this repo in `.mcp.json` as `arch-map`.
 
-Use the **same vocabulary as everywhere else** — module, interface, depth, seam, adapter, leverage, locality ([LANGUAGE.md](LANGUAGE.md)) — and the **same domain names** from `CONTEXT.md`. A module's `domain` field is the `CONTEXT.md` context it belongs to; its `label` is the domain concept ("Order intake"), never "FooBarHandler".
+Use the **same vocabulary as everywhere else** — module, interface, depth, seam, adapter, leverage, locality ([LANGUAGE.md](../fathom/LANGUAGE.md)) — and the **same domain names** from `CONTEXT.md`. A module's `domain` field is the `CONTEXT.md` context it belongs to; its `label` is the domain concept ("Order intake"), never "FooBarHandler".
 
 **The map is shared and file-backed — there is no per-agent state, and every tool takes the map id as its first argument (`map`).** So you must name the map on every call.
 
@@ -125,22 +125,22 @@ Clicking **Grill this candidate →** on a node calls `start_grilling(map, modul
 - **Browser studio (HTTP):** a browser cannot trigger an agent turn, so the button only persists the candidate as `requested` and hands back the canonical prompt plus a `/deepen resume <map>` line for the user to paste into their agent.
 - **Plain terminal (Claude Code):** you can call every tool, but the host can't render the iframe — there's no graph and no clickable button. Discover candidates a UI flagged with `grilling_queue(map)`, or just begin step 3 directly when the user picks one.
 
-See [arch-map/README.md](arch-map/README.md) for setup and the host caveat.
+See [arch-map/README.md](../fathom/arch-map/README.md) for setup and the host caveat.
 
 ### 3. Grilling loop
 
 If you're driving the living map, **resume it first**: `list_maps()` to find the `map`, then `grilling_queue(map)` to see candidates a studio/browser flagged but no agent has picked up, and `get_model(map)` (or `get_module(map, module)`) to pull the chosen candidate's full body — interface, depth, coverage, and the open suggestion's `problem`/`solution`/`wins` — back into your context (a tool result rendered into the studio doesn't reach you on its own). If you arrived via the **Grill this candidate →** button, `start_grilling(map, module)` already named the map and module in the hand-off prompt. As you begin, call `mark_grilling(map, suggestion_id)` so the candidate's status reflects that it's being grilled.
 
-Now drop into a grilling conversation. Walk the design tree with the user — constraints, dependencies and their [DEEPENING.md](DEEPENING.md) category, the shape of the deepened module, what sits behind the seam, what tests survive. Pressure the candidate: one adapter or two? Does the deletion test still hold once you see the call sites? Is the interface really the test surface, or are you testing past it?
+Now drop into a grilling conversation. Walk the design tree with the user — constraints, dependencies and their [DEEPENING.md](../fathom/DEEPENING.md) category, the shape of the deepened module, what sits behind the seam, what tests survive. Pressure the candidate: one adapter or two? Does the deletion test still hold once you see the call sites? Is the interface really the test surface, or are you testing past it?
 
 Side effects happen inline as decisions crystallize:
 
-- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `CONTEXT.md`, following the discipline in [CONTEXT-FORMAT.md](CONTEXT-FORMAT.md) (be opinionated, keep definitions tight, only project-specific terms). Create the file lazily if it doesn't exist. On a map, also nudge the node's text to match via `update_module(map, module, {label: "...", domain: "..."})` — but do not re-baseline its depth/coverage (that's fathom:map's plane to keep).
+- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `CONTEXT.md`, following the discipline in [CONTEXT-FORMAT.md](../fathom/CONTEXT-FORMAT.md) (be opinionated, keep definitions tight, only project-specific terms). Create the file lazily if it doesn't exist. On a map, also nudge the node's text to match via `update_module(map, module, {label: "...", domain: "..."})` — but do not re-baseline its depth/coverage (that's fathom:map's plane to keep).
 - **Sharpening a fuzzy term during the conversation?** Update `CONTEXT.md` right there.
 - **User accepts or defers the candidate?** Record the verdict on the map. The simplest path is `decide(map, suggestion_id, "accepted", note="…")` or `decide(map, suggestion_id, "deferred", note="…")` — the decision and reason stick to the candidate and show in the studio's proposal queue; pass `""` as the decision to re-open one. If you grilled it through `start_grilling`/`mark_grilling`, close the loop atomically with `grilling_done(map, suggestion_id, "accepted", note="…")` instead, which marks it grilled and records the verdict in one call. **An accepted candidate is a hand-off to fathom:code** — `deepen` decides *whether* and grills *how*; carrying out the refactor (shallow→deep, then `realize_module` to reconcile the map) belongs to fathom:code, the only skill that edits source. Tell the user that's the next step.
 - **User rejects the candidate with a load-bearing reason?** Two things, in this order:
   1. **Record the rejection on the map** with `decide(map, suggestion_id, "rejected", note=reason)` — **never `resolve()`**. `resolve(map, suggestion_id)` dismisses the candidate (status `done`) and is for the *never-load-bearing* case ("not worth it right now"); it keeps no reason a future reviewer can act on. `decide(... "rejected", note=…)` keeps the candidate as the durable record **with the reason attached**, so the next explorer — and the next scan — sees *why* it was rejected and doesn't re-suggest it.
-  2. **Offer an ADR** when the reason qualifies, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when all three ADR tests hold — **hard to reverse, surprising without context, the result of a real trade-off** ([ADR-FORMAT.md](ADR-FORMAT.md)). Skip ephemeral reasons ("not worth it right now") and self-evident ones. Writing the ADR file itself is **fathom:adr-writer's** job — it owns the `docs/adr/NNNN-slug.md` numbering and template; `deepen` only offers and hands off. Once written, point the rejection at it so the map and the ADR cross-reference each other: close via `grilling_done(map, suggestion_id, "rejected", note="…", adr="docs/adr/0007-keep-ordering-and-billing-decoupled.md")`, or set the note to reference the path if you used plain `decide`.
-- **Want to explore alternative interfaces for the deepened module?** That's design-it-twice work on the **intended** structure — hand off to **fathom:plan** ([INTERFACE-DESIGN.md](INTERFACE-DESIGN.md) describes the parallel-sub-agent pattern it uses). `deepen` grills the candidate to a decision; designing the new interface graph from scratch is fathom:plan's job, and building it is fathom:code's.
+  2. **Offer an ADR** when the reason qualifies, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when all three ADR tests hold — **hard to reverse, surprising without context, the result of a real trade-off** ([ADR-FORMAT.md](../fathom/ADR-FORMAT.md)). Skip ephemeral reasons ("not worth it right now") and self-evident ones. Writing the ADR file itself is **fathom:adr-writer's** job — it owns the `docs/adr/NNNN-slug.md` numbering and template; `deepen` only offers and hands off. Once written, point the rejection at it so the map and the ADR cross-reference each other: close via `grilling_done(map, suggestion_id, "rejected", note="…", adr="docs/adr/0007-keep-ordering-and-billing-decoupled.md")`, or set the note to reference the path if you used plain `decide`.
+- **Want to explore alternative interfaces for the deepened module?** That's design-it-twice work on the **intended** structure — hand off to **fathom:plan** ([INTERFACE-DESIGN.md](../fathom/INTERFACE-DESIGN.md) describes the parallel-sub-agent pattern it uses). `deepen` grills the candidate to a decision; designing the new interface graph from scratch is fathom:plan's job, and building it is fathom:code's.
 
 (There is no separate "mark grilled" tool to call by hand — `grilling_done(...)` records a grilled candidate's outcome, and `decide(...)` records a decision taken outside the grilling lifecycle.)

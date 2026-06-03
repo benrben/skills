@@ -9,7 +9,7 @@ fathom:code is the suite's hands — the **only** skill that edits source. It ta
 
 ## Glossary
 
-Speak these exactly — never "component," "service," "API," or "boundary." Full definitions in [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md).
+Speak these exactly — never "component," "service," "API," or "boundary." Full definitions in [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md).
 
 - **Module** — anything with an interface and an implementation (function, class, package, tier-spanning slice).
 - **Interface** — everything a caller must know: types, invariants, ordering, error modes, required config, performance. Not just the type signature.
@@ -51,7 +51,7 @@ If there is **no** accepted candidate and **no** planned WorkStep, STOP. Hand ba
 
 ### 3. Confirm the interface and seam — do not redesign
 
-The target already carries them: for an accepted candidate the `solution` text names the interface and where the seam sits; for a WorkStep the intended module's `iface` and `seam` carry them. Restate the interface in [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md) terms — the full contract: types, invariants, ordering, error modes, config, performance — so it is testable.
+The target already carries them: for an accepted candidate the `solution` text names the interface and where the seam sits; for a WorkStep the intended module's `iface` and `seam` carry them. Restate the interface in [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) terms — the full contract: types, invariants, ordering, error modes, config, performance — so it is testable.
 
 If the interface is genuinely underspecified or wrong, do **not** design a new one here. Hand back: **fathom:plan** for system-level redesign, **fathom:deepen** for alternative-interface exploration (its INTERFACE-DESIGN loop). fathom:code executes a chosen interface; it does not run design-it-twice.
 
@@ -66,7 +66,7 @@ Run the net green before touching implementation (mode a) or use it red→green 
 
 ### 5. Execute by dependency category
 
-Place the seam by the candidate's / WorkStep's category. Use the four [../deepen/DEEPENING.md](../deepen/DEEPENING.md) categories verbatim:
+Place the seam by the candidate's / WorkStep's category. Use the four [../fathom/DEEPENING.md](../fathom/DEEPENING.md) categories verbatim:
 
 - **In-process** — pure computation, in-memory state, no I/O. Merge the modules and test through the new interface directly. **No adapter.**
 - **Local-substitutable** — dependencies with a local test stand-in (PGLite for Postgres, in-memory filesystem). Keep the seam **internal**; run the stand-in in the test suite. No port at the module's external interface.
@@ -103,8 +103,8 @@ fathom:code persists what *it* changed; it does not re-derive the whole graph. T
 
 ### 9. Keep domain language honest
 
-- If the deepened/new module is named after a concept **not** in `CONTEXT.md`, add the term (same discipline as [../deepen/CONTEXT-FORMAT.md](../deepen/CONTEXT-FORMAT.md); create the file lazily). If execution sharpened a fuzzy term, update it there.
-- If execution surfaced a **load-bearing, hard-to-reverse** decision (a chosen seam placement that locks in a technology, an integration shape), **offer adr-writer** — framed as: _"Want me to record this as an ADR so future reviews don't re-litigate it?"_ Do not write the ADR inline; adr-writer is the sole writer of `docs/adr/NNNN`. Use the [../deepen/ADR-FORMAT.md](../deepen/ADR-FORMAT.md) three tests (hard to reverse, surprising, real trade-off); skip ephemeral and self-evident reasons.
+- If the deepened/new module is named after a concept **not** in `CONTEXT.md`, add the term (same discipline as [../fathom/CONTEXT-FORMAT.md](../fathom/CONTEXT-FORMAT.md); create the file lazily). If execution sharpened a fuzzy term, update it there.
+- If execution surfaced a **load-bearing, hard-to-reverse** decision (a chosen seam placement that locks in a technology, an integration shape), **offer adr-writer** — framed as: _"Want me to record this as an ADR so future reviews don't re-litigate it?"_ Do not write the ADR inline; adr-writer is the sole writer of `docs/adr/NNNN`. Use the [../fathom/ADR-FORMAT.md](../fathom/ADR-FORMAT.md) three tests (hard to reverse, surprising, real trade-off); skip ephemeral and self-evident reasons.
 
 ### 10. Hand off
 

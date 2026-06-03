@@ -10,3 +10,5 @@ The **Fathom** suite — six skills on the deep-module principle, sharing the `a
 - [`plan`](./plan/SKILL.md) — design the **intended** deep-module graph for new/changing work (seams, interfaces, sequenced build steps) before code.
 - [`code`](./code/SKILL.md) — execute a chosen deepening (refactor shallow→deep, or build to a planned interface). The only skill that edits source.
 - [`adr-writer`](./adr-writer/SKILL.md) — record load-bearing decisions as `docs/adr/NNNN-*.md` (general-purpose; the Fathom skills offer it).
+
+> `fathom/` holds the suite's **shared substrate** — the [`arch-map`](./fathom/arch-map/) MCP spine plus the vocabulary/format docs (`LANGUAGE.md`, `DEEPENING.md`, `INTERFACE-DESIGN.md`, `CONTEXT-FORMAT.md`, `ADR-FORMAT.md`, `HTML-REPORT.md`) every skill references. It is not a skill, so it isn't listed above.

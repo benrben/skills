@@ -11,7 +11,7 @@ This skill makes **depth a design-time decision** instead of an after-the-fact r
 
 ## Vocabulary — speak it exactly
 
-Use the shared architecture vocabulary in [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md) and nothing else. Never say "component," "service," "API," or "boundary."
+Use the shared architecture vocabulary in [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) and nothing else. Never say "component," "service," "API," or "boundary."
 
 - **Module** — anything with an interface and an implementation; scale-agnostic (a function, a class, a package, a tier-spanning slice).
 - **Interface** — *everything* a caller must know: type signature, invariants, ordering constraints, error modes, required configuration, performance characteristics. Not just the type signature.
@@ -37,7 +37,7 @@ The arch-map holds two planes. `plan` writes only the **intended** plane.
 
 ### 1. Frame the change
 
-Read the project's `CONTEXT.md` (or `CONTEXT-MAP.md` to pick the right context) and any ADRs in `docs/adr/` that touch the area. Restate the request as **what behaviour must exist** and **what must NOT change**. Name the relevant concepts in `CONTEXT.md` terms; if the work introduces a genuinely new domain concept, note it for a `CONTEXT.md` addition later ([../deepen/CONTEXT-FORMAT.md](../deepen/CONTEXT-FORMAT.md)). Treat recorded ADRs as **constraints**, not invitations to re-litigate — only reopen one with an explicit, surfaced reason.
+Read the project's `CONTEXT.md` (or `CONTEXT-MAP.md` to pick the right context) and any ADRs in `docs/adr/` that touch the area. Restate the request as **what behaviour must exist** and **what must NOT change**. Name the relevant concepts in `CONTEXT.md` terms; if the work introduces a genuinely new domain concept, note it for a `CONTEXT.md` addition later ([../fathom/CONTEXT-FORMAT.md](../fathom/CONTEXT-FORMAT.md)). Treat recorded ADRs as **constraints**, not invitations to re-litigate — only reopen one with an explicit, surfaced reason.
 
 ### 2. Locate the change on the existing map
 
@@ -73,7 +73,7 @@ Apply the **deletion test** to every proposed module *on paper*, where pass-thro
 
 For every intended module, write down the full interface: type signature, invariants, ordering constraints, error modes, required configuration, performance characteristics. State explicitly that **this is the test surface** — the assertions `fathom:code` will write and the only place its tests cross. If a planned interface forces a test to reach *past* it to assert, the module is the wrong shape; revisit the seam now.
 
-For the **load-bearing module(s)** — the ones the rest of the design pivots on — run **design-it-twice at the interface level** by absorbing [../deepen/INTERFACE-DESIGN.md](../deepen/INTERFACE-DESIGN.md):
+For the **load-bearing module(s)** — the ones the rest of the design pivots on — run **design-it-twice at the interface level** by absorbing [../fathom/INTERFACE-DESIGN.md](../fathom/INTERFACE-DESIGN.md):
 
 1. **Frame the problem space** for the user: the constraints any interface must satisfy, the dependencies it relies on and their category (step 5), and a rough illustrative sketch to ground the constraints (not a proposal).
 2. **Spawn 3+ parallel sub-agents** (Agent tool), each producing a *radically different* interface for the same intended module — e.g. *minimise the interface* (1–3 entry points, maximise leverage each), *maximise flexibility/extension*, *optimise the common caller* (trivial default case), *ports & adapters* for cross-seam dependencies. Brief each in `LANGUAGE.md` + `CONTEXT.md` vocabulary. Each returns: the interface (types, invariants, ordering, error modes), a usage example, what's hidden behind the seam, the dependency strategy and adapters, and the trade-offs.
@@ -81,7 +81,7 @@ For the **load-bearing module(s)** — the ones the rest of the design pivots on
 
 ### 5. Decide the seam strategy per dependency
 
-Classify **each cross-seam dependency** by its [../deepen/DEEPENING.md](../deepen/DEEPENING.md) category, so the adapter story is settled before code. Use these four category names verbatim:
+Classify **each cross-seam dependency** by its [../fathom/DEEPENING.md](../fathom/DEEPENING.md) category, so the adapter story is settled before code. Use these four category names verbatim:
 
 1. **In-process** — pure computation / in-memory state, no I/O. No adapter; the module is tested directly through its interface.
 2. **Local-substitutable** — a local test stand-in exists (PGLite for Postgres, in-memory filesystem). The seam stays **internal**; no port on the module's external interface — the stand-in runs in the test suite.
@@ -138,9 +138,9 @@ Each step must be self-contained enough that `fathom:code` can build it **deep f
 
 ### 8. Offer ADRs and hand off
 
-For each structural choice that passes the three gates in [../deepen/ADR-FORMAT.md](../deepen/ADR-FORMAT.md) — **hard to reverse**, **surprising without context**, and the result of a **real trade-off** — offer to record an ADR (e.g. a chosen seam placement, a port-vs-direct-call decision, an event-vs-synchronous integration between contexts). Frame it as a hand-off; `plan` does **not** write the ADR itself — the sole writer of `docs/adr/NNNN-slug.md` is `adr-writer`, which also links the ADR back into the spine.
+For each structural choice that passes the three gates in [../fathom/ADR-FORMAT.md](../fathom/ADR-FORMAT.md) — **hard to reverse**, **surprising without context**, and the result of a **real trade-off** — offer to record an ADR (e.g. a chosen seam placement, a port-vs-direct-call decision, an event-vs-synchronous integration between contexts). Frame it as a hand-off; `plan` does **not** write the ADR itself — the sole writer of `docs/adr/NNNN-slug.md` is `adr-writer`, which also links the ADR back into the spine.
 
-If you named a genuinely new domain concept, add the term to `CONTEXT.md` ([../deepen/CONTEXT-FORMAT.md](../deepen/CONTEXT-FORMAT.md) discipline; create the file lazily).
+If you named a genuinely new domain concept, add the term to `CONTEXT.md` ([../fathom/CONTEXT-FORMAT.md](../fathom/CONTEXT-FORMAT.md) discipline; create the file lazily).
 
 Then hand the sequenced plan to **`fathom:code`** to execute. State the headline: the intended modules, what each supersedes, the build order, and any ADRs offered. `plan` stops at the design and the hand-off — it never edits source.
 
@@ -185,9 +185,9 @@ Then hand the sequenced plan to **`fathom:code`** to execute. State the headline
 
 ## Reference docs
 
-- [../deepen/LANGUAGE.md](../deepen/LANGUAGE.md) — the only vocabulary every step may use.
-- [../deepen/INTERFACE-DESIGN.md](../deepen/INTERFACE-DESIGN.md) — the design-it-twice sub-routine absorbed in step 4 (parallel sub-agents → prose comparison → opinionated recommendation).
-- [../deepen/DEEPENING.md](../deepen/DEEPENING.md) — the four dependency categories and seam discipline used to settle the adapter/port strategy before code.
-- [../deepen/CONTEXT-FORMAT.md](../deepen/CONTEXT-FORMAT.md) — how to name intended modules in domain terms and add a new concept lazily.
-- [../deepen/ADR-FORMAT.md](../deepen/ADR-FORMAT.md) — the three gates (hard to reverse, surprising, real trade-off) for offering an ADR.
-- `../deepen/arch-map/README.md` + `arch-map/arch_map/server.py` — the spine tools and Module/Plan/WorkStep fields `plan` writes.
+- [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) — the only vocabulary every step may use.
+- [../fathom/INTERFACE-DESIGN.md](../fathom/INTERFACE-DESIGN.md) — the design-it-twice sub-routine absorbed in step 4 (parallel sub-agents → prose comparison → opinionated recommendation).
+- [../fathom/DEEPENING.md](../fathom/DEEPENING.md) — the four dependency categories and seam discipline used to settle the adapter/port strategy before code.
+- [../fathom/CONTEXT-FORMAT.md](../fathom/CONTEXT-FORMAT.md) — how to name intended modules in domain terms and add a new concept lazily.
+- [../fathom/ADR-FORMAT.md](../fathom/ADR-FORMAT.md) — the three gates (hard to reverse, surprising, real trade-off) for offering an ADR.
+- `../fathom/arch-map/README.md` + `arch-map/arch_map/server.py` — the spine tools and Module/Plan/WorkStep fields `plan` writes.

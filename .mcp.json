@@ -2,7 +2,7 @@
   "mcpServers": {
     "arch-map": {
       "command": "uv",
-      "args": ["run", "--project", "skills/engineering/deepen/arch-map", "arch-map"]
+      "args": ["run", "--project", "skills/engineering/fathom/arch-map", "arch-map"]
     }
   }
 }
