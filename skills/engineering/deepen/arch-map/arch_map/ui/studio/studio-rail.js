@@ -165,7 +165,7 @@ window.Studio = window.Studio || {};
             <p><b>Problem.</b> ${m.suggestion.problem}</p>
             <p><b>Solution.</b> ${m.suggestion.solution}</p>
             <ul>${m.suggestion.wins.map((w) => `<li>${w}</li>`).join("")}</ul>
-            <button class="btn primary grill" data-grill="${m.id}">Review in agent queue →</button>
+            <button class="btn primary grill" data-grill="${m.id}">Grill this candidate →</button>
           </div></div>`;
     } else {
       const d = S.model.decisions[m.id];
@@ -200,7 +200,7 @@ window.Studio = window.Studio || {};
       S.onModelMutated(m.id);
     });
     const grill = els.inspPane.querySelector("[data-grill]");
-    if (grill) grill.onclick = () => { setTab("agent"); flashProp(m.id); };
+    if (grill) grill.onclick = () => { Store.grill(m.id); setTab("agent"); flashProp(m.id); };
     renderDanger(m.id);
   }
   function stepper(kind) {

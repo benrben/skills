@@ -91,6 +91,19 @@
     if (typeof t === "string" && t.trim()) return [t.trim()];
     return [];
   }
+  // de-normalize on the way OUT: the backend stores `tests` as a free-text string,
+  // so if a write ever carries the studio's array form, join it before it crosses
+  // the wire (server.py's render_view does `(tests or "").strip()` — a list throws).
+  function testsToString(t) {
+    if (Array.isArray(t)) return t.filter(Boolean).join("\n");
+    return t == null ? "" : String(t);
+  }
+  function denormFields(fields) {
+    if (fields && "tests" in fields) {
+      return Object.assign({}, fields, { tests: testsToString(fields.tests) });
+    }
+    return fields;
+  }
 
   function normalize(raw) {
     const decisions = {};
@@ -313,7 +326,7 @@
       case "decide": return ["decide", { map, suggestion_id: a.suggestion_id, decision: a.decision, note: a.note || "" }];
       case "resolve": return ["resolve", { map, suggestion_id: a.suggestion_id }];
       case "delete": return ["delete_module", { map, module: a.module }];
-      case "update": return ["update_module", { map, module: a.module, fields: a.fields || {} }];
+      case "update": return ["update_module", { map, module: a.module, fields: denormFields(a.fields || {}) }];
       case "add": return ["add_module", Object.assign({ map }, a.module)];
       default: throw new Error("unsupported action: " + a.action);
     }
@@ -335,8 +348,69 @@
     }
   }
 
+  // ---- grill hand-off: UI -> agent turn (MCP-App) or copy-paste (browser) ---
+  // "Grill this candidate" routes here. callServerTool persists the request and
+  // returns the canonical prompt but the result stays in the iframe; only
+  // app.sendMessage (ui/message) posts a message AND triggers an agent turn, and
+  // app.updateModelContext stages the candidate body for that turn — both
+  // feature-gated on the host's advertised capabilities, role hardcoded "user"
+  // (the only value ext-apps@1.7.2 accepts). A plain browser can't trigger a turn,
+  // so it POSTs /api/grill and surfaces the prompt + a "resume <map>" line.
+  function grillBody(m) {
+    if (!m) return "";
+    const s = m.suggestion;
+    return [
+      "Candidate to grill: " + ((s && s.title) || m.label) + " (module '" + m.id + "', domain '" + m.domain + "').",
+      "Depth " + m.depth + "/100, coverage " + m.coverage + "%.",
+      s && s.problem ? "Problem: " + s.problem : "",
+      s && s.solution ? "Solution: " + s.solution : "",
+      s && s.wins && s.wins.length ? "Wins: " + s.wins.join("; ") : "",
+      m.interface ? "Interface: " + m.interface : "",
+    ].filter(Boolean).join("\n");
+  }
+  function grillText(r, module) {                  // start_grilling returns a TEXT prompt
+    if (r && Array.isArray(r.content)) {
+      const t = r.content.find((c) => c && c.type === "text");
+      if (t && t.text) return t.text;
+    }
+    if (r && typeof r.structuredContent === "string") return r.structuredContent;
+    return "Enter the /deepen grilling loop for module '" + module + "'.";
+  }
+  function showGrillFallback(prompt, resume) {
+    if (window.Studio && typeof window.Studio.grillFallback === "function") return window.Studio.grillFallback(prompt, resume);
+    const msg = "Grilling requested — paste into your agent: " + (resume || prompt);
+    if (window.Studio && typeof window.Studio.toast === "function") window.Studio.toast(msg, "var(--accent, #6aa)");
+    else console.info("[arch-map grill]", prompt, resume || "");
+  }
+  async function hostGrill(map, module, body) {
+    const app = await hostConnect();
+    const caps = (app.getHostCapabilities && app.getHostCapabilities()) || {};
+    let prompt;
+    try {                                          // (1) persist 'requested' + get the prompt (iframe-only)
+      prompt = grillText(await app.callServerTool({ name: "start_grilling", arguments: { map, module } }), module);
+    } catch (e) { prompt = grillText(null, module); }
+    if (!caps.message) return { triggered: false, prompt, reason: "no-message-capability" };
+    try {                                          // (2) stage the candidate body for the next turn (no trigger)
+      if (caps.updateModelContext && body) await app.updateModelContext({ content: [{ type: "text", text: body }] });
+    } catch (e) { /* best-effort */ }
+    const sent = await app.sendMessage({ role: "user", content: [{ type: "text", text: prompt }] });  // (3) the trigger
+    return { triggered: !(sent && sent.isError), prompt };
+  }
+  async function browserGrill(map, module) {
+    const res = await fetch(apiUrl("api/grill"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ map, module }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.error) throw new Error(d.error || "could not request grilling");
+    return d;   // { prompt, resume }
+  }
+
   // POST an action; reconcile the cache from the authoritative response.
   async function act(body) {
+    if (body && body.action === "update" && body.fields) {
+      body = Object.assign({}, body, { fields: denormFields(body.fields) });
+    }
     if (HOST) return hostAct(body);
     const myGen = ++writeGen;   // this is now the newest write
     pendingWrites++;
@@ -433,6 +507,18 @@
       delete cur.decisions[id];
       bump();
       act({ action: "resolve", suggestion_id: sid }).catch(reportErr);
+      return cur;
+    },
+    grill(id) {
+      // Hand a candidate off to the /deepen grilling loop. In an MCP-App host this
+      // triggers an agent turn (sendMessage); in a browser it surfaces the prompt
+      // + a resume line to paste. Either way the candidate is persisted 'requested'.
+      const map = currentMap, m = find(id), body = grillBody(m);
+      if (HOST) {
+        hostGrill(map, id, body).then((r) => { if (!r.triggered) showGrillFallback(r.prompt, null); }).catch(reportErr);
+      } else {
+        browserGrill(map, id).then((d) => showGrillFallback(d.prompt, d.resume)).catch(reportErr);
+      }
       return cur;
     },
   };
