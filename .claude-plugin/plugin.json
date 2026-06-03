@@ -1,5 +1,8 @@
 {
   "name": "fathom",
+  "description": "Deep-module architecture suite — map, understand, deepen, plan, code, adr-writer — sharing the arch-map MCP spine. Turns shallow modules into deep ones for testability and AI-navigability.",
+  "version": "0.1.0",
+  "author": { "name": "Ben" },
   "skills": [
     "./skills/engineering/map",
     "./skills/engineering/understand",

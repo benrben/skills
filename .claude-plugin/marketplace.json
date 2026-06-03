@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "fathom",
-      "source": ".",
+      "source": "./",
       "description": "Deep-module architecture suite + the arch-map MCP spine"
     }
   ]
