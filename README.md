@@ -1,28 +1,40 @@
-# Improve Codebase Architecture
+# Fathom
 
-A single agent skill (slash command) for Claude Code: [`/improve-codebase-architecture`](./skills/engineering/improve-codebase-architecture/SKILL.md).
+A suite of Claude Code skills built on one principle and one shared model: turn **shallow** modules (interface ≈ as complex as the implementation) into **deep** ones — a lot of behaviour behind a small interface — for the sake of testability and AI-navigability.
 
-It surfaces architectural friction and proposes **deepening opportunities** — refactors that turn shallow modules into deep ones, for the sake of testability and AI-navigability.
+The skills don't just analyse; they share a **living architecture model** — the `arch-map` MCP **spine** — that each one reads and writes, so a codebase becomes something humans *and* agents can reason about by depth.
 
-## What it does
+## The principle
 
-1. **Explore** — reads your project's `CONTEXT.md` and any ADRs, then walks the codebase looking for friction: shallow modules, tight coupling, and code that's hard to test through its current interface. It applies the **deletion test** to spot pass-throughs.
-2. **Report** — writes a self-contained, visual HTML report (Tailwind + Mermaid via CDN) to your temp directory and opens it. Each candidate gets a before/after diagram and a recommendation strength badge (`Strong`, `Worth exploring`, `Speculative`), ending with a top recommendation. _Or_ drive the **living network map** via the companion MCP server (below) instead of a one-shot file.
-3. **Grill** — once you pick a candidate, it walks the design tree with you, updating `CONTEXT.md` and offering ADRs as decisions crystallize.
+Every skill speaks one vocabulary ([LANGUAGE.md](./skills/engineering/deepen/LANGUAGE.md)) — **module, interface, depth, seam, adapter, leverage, locality** — and obeys the same rules: the **deletion test** (if a module vanished, would complexity concentrate behind a small interface, or just scatter?), **the interface is the test surface**, and **one adapter = a hypothetical seam, two = a real one**. Architecture is reasoned about by *depth*, never by "components/services/APIs/boundaries."
 
-## Companion: the `arch-map` MCP server
+## The suite
 
-The skill ships a [FastMCP](https://github.com/jlowin/fastmcp) server at [`arch-map/`](./skills/engineering/improve-codebase-architecture/arch-map/) that turns the one-shot report into a **persistent, agent-maintained network graph** rendered inline via [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/). The agent keeps the model current with tools (`show_map`, `flag_deepening`, `set_depth`, `set_coverage`, `mark_updated`, `resolve`); the graph encodes depth (node size), coverage (ring), updates (halo), suggestions (⚠ ring), leaks (red edge), and orphans (a "not connected" tray). It's registered for this repo in [`.mcp.json`](./.mcp.json). See the [arch-map README](./skills/engineering/improve-codebase-architecture/arch-map/README.md).
+**Shipped:**
 
-## Files
+- [`deepen`](./skills/engineering/deepen/SKILL.md) — find friction in existing shallow modules, present candidates, and **grill** the chosen one; updates `CONTEXT.md` and offers ADRs as decisions crystallize.
 
-- [`SKILL.md`](./skills/engineering/improve-codebase-architecture/SKILL.md) — the skill itself
-- [`LANGUAGE.md`](./skills/engineering/improve-codebase-architecture/LANGUAGE.md) — the shared vocabulary (module, interface, depth, seam, adapter, leverage, locality)
-- [`DEEPENING.md`](./skills/engineering/improve-codebase-architecture/DEEPENING.md) — how to deepen a cluster of shallow modules safely, by dependency category
-- [`INTERFACE-DESIGN.md`](./skills/engineering/improve-codebase-architecture/INTERFACE-DESIGN.md) — exploring alternative interfaces for a deepened module
-- [`HTML-REPORT.md`](./skills/engineering/improve-codebase-architecture/HTML-REPORT.md) — the HTML scaffold, diagram patterns, and styling guidance
-- [`CONTEXT-FORMAT.md`](./skills/engineering/improve-codebase-architecture/CONTEXT-FORMAT.md) — the `CONTEXT.md` domain-glossary format
-- [`ADR-FORMAT.md`](./skills/engineering/improve-codebase-architecture/ADR-FORMAT.md) — the ADR format used when recording a rejected candidate
-- [`arch-map/`](./skills/engineering/improve-codebase-architecture/arch-map/) — the companion FastMCP server + network-graph UI
+**Designed, in progress** (see the design notes in this branch):
+
+- `map` — build and keep honest the **actual** model of what the codebase IS (seed via exploration; reconcile on demand).
+- `understand` — a read-only guided tour of a map (entry interfaces, deepest modules, hot-spots).
+- `plan` — design the **intended** deep-module graph for new or changing work, before code.
+- `code` — execute a chosen deepening (refactor shallow→deep, or build to a planned interface). The only skill that edits source.
+- `adr-writer` — record load-bearing decisions as `docs/adr/NNNN-*.md`.
+
+## The spine: `arch-map`
+
+The suite ships a [FastMCP](https://github.com/jlowin/fastmcp) server at [`arch-map/`](./skills/engineering/deepen/arch-map/) — the persistent model every skill reads and writes. The agent keeps it current with tools (`show_map`, `flag_deepening`, `set_depth`, `set_coverage`, `decide`, `resolve`, …) and a UI-capable host renders it inline via [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/): depth = node size, coverage = ring, suggestions = ⚠ ring, leaks = red edge, orphans = a "not connected" tray. Registered for this repo in [`.mcp.json`](./.mcp.json). See the [arch-map README](./skills/engineering/deepen/arch-map/README.md).
+
+## Files (the `deepen` skill)
+
+- [`SKILL.md`](./skills/engineering/deepen/SKILL.md) — the skill
+- [`LANGUAGE.md`](./skills/engineering/deepen/LANGUAGE.md) — the shared vocabulary
+- [`DEEPENING.md`](./skills/engineering/deepen/DEEPENING.md) — how to deepen a cluster safely, by dependency category
+- [`INTERFACE-DESIGN.md`](./skills/engineering/deepen/INTERFACE-DESIGN.md) — exploring alternative interfaces for a deepened module
+- [`HTML-REPORT.md`](./skills/engineering/deepen/HTML-REPORT.md) — the one-shot HTML report scaffold
+- [`CONTEXT-FORMAT.md`](./skills/engineering/deepen/CONTEXT-FORMAT.md) — the `CONTEXT.md` domain-glossary format
+- [`ADR-FORMAT.md`](./skills/engineering/deepen/ADR-FORMAT.md) — the ADR format
+- [`arch-map/`](./skills/engineering/deepen/arch-map/) — the FastMCP spine + network-graph UI
 
 Originally part of [mattpocock/skills](https://github.com/mattpocock/skills).

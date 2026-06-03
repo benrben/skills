@@ -4,3 +4,4 @@ __pycache__/
 *.egg-info/
 
 arch_state.json*
+maps/*.lock

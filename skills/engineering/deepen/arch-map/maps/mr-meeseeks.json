@@ -79,7 +79,7 @@
       "depth": 0.7,
       "size": 1.8,
       "seam": "the graph topology; agent nodes are closures over run_agent_turn",
-      "iface": "Dispatcher.stream(user_text, thread_id) over a LangGraph StateGraph; every agent node feeds back to the router; invariant: all turns route through route_decide",
+      "iface": "Dispatcher.stream(user_text, thread_id, channel_id) over a LangGraph StateGraph; every agent node feeds back to the router; invariant: all turns route through route_decide. Now also accepts a per-channel session_store (typed Any) and injects it into configurable['session_store'] so deep-provider adapters read it off the InvocationContext seam instead of importing core.orchestrator.channels.",
       "coverage": 0.96,
       "updated": true,
       "files": [
@@ -103,7 +103,7 @@
       "domain": "orchestrator",
       "depth": 0.9,
       "size": 1.8,
-      "seam": "extracted from the graph node so it is testable in isolation \u2014 but no unit test crosses that seam",
+      "seam": "run_agent_turn IS the single owner of a turn (the dispatcher just calls it and returns its Command); helpers (parse_mentions/build_next_plan/tag_with_speaker) are already separate testable seams. Already deep (0.9) \u2014 an AgentTurn class would be a cosmetic rename failing the deletion test.",
       "iface": "async run_agent_turn(state, config, name, spec, peers, role, middleware): scope transcript \u2192 invoke agent \u2192 parse @mentions \u2192 send_message tool \u2192 stream events \u2192 next RoutingPlan",
       "coverage": 0.95,
       "updated": true,
@@ -120,22 +120,7 @@
       ],
       "leaksTo": [],
       "tests": "test_dispatcher_agent_turn.py (13 tests via a FakeAgent crossing the run_agent_turn seam: transcript scoping, @mention->RoutingPlan, fan-out self-mention isolation, error path) + integration. DONE.",
-      "suggestion": {
-        "id": "orch-agent-turn-worth-exploring",
-        "title": "Present one agent-turn interface over its internal seams",
-        "strength": "Worth exploring",
-        "category": "in-process",
-        "problem": "Per-turn behaviour is split across run_agent_turn + agent_node_helpers + routing/mentions for file-size reasons, so 'what does one turn decide?' spans several modules. The run_agent_turn seam is already unit-tested (13 tests), but the cross-module turn\u2192mentions\u2192plan\u2192middleware path has no single owner.",
-        "solution": "Wrap the existing files as private internal seams behind one AgentTurn interface returning a RoutingPlan \u2014 locality without merging into one over-the-350-line-ceiling file (tension noted with make file-sizes).",
-        "wins": [
-          "Locality: one turn, one interface",
-          "Internals stay small + mockable",
-          "No multi-file bounce to read",
-          "Cross-module path gets an owner"
-        ],
-        "decision": "accepted",
-        "note": ""
-      },
+      "suggestion": null,
       "orphan": false
     },
     {
@@ -251,7 +236,7 @@
       "depth": 0.8,
       "size": 2,
       "seam": "the assembly point for a multi-agent dispatcher; builder/cache/checkpoint as mixins, planner+peer_graph as helpers",
-      "iface": "ChannelManager.get_dispatcher(channel_id) builds+caches a Dispatcher; build pipeline: channel yaml \u2192 resolve teams \u2192 load agents \u2192 compute peer_graph \u2192 AgentSpecs; hot-swap checkpointer invalidates cache",
+      "iface": "ChannelManager.get_dispatcher(channel_id) builds+caches a Dispatcher; build pipeline: channel yaml -> resolve teams -> load agents -> compute peer_graph -> AgentSpecs; hot-swap checkpointer invalidates cache. The builder resolves the per-channel CLI session store (get_session_store(channel_id, config_dir)) and hands it to the Dispatcher, which forwards it to provider adapters through the invocation seam (closes the old provider->orch-channels leak).",
       "coverage": 0.94,
       "updated": true,
       "files": [
@@ -780,15 +765,15 @@
       "tests": "test_build_specs_router.py, test_build_spec_chat.py",
       "suggestion": {
         "id": "api-svc-build-spec-speculative",
-        "title": "Split BuildSpecService's five concerns as it grows",
+        "title": "Split BuildSpecService's five concerns (defer \u2014 premature)",
         "strength": "Speculative",
         "category": "in-process",
-        "problem": "CRUD, dry-run validation, drafting, importable-roster, and LLM chat sit behind one interface sharing only a workspace-id helper \u2014 five orthogonal concerns with low cohesion.",
-        "solution": "Split into a validator + chat + CRUD as it nears the ceiling or grows a sixth concern; not urgent today.",
+        "problem": "Verified premature: build_spec_service.py is 292 lines (<350 ceiling), the five concerns (CRUD / validate / draft / importable / chat) share only the _workspace_id helper, and the chat concern is ALREADY extracted to build_spec_chat.py. Active build-engine WIP is editing both files now \u2014 splitting today risks merge conflicts.",
+        "solution": "Defer. Revisit once the WIP lands AND the file nears ~320 lines or grows a 6th concern; then extract a BuildSpecValidator (validate-before-write is the natural seam) and keep CRUD on the service. No independent seams today.",
         "wins": [
-          "Concerns become independently testable",
-          "Each seam swaps independently",
-          "File stays under the ceiling"
+          "concerns become independently testable (later)",
+          "validate-before-write is the real seam when split",
+          "file stays under the ceiling"
         ],
         "decision": "",
         "note": ""
@@ -956,11 +941,11 @@
       "id": "config-loader",
       "label": "config \u00b7 loader",
       "domain": "agents",
-      "depth": 0.5,
+      "depth": 0.7,
       "size": 1.4,
-      "seam": "the agent-yaml \u2192 AgentConfig boundary",
-      "iface": "discover_agents / load_agent_config (YAML parse + deep-merge shared defaults + provider-catalog resolution + mtime cache) / find_by_role; validates at load time; raises AgentConfigError",
-      "coverage": 0.87,
+      "seam": "the agent-yaml -> AgentConfig boundary; runtime callers now go through AgentConfigLoader(workspace)",
+      "iface": "AgentConfigLoader(workspace).load(slug)/.load_path(dir) owns shared-defaults + shared_dir resolution (was repeated at 4 call sites); load_agent_config stays the low-level primitive for discover_agents + init + schema-only tests",
+      "coverage": 0.9,
       "updated": true,
       "files": [
         "core/config/__init__.py",
@@ -973,22 +958,8 @@
         "seed-provider-catalog"
       ],
       "leaksTo": [],
-      "tests": "test_config_loader.py",
-      "suggestion": {
-        "id": "config-loader-worth-exploring",
-        "title": "Hide the three-pass agent-config assembly behind a loader",
-        "strength": "Worth exploring",
-        "category": "in-process",
-        "problem": "load_agent_config(path, defaults, shared_dir) exposes the merge order, the system-prompt override, and the provider-catalog search at its interface \u2014 callers must know all three, so the interface is nearly as complex as the implementation.",
-        "solution": "Deepen behind AgentConfigLoader(workspace).load(slug); the merge dance and catalog search become implementation, and forgetting shared_dir stops silently picking bundled defaults.",
-        "wins": [
-          "Interface shrinks to load(slug)",
-          "Callers stop passing shared_dir",
-          "Merge order stops being caller knowledge"
-        ],
-        "decision": "",
-        "note": ""
-      },
+      "tests": "test_config_loader.py (+ loader merge/provider + load/load_path agree)",
+      "suggestion": null,
       "orphan": false
     },
     {
@@ -1063,10 +1034,10 @@
       "id": "providers-base",
       "label": "providers \u00b7 base",
       "domain": "providers",
-      "depth": 0.5,
+      "depth": 0.6,
       "size": 1,
       "seam": "the provider-selection seam; invocation now flows through the typed InvocationContext, not an untyped config['configurable'] dict",
-      "iface": "DeepProviderRunner protocol: ainvoke(state, ctx: InvocationContext). InvocationContext(on_event, cancel, mission_mode, session: SessionRef(channel_id, thread_id)) is the typed seam; from_runnable_config is the SINGLE translation point (called by the dispatcher node). build_deep_provider lazy-selects claude_code|codex; extract_goal / compose_channel_prompt / prompt_for_turn / record_verdict still here.",
+      "iface": "DeepProviderRunner Protocol + build_deep_provider factory + InvocationContext/SessionRef typed seam (now carries a SessionStore port the orchestrator injects, so adapters never reach up for session persistence) + verdict/text/prompt helpers",
       "coverage": 0.61,
       "updated": true,
       "files": [
@@ -1088,7 +1059,7 @@
       "domain": "providers",
       "depth": 0.9,
       "size": 2.2,
-      "seam": "the claude-agent-sdk adapter; reaches into orchestrator for the session store",
+      "seam": "the claude-agent-sdk adapter; the CLI-session store is injected via ctx.session.store \u2014 no longer imports core.orchestrator.channels / core.api.workspace_resolver",
       "iface": "ClaudeCodeRunner.ainvoke: per-thread subprocess client pool keyed by session-id+slug, session resume, stream dedup (whitespace/chunk-repeat), MCPConfig\u2192SDK options, thinking budget, anti-loop tool guard, cancellation",
       "coverage": 0.52,
       "updated": true,
@@ -1104,9 +1075,7 @@
         "mcp-loader",
         "providers-dashboard-mcp"
       ],
-      "leaksTo": [
-        "orch-channels"
-      ],
+      "leaksTo": [],
       "tests": "test_deep_provider_claude_code.py",
       "suggestion": null,
       "orphan": false
@@ -1117,7 +1086,7 @@
       "domain": "providers",
       "depth": 0.8,
       "size": 1.6,
-      "seam": "the codex-CLI adapter; isolated from claude_code (no cross-import)",
+      "seam": "the codex-CLI adapter; isolated from claude_code (no cross-import); CLI-session store injected via ctx.session.store \u2014 no longer imports core.orchestrator / core.api",
       "iface": "CodexRunner.ainvoke: shells out to codex CLI; build_argv serializes config to TOML (workspace/model/reasoning/MCP), session resume, JSONL event parse, error extraction",
       "coverage": 0.77,
       "updated": true,
@@ -1129,9 +1098,7 @@
       "dependsOn": [
         "providers-base"
       ],
-      "leaksTo": [
-        "orch-channels"
-      ],
+      "leaksTo": [],
       "tests": "test_deep_provider_codex.py",
       "suggestion": null,
       "orphan": false
@@ -1256,7 +1223,7 @@
       "domain": "cli",
       "depth": 0.6,
       "size": 1.5,
-      "seam": "the chunk\u2192event decoder shared by CLI + chat; not guaranteed monotonic",
+      "seam": "DEFERRED on inspection: format.py (in-process decode events) and streaming/events.py (mission-lifecycle JSONL, persisted+polled) are different transports with different kind-sets, not the same vocab twice. A true unify changes the WS contract or the stored-run JSONL format (back-compat) + threads agent_path through the mission on_event chain \u2014 large/cross-cutting, do as a dedicated change.",
       "iface": "AgentEventStream(agent).run(messages) decodes LangGraph chunks \u2192 typed events (Token/ToolStart/ToolEnd/TurnEnd/Subagent/Thinking); but requires an agent ref even when only decoding",
       "coverage": 0.72,
       "updated": true,
@@ -1273,13 +1240,13 @@
         "title": "Unify the CLI and API event vocabularies",
         "strength": "Worth exploring",
         "category": "local-substitutable",
-        "problem": "The same turn semantics are encoded twice \u2014 cli/events TokenEvent dataclasses and streaming/events JSONL strings \u2014 so neither sink can consume the other's stream and agent_path survives only one path. The split is accidental (the CLI predates the API + mission mode).",
-        "solution": "Define one TurnEvent vocabulary plus an EventCodec for JSONL; ChatRenderer and the frontend WS both feed off it.",
+        "problem": "Verified two vocabularies: core/cli/events/format.py dataclasses (Token/Thinking/ToolStart/ToolEnd/Subagent*/TurnEnd/TurnError \u2014 all carry agent_path) vs core/streaming/events.py StreamEmitter JSONL (same kinds, NO agent_path), so mission JSONL drops subagent lanes. The chat WS payloads already carry agent_path, so the gap is only on the mission/JSONL path.",
+        "solution": "One TurnEvent vocabulary + an EventCodec (serialize/deserialize) feeding StreamEmitter, the chat WS, and the CLI renderer. Version the JSONL so stored runs still parse. Deletion test: moderate yes. Effort M, medium risk (JSONL versioning + back-compat for old runs).",
         "wins": [
-          "One vocabulary, two sinks",
-          "Round-trip codec is testable",
-          "agent_path survives both paths",
-          "Mission-replay-in-CLI for free"
+          "one vocabulary, three sinks",
+          "agent_path lands in mission JSONL too",
+          "round-trip codec is testable; test surface shrinks",
+          "mission-replay-in-CLI becomes possible"
         ],
         "decision": "",
         "note": ""
@@ -1338,7 +1305,7 @@
       "domain": "services",
       "depth": 0.4,
       "size": 1.1,
-      "seam": "service-spec discovery + schema; consumed by supervisor and mcp-loader",
+      "seam": "service-spec discovery + schema; the two identical attachment walks (team/channel) now share _load_attachments(subdir, id, config_dir). services_for_agent / routable kept as distinct typed entry points (the broad one-resolver was rejected as over-reach).",
       "iface": "discover specs at services/<name>/service.yaml \u2192 ServiceConfig; services_for_agent resolves attachments; registry + proxy URL calc; ServiceConfig pydantic is the load-bearing contract",
       "coverage": 0.73,
       "updated": true,
@@ -1355,22 +1322,7 @@
       ],
       "leaksTo": [],
       "tests": "indirect",
-      "suggestion": {
-        "id": "services-loader-worth-exploring",
-        "title": "Collapse six service-attachment functions into one resolver",
-        "strength": "Worth exploring",
-        "category": "in-process",
-        "problem": "services_for_{team,channel,agent} plus the routable variants each re-walk the config tree, with two near-identical walks; callers must know which entry point to pick for which scope.",
-        "solution": "Deepen behind one ServiceResolver.resolve(context) that walks the tree once and returns a typed result.",
-        "wins": [
-          "Six interfaces shrink to one",
-          "One walk, not several",
-          "Callers stop choosing the variant",
-          "One test matrix over contexts"
-        ],
-        "decision": "",
-        "note": ""
-      },
+      "suggestion": null,
       "orphan": false
     },
     {
@@ -1403,7 +1355,7 @@
       "domain": "mission",
       "depth": 0.4,
       "size": 0.7,
-      "seam": "per-mission verdict capture via a contextvar-held mutable box (no process-global, no shared lock) -- PR6",
+      "seam": "per-mission verdict capture via a contextvar-held mutable box (proven correct + tested). DEFERRED VerdictScope: the full version (delete free fns, scope-only surface) would churn 5 test files incl. the concurrency proof itself, for zero functional gain; the compat-preserving version is cosmetic. Do only as a dedicated polish PR.",
       "iface": "complete_mission / CLI record_verdict MUTATE the _VerdictBox bound to the current context (never rebind). run_mission sets a fresh box per run (token + reset in finally); a _GLOBAL_BOX default keeps direct callers working. MISSION_LOCK is GONE; the runs router owns its own single-in-flight lock.",
       "coverage": 1.0,
       "updated": true,
@@ -1415,15 +1367,15 @@
       "tests": "test_mission.py (global-box compat) + test_mission_verdict_scope.py (concurrent isolation, nested no-leak; mutation-verified non-vacuous). DONE.",
       "suggestion": {
         "id": "mission-core-speculative",
-        "title": "Encapsulate the verdict box in a VerdictScope (mostly done)",
+        "title": "Encapsulate the verdict box in a VerdictScope (defer \u2014 polish)",
         "strength": "Speculative",
         "category": "in-process",
-        "problem": "Verdict capture is already correct (per-run box + reset-in-finally + test_mission_verdict_scope.py \u2014 DONE), but it is still free functions over a ContextVar coordinated across mission.core + deep_providers.base + mission.runner, with the load-bearing 'mutate-in-place, never reassign' rule enforced only by a comment.",
-        "solution": "Optionally wrap the box lifecycle in a VerdictScope context manager so the invariant is enforced by construction and record/take become the only surface \u2014 purely a locality refinement on already-correct behaviour.",
+        "problem": "Verified: correctness is done + tested (concurrent isolation, nested no-leak). The 'mutate-in-place, never reassign' rule is only a comment, spread across mission.core + mission.runner + deep_providers.base. A wrapper that leaves the free functions in place is cosmetic \u2014 it only enforces the invariant by construction if the free functions are deleted and the scope is injected (L effort across 3 modules). No bug is removed.",
+        "solution": "Defer unless already editing mission.*. If done, do it fully: delete _capture_verdict/take_pending_verdict/reset_verdict, make VerdictScope the only surface, thread it via InvocationContext. Pure locality refinement on already-correct, well-tested behaviour.",
         "wins": [
-          "Invariant enforced by construction",
-          "Lifecycle in one object",
-          "Callers stop reasoning about ContextVars"
+          "invariant enforced by construction (only if free funcs deleted)",
+          "lifecycle in one object",
+          "no correctness gain \u2014 polish only; risk is regressing working isolation"
         ],
         "decision": "",
         "note": ""
@@ -2130,11 +2082,11 @@
       "id": "providers-common",
       "label": "providers \u00b7 _common",
       "domain": "providers",
-      "depth": 0.25,
+      "depth": 0.65,
       "size": 0.6,
-      "seam": "private shared helpers both CLI adapters call separately; one is a pure pass-through",
-      "iface": "four free helpers \u2014 model_id / resolved_workspace / collect_mcp_servers / build_system_prompt \u2014 each adapter calls them one by one. collect_mcp_servers just re-exports core.mcp.loader.collect_enabled_mcp_servers (fails the deletion test).",
-      "coverage": 0.6,
+      "seam": "the single run-input assembly seam both CLI adapters call; one build() returns a typed bundle",
+      "iface": "ProviderBuildContext.build(cfg, resolved_prompt, mission_mode) -> frozen {workspace, model, mcp_servers, system_prompt}; composed once. model_id kept as a public leaf for the event stream. The collect_mcp_servers pass-through was inlined + deleted.",
+      "coverage": 0.85,
       "updated": true,
       "files": [
         "core/deep_providers/_common.py"
@@ -2144,23 +2096,8 @@
         "mcp-loader"
       ],
       "leaksTo": [],
-      "tests": "test_deep_providers.py (simple per-helper cases; the prompt-composed-once invariant is not asserted)",
-      "suggestion": {
-        "id": "providers-common-worth-exploring",
-        "title": "Collapse the four _common helpers into one provider context",
-        "strength": "Worth exploring",
-        "category": "in-process",
-        "problem": "Four shallow helpers \u2014 one (collect_mcp_servers) a pure pass-through \u2014 are each called separately by both adapters, so assembling a provider's run inputs has no single home and the 'prompt composed once' invariant is implicit.",
-        "solution": "Fold them into ProviderBuildContext.build(cfg, resolved_prompt, mission_mode) returning one typed bundle; inline the pass-through helper.",
-        "wins": [
-          "Four interfaces shrink to one",
-          "Delete the pass-through helper",
-          "'Composed once' becomes explicit",
-          "One assembly test, both adapters"
-        ],
-        "decision": "",
-        "note": ""
-      },
+      "tests": "test_deep_providers.py (context fields: workspace/model/mcp/system_prompt + model_id leaf); both adapters stub the one seam (claude patches ProviderBuildContext.build; codex rebinds session.ProviderBuildContext)",
+      "suggestion": null,
       "orphan": false
     },
     {
@@ -2191,10 +2128,6 @@
   "openSuggestions": [
     "api-svc-build-spec-speculative",
     "cli-events-worth-exploring",
-    "config-loader-worth-exploring",
-    "mission-core-speculative",
-    "orch-agent-turn-worth-exploring",
-    "providers-common-worth-exploring",
-    "services-loader-worth-exploring"
+    "mission-core-speculative"
   ]
 }
