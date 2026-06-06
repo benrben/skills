@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dataclasses import fields
 import fcntl
 import json
 import re
@@ -50,7 +51,7 @@ try:  # Lane 2 — Generative/Prefab UI — needs the prefab-ui extra ON TOP of 
 except Exception:  # pragma: no cover
     _HAS_PREFAB = False
 
-from .model import ArchModel, Module, Suggestion
+from .model import ArchModel, Module, Suggestion, Plan, WorkStep
 
 HERE = Path(__file__).parent
 # The unified **studio** — one workspace combining the dependency graph (canvas)
@@ -109,22 +110,39 @@ class Store:
     def orphans(self): return self._load().orphans()
     def get_module(self, mid): return self._load().get_module(mid)
     def get_modules(self, ids): return self._load().get_modules(ids)
+    def get_plan(self, pid): return self._load().get_plan(pid)
+    def queued_for_grilling(self): return self._load().queued_for_grilling()
     @property
     def modules(self): return self._load().modules
+    @property
+    def plans(self): return self._load().plans
 
     # writes (load -> mutate -> save)
     def set_depth(self, mid, s): self._write(lambda m: m.set_depth(mid, s))
     def set_coverage(self, mid, f): self._write(lambda m: m.set_coverage(mid, f))
     def mark_updated(self, mid, u=True): self._write(lambda m: m.mark_updated(mid, u))
+    def set_plane(self, mid, p): self._write(lambda m: m.set_plane(mid, p))
+    def set_lifecycle(self, mid, lc): self._write(lambda m: m.set_lifecycle(mid, lc))
+    def realize_module(self, mid, depth=None, coverage=None, files=None):
+        self._write(lambda m: m.realize_module(mid, depth, coverage, files))
     def add_suggestion(self, mid, s): self._write(lambda m: m.add_suggestion(mid, s))
     def resolve(self, sid): self._write(lambda m: m.resolve(sid))
-    def decide(self, sid, d, n=""): self._write(lambda m: m.decide(sid, d, n))
+    def decide(self, sid, d, n="", adr="", expect=None):
+        self._write(lambda m: m.decide(sid, d, n, adr, expect))
+    def request_grilling(self, sid): self._write(lambda m: m.request_grilling(sid))
+    def mark_grilling(self, sid): self._write(lambda m: m.mark_grilling(sid))
+    def mark_grilled(self, sid): self._write(lambda m: m.mark_grilled(sid))
     def add_module(self, mod): self._write(lambda m: m.add_module(mod))
     def update_module(self, mid, **ch): self._write(lambda m: m.update_module(mid, **ch))
     def delete_module(self, mid): self._write(lambda m: m.delete_module(mid))
     def add_modules(self, mods): self._write(lambda m: m.add_modules(mods))
     def update_modules(self, ups): self._write(lambda m: m.update_modules(ups))
     def delete_modules(self, ids): self._write(lambda m: m.delete_modules(ids))
+    def create_plan(self, plan): self._write(lambda m: m.create_plan(plan))
+    def update_plan(self, pid, **ch): self._write(lambda m: m.update_plan(pid, **ch))
+    def add_work_steps(self, pid, steps): self._write(lambda m: m.add_work_steps(pid, steps))
+    def set_step_status(self, pid, sid, st): self._write(lambda m: m.set_step_status(pid, sid, st))
+    def delete_plan(self, pid): self._write(lambda m: m.delete_plan(pid))
 
 
 _MAP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -265,7 +283,7 @@ _UI_CSP = (
     ResourceCSP(
         resourceDomains=[
             "https://cdn.jsdelivr.net",       # @modelcontextprotocol/ext-apps (host bridge)
-            "https://cdnjs.cloudflare.com",   # dagre (graph layout)
+            "https://cdnjs.cloudflare.com",   # elkjs (graph layout)
             "https://fonts.googleapis.com",   # studio fonts (stylesheet)
             "https://fonts.gstatic.com",      # studio fonts (font files)
         ],
@@ -294,7 +312,7 @@ def _inline_app(index_path: Path) -> str:
     server, so we inline its `/assets/*` CSS/JS (read fresh, so edits propagate)
     and set window.__ARCH_APP__ before any script runs. That flag flips the page's
     data layer into **host mode** — it connects via @modelcontextprotocol/ext-apps
-    and drives everything through tools instead of /api. The dagre + ext-apps CDN
+    and drives everything through tools instead of /api. The elkjs + ext-apps CDN
     tags stay (whitelisted by _UI_CSP). Same files the browser serves, so the inline
     render mirrors the browser exactly."""
     html = index_path.read_text(encoding="utf-8")
@@ -658,20 +676,120 @@ def delete_modules(map: str, modules: list[str]) -> dict:
     return _ack(store)
 
 
+_WS_FIELDS = {f.name for f in fields(WorkStep)}
+
+CANON_GRILL_PROMPT = (
+    "Enter the /deepen grilling loop for {head} (map '{map}', module '{module}'"
+    "{sid}, depth {depth:.2f}, coverage {cov:.0%}). Call mark_grilling as you begin, "
+    "then grilling_done(decision=accepted|deferred|rejected, note, adr) to close it; "
+    "offer an ADR on a load-bearing rejection."
+)
+
+
+def _first_open(m: Module):
+    """The module's first still-open candidate (undecided, not closed), or None."""
+    return next((s for s in m.suggestions if s.decision == "" and s.status != "done"), None)
+
+
+def _grill_prompt(store: Store, map: str, module: str) -> str:
+    m = store.modules[module]
+    s = _first_open(m)
+    head = s.title if s else f"the {m.label} module"
+    sid = f", suggestion '{s.id}'" if s else ""
+    return CANON_GRILL_PROMPT.format(head=head, map=map, module=module, sid=sid,
+                                     depth=m.depth, cov=m.coverage)
+
+
 @mcp.tool
 def start_grilling(map: str, module: str) -> str:
     """UI callback: fired when the user clicks 'Grill this candidate' on a node.
 
-    Returns a prompt that hands control to the /improve-codebase-architecture
-    grilling loop for the chosen module in `map`.
+    Persists the candidate as 'requested' (so a terminal /deepen or another surface
+    can pick it up via grilling_queue) and returns the prompt that hands control to
+    the /deepen grilling loop for `module` in `map`.
     """
-    m = REGISTRY.store(map).modules[module]
-    s = m.suggestion
-    head = s.title if s else f"the {m.label} module"
-    return (
-        f"Enter the /improve-codebase-architecture grilling loop for {head} "
-        f"(map '{map}', module '{module}', depth {m.depth:.2f}, coverage {m.coverage:.0%})."
-    )
+    store = REGISTRY.store(map)
+    s = _first_open(store.modules[module])
+    if s:
+        store.request_grilling(s.id)
+    return _grill_prompt(store, map, module)
+
+
+@mcp.tool
+def grilling_queue(map: str) -> dict:
+    """Candidates a user flagged for grilling that no agent has picked up yet — a
+    terminal /deepen polls this to find work queued from the studio / another surface."""
+    return {"map": map, "queued": REGISTRY.store(map).queued_for_grilling()}
+
+
+@mcp.tool(**_APP)
+def mark_grilling(map: str, suggestion_id: str) -> dict:
+    """Mark a candidate as actively being grilled (status -> 'grilling'). Call at the
+    start of the /deepen grilling loop; grilling_done closes it out. Re-renders."""
+    store = REGISTRY.store(map)
+    store.mark_grilling(suggestion_id)
+    return _ack(store)
+
+
+@mcp.tool(**_APP)
+def grilling_done(map: str, suggestion_id: str, decision: str, note: str = "", adr: str = "") -> dict:
+    """Close a grilling loop: mark the candidate grilled and record the verdict
+    (accepted | deferred | rejected) + reason (+ optional docs/adr/NNNN path), then
+    re-render. The candidate is KEPT as the durable record (not deleted)."""
+    store = REGISTRY.store(map)
+    store.mark_grilled(suggestion_id)
+    store.decide(suggestion_id, decision, note, adr)
+    return _ack(store)
+
+
+@mcp.tool(**_APP)
+def realize_module(map: str, module: str, depth: float | None = None,
+                   coverage: float | None = None, files: list[str] | None = None) -> dict:
+    """fathom:code: flip a planned/intended module to a real built one
+    (plane->actual, lifecycle->built) once its source exists, optionally recording
+    the achieved depth/coverage/files. Re-renders."""
+    store = REGISTRY.store(map)
+    store.realize_module(module, depth, coverage, files)
+    return _ack(store)
+
+
+# --- Plans + work steps (fathom:plan creates; fathom:code executes) ----------
+@mcp.tool(**_APP)
+def create_plan(map: str, id: str, title: str, domain: str = "", intent: str = "",
+                moduleIds: list[str] | None = None) -> dict:
+    """fathom:plan: create a Plan (intended deep structure for new/changing work) on
+    `map`. `moduleIds` are the intended modules it introduces — add those with
+    add_module(plane='intended', lifecycle='planned'). Re-renders."""
+    store = REGISTRY.ensure(map)
+    store.create_plan(Plan(id=id, title=title, domain=domain, intent=intent,
+                           moduleIds=moduleIds or []))
+    return _ack(store)
+
+
+@mcp.tool(**_APP)
+def add_work_steps(map: str, plan_id: str, steps: list[dict]) -> dict:
+    """Append ordered build steps to a plan. Each step dict needs id/title; optional
+    targets (module ids), interface (the test surface), dependsOnSteps, adapters
+    (DEEPENING.md category + which adapters), note. fathom:code executes them in
+    order. Re-renders."""
+    store = REGISTRY.store(map)
+    store.add_work_steps(plan_id, [WorkStep(**{k: v for k, v in s.items() if k in _WS_FIELDS})
+                                   for s in steps])
+    return _ack(store)
+
+
+@mcp.tool(**_APP)
+def set_step_status(map: str, plan_id: str, step_id: str, status: str) -> dict:
+    """Advance a work step: todo | in-progress | done | blocked. Re-renders."""
+    store = REGISTRY.store(map)
+    store.set_step_status(plan_id, step_id, status)
+    return _ack(store)
+
+
+@mcp.tool
+def get_plan(map: str, plan_id: str) -> dict:
+    """Read a plan's full record (intent, intended module ids, ordered steps). Read-only."""
+    return REGISTRY.store(map).get_plan(plan_id)
 
 
 # --- HTTP studio app (browser UI -> saved back to the server) ---------------
@@ -683,9 +801,14 @@ def start_grilling(map: str, module: str) -> str:
 # tabs converge. Launch with `python -m arch_map.web`.
 def _apply_action(store: Store, action: str, body: dict) -> None:
     if action == "decide":
-        store.decide(body["suggestion_id"], body["decision"], body.get("note", ""))
+        store.decide(body["suggestion_id"], body["decision"], body.get("note", ""),
+                     body.get("adr", ""), body.get("expect"))
     elif action == "resolve":
         store.resolve(body["suggestion_id"])
+    elif action == "request_grilling":
+        store.request_grilling(body["suggestion_id"])
+    elif action == "set_step_status":
+        store.set_step_status(body["plan_id"], body["step_id"], body["status"])
     elif action == "set_depth":
         store.set_depth(body["module"], float(body["score"]))
     elif action == "set_coverage":
@@ -789,6 +912,27 @@ async def api_act(request):
     return JSONResponse(store.to_dict())  # Store auto-saves on each write
 
 
+@mcp.custom_route("/api/grill", ["POST"])
+async def api_grill(request):
+    """Browser grill hand-off. A browser CANNOT trigger an agent turn, so this only
+    (a) persists the candidate as 'requested' and (b) returns the canonical /deepen
+    prompt + a 'resume <map>' line for the user to paste into their agent."""
+    body = await request.json()
+    map_id = body.get("map") or REGISTRY.default_id()
+    try:
+        store = REGISTRY.resolve(body.get("map"))
+        module = body["module"]
+        s = _first_open(store.modules[module])
+        if s:
+            store.request_grilling(s.id)
+        prompt = _grill_prompt(store, map_id, module)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"ok": True, "prompt": prompt,
+                         "resume": f"/deepen resume {map_id}",
+                         "model": store.to_dict()})
+
+
 # The graph UI (network.html) calls tools by their MCP name; dispatch them here
 # so the same page works both as an MCP App (desktop) and served over HTTP.
 def _call_tool(store: Store, name: str, a: dict) -> None:
@@ -804,8 +948,18 @@ def _call_tool(store: Store, name: str, a: dict) -> None:
         store.add_module(Module.from_dict(a))
     elif name == "resolve":
         store.resolve(a["suggestion_id"])
+    elif name == "decide":
+        store.decide(a["suggestion_id"], a["decision"], a.get("note", ""), a.get("adr", ""))
+    elif name == "request_grilling":
+        store.request_grilling(a["suggestion_id"])
+    elif name == "mark_grilled":
+        store.mark_grilled(a["suggestion_id"])
     elif name == "start_grilling":
-        pass  # agent-only hand-off; a no-op when driven from a browser
+        # A browser can't trigger an agent turn — but it CAN persist the request so
+        # a terminal /deepen (or an MCP-App host's sendMessage) picks it up.
+        s = _first_open(store.modules[a["module"]]) if a.get("module") else None
+        if s:
+            store.request_grilling(s.id)
     else:
         raise ValueError(f"unknown tool '{name}'")
 

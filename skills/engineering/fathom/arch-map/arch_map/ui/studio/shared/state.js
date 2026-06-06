@@ -60,7 +60,7 @@
   // expects an immediate model back, so we keep a live normalized cache here.
   // Reads return it; writes update it optimistically, then a background POST
   // reconciles against the authoritative server response.
-  let cur = { repo: "", modules: [], decisions: {}, seq: 0 };
+  let cur = { repo: "", modules: [], plans: [], decisions: {}, seq: 0 };
   let lastServerJson = "";       // raw JSON of the last authoritative model
   let pendingWrites = 0;         // in-flight POSTs (gates poll-reconcile)
   let writeGen = 0;              // bumps per optimistic write; gates stale server snapshots
@@ -91,30 +91,70 @@
     if (typeof t === "string" && t.trim()) return [t.trim()];
     return [];
   }
+  // de-normalize on the way OUT: the backend stores `tests` as a free-text string,
+  // so if a write ever carries the studio's array form, join it before it crosses
+  // the wire (server.py's render_view does `(tests or "").strip()` — a list throws).
+  function testsToString(t) {
+    if (Array.isArray(t)) return t.filter(Boolean).join("\n");
+    return t == null ? "" : String(t);
+  }
+  function denormFields(fields) {
+    if (fields && "tests" in fields) {
+      return Object.assign({}, fields, { tests: testsToString(fields.tests) });
+    }
+    return fields;
+  }
 
+  function normSug(s, moduleId) {
+    return {
+      sid: s.id,
+      module: moduleId,
+      strength: STRENGTH_TO_KEY[s.strength] || strengthKey(s.strength),
+      category: s.category || "",
+      title: s.title || "", problem: s.problem || "", solution: s.solution || "",
+      wins: Array.isArray(s.wins) ? s.wins : [],
+      status: s.status || "open", decision: s.decision || "", note: s.note || "",
+      adrRef: s.adrRef || "", planId: s.planId || "",
+    };
+  }
+  function normPlan(p) {
+    return {
+      id: p.id,
+      title: p.title || "",
+      domain: p.domain || "",
+      intent: p.intent || "",
+      status: p.status || "draft",
+      moduleIds: Array.isArray(p.moduleIds) ? p.moduleIds : [],
+      adrRefs: Array.isArray(p.adrRefs) ? p.adrRefs : [],
+      steps: (p.steps || []).map((st) => ({
+        id: st.id, title: st.title || "", status: st.status || "todo",
+        targets: st.targets || [], interface: st.interface || "",
+        dependsOnSteps: st.dependsOnSteps || [], adapters: st.adapters || [],
+        note: st.note || "",
+      })),
+    };
+  }
   function normalize(raw) {
     const decisions = {};
     const modules = (raw.modules || []).map((m) => {
-      const s = m.suggestion;
-      let suggestion = null;
-      if (s) {
-        const key = STRENGTH_TO_KEY[s.strength] || strengthKey(s.strength);
-        suggestion = {
-          sid: s.id,
-          strength: key,
-          title: s.title || "",
-          problem: s.problem || "",
-          solution: s.solution || "",
-          wins: Array.isArray(s.wins) ? s.wins : [],
-        };
+      // The backend keeps a QUEUE of candidates per module (m.suggestions); fall
+      // back to the back-compat single m.suggestion for older payloads.
+      const raws = (Array.isArray(m.suggestions) && m.suggestions.length)
+        ? m.suggestions : (m.suggestion ? [m.suggestion] : []);
+      const suggestions = raws.map((s) => normSug(s, m.id));
+      // primary = first still-open candidate (drives the ⚠ ring + the inspector card)
+      const suggestion = suggestions.find((x) => !x.decision && x.status !== "done") || null;
+      // every decided candidate records a verdict, keyed by its SUGGESTION id
+      suggestions.forEach((s) => {
         if (s.decision) {
-          decisions[m.id] = {
+          decisions[s.sid] = {
             verdict: DECISION_TO_VERDICT[s.decision] || s.decision,
             reason: s.note || "",
+            adr: s.adrRef || "",
             at: null,
           };
         }
-      }
+      });
       return {
         id: m.id,
         label: m.label,
@@ -122,15 +162,22 @@
         depth: Math.round((m.depth || 0) * 100),
         coverage: Math.round((m.coverage || 0) * 100),
         updated: !!m.updated,
+        plane: m.plane || "actual",
+        lifecycle: m.lifecycle || "built",
         interface: m.iface || "",
         files: Array.isArray(m.files) ? m.files : [],
         tests: testsToArray(m.tests),
         dependsOn: Array.isArray(m.dependsOn) ? m.dependsOn : [],
         leaks: Array.isArray(m.leaksTo) ? m.leaksTo : [],
+        intendsToDependOn: Array.isArray(m.intendsToDependOn) ? m.intendsToDependOn : [],
+        supersedes: Array.isArray(m.supersedes) ? m.supersedes : [],
+        supersededBy: Array.isArray(m.supersededBy) ? m.supersededBy : [],
         suggestion,
+        suggestions,
       };
     });
-    return { repo: raw.repo || "", modules, decisions, seq: (cur.seq || 0) + 1 };
+    const plans = (raw.plans || []).map(normPlan);
+    return { repo: raw.repo || "", modules, plans, decisions, seq: (cur.seq || 0) + 1 };
   }
 
   // ---- find the backend suggestion id for a module (for decide/resolve) -----
@@ -212,9 +259,9 @@
 
   async function fetchModel() {
     if (HOST) {
-      if (!currentMap) return lastServerJson || JSON.stringify({ repo: "", modules: [], orphans: [], openSuggestions: [] });
+      if (!currentMap) return lastServerJson || JSON.stringify({ repo: "", modules: [], plans: [], orphans: [], openSuggestions: [] });
       const full = await hostCall("get_model", { map: currentMap });
-      return JSON.stringify(full || { repo: "", modules: [], orphans: [], openSuggestions: [] });
+      return JSON.stringify(full || { repo: "", modules: [], plans: [], orphans: [], openSuggestions: [] });
     }
     const u = new URL(apiUrl(API_MODEL));
     if (currentMap) u.searchParams.set("map", currentMap);
@@ -313,8 +360,9 @@
       case "decide": return ["decide", { map, suggestion_id: a.suggestion_id, decision: a.decision, note: a.note || "" }];
       case "resolve": return ["resolve", { map, suggestion_id: a.suggestion_id }];
       case "delete": return ["delete_module", { map, module: a.module }];
-      case "update": return ["update_module", { map, module: a.module, fields: a.fields || {} }];
+      case "update": return ["update_module", { map, module: a.module, fields: denormFields(a.fields || {}) }];
       case "add": return ["add_module", Object.assign({ map }, a.module)];
+      case "set_step_status": return ["set_step_status", { map, plan_id: a.plan_id, step_id: a.step_id, status: a.status }];
       default: throw new Error("unsupported action: " + a.action);
     }
   }
@@ -335,8 +383,69 @@
     }
   }
 
+  // ---- grill hand-off: UI -> agent turn (MCP-App) or copy-paste (browser) ---
+  // "Grill this candidate" routes here. callServerTool persists the request and
+  // returns the canonical prompt but the result stays in the iframe; only
+  // app.sendMessage (ui/message) posts a message AND triggers an agent turn, and
+  // app.updateModelContext stages the candidate body for that turn — both
+  // feature-gated on the host's advertised capabilities, role hardcoded "user"
+  // (the only value ext-apps@1.7.2 accepts). A plain browser can't trigger a turn,
+  // so it POSTs /api/grill and surfaces the prompt + a "resume <map>" line.
+  function grillBody(m) {
+    if (!m) return "";
+    const s = m.suggestion;
+    return [
+      "Candidate to grill: " + ((s && s.title) || m.label) + " (module '" + m.id + "', domain '" + m.domain + "').",
+      "Depth " + m.depth + "/100, coverage " + m.coverage + "%.",
+      s && s.problem ? "Problem: " + s.problem : "",
+      s && s.solution ? "Solution: " + s.solution : "",
+      s && s.wins && s.wins.length ? "Wins: " + s.wins.join("; ") : "",
+      m.interface ? "Interface: " + m.interface : "",
+    ].filter(Boolean).join("\n");
+  }
+  function grillText(r, module) {                  // start_grilling returns a TEXT prompt
+    if (r && Array.isArray(r.content)) {
+      const t = r.content.find((c) => c && c.type === "text");
+      if (t && t.text) return t.text;
+    }
+    if (r && typeof r.structuredContent === "string") return r.structuredContent;
+    return "Enter the /deepen grilling loop for module '" + module + "'.";
+  }
+  function showGrillFallback(prompt, resume) {
+    if (window.Studio && typeof window.Studio.grillFallback === "function") return window.Studio.grillFallback(prompt, resume);
+    const msg = "Grilling requested — paste into your agent: " + (resume || prompt);
+    if (window.Studio && typeof window.Studio.toast === "function") window.Studio.toast(msg, "var(--accent, #6aa)");
+    else console.info("[arch-map grill]", prompt, resume || "");
+  }
+  async function hostGrill(map, module, body) {
+    const app = await hostConnect();
+    const caps = (app.getHostCapabilities && app.getHostCapabilities()) || {};
+    let prompt;
+    try {                                          // (1) persist 'requested' + get the prompt (iframe-only)
+      prompt = grillText(await app.callServerTool({ name: "start_grilling", arguments: { map, module } }), module);
+    } catch (e) { prompt = grillText(null, module); }
+    if (!caps.message) return { triggered: false, prompt, reason: "no-message-capability" };
+    try {                                          // (2) stage the candidate body for the next turn (no trigger)
+      if (caps.updateModelContext && body) await app.updateModelContext({ content: [{ type: "text", text: body }] });
+    } catch (e) { /* best-effort */ }
+    const sent = await app.sendMessage({ role: "user", content: [{ type: "text", text: prompt }] });  // (3) the trigger
+    return { triggered: !(sent && sent.isError), prompt };
+  }
+  async function browserGrill(map, module) {
+    const res = await fetch(apiUrl("api/grill"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ map, module }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.error) throw new Error(d.error || "could not request grilling");
+    return d;   // { prompt, resume }
+  }
+
   // POST an action; reconcile the cache from the authoritative response.
   async function act(body) {
+    if (body && body.action === "update" && body.fields) {
+      body = Object.assign({}, body, { fields: denormFields(body.fields) });
+    }
     if (HOST) return hostAct(body);
     const myGen = ++writeGen;   // this is now the newest write
     pendingWrites++;
@@ -366,6 +475,14 @@
   function bump() { cur.seq = (cur.seq || 0) + 1; }
   function clamp(n) { return Math.max(0, Math.min(100, Math.round(n))); }
   function find(id) { return cur.modules.find((x) => x.id === id); }
+  // locate a suggestion (and its owning module) anywhere in the queue, by sid
+  function findSug(sid) {
+    for (const m of cur.modules) {
+      const s = (m.suggestions || []).find((x) => x.sid === sid);
+      if (s) return { module: m, sug: s };
+    }
+    return null;
+  }
 
   // ---- model API (mirrors the prototype's synchronous Store) ---------------
   const Store = {
@@ -389,8 +506,10 @@
       if (!id || find(id)) return cur;
       cur.modules.push({
         id, label: label || id, domain: domain || "uncategorized",
-        depth: 50, coverage: 0, updated: true, interface: "",
-        files: [], tests: [], dependsOn: [], leaks: [], suggestion: null,
+        depth: 50, coverage: 0, updated: true, plane: "actual", lifecycle: "built", interface: "",
+        files: [], tests: [], dependsOn: [], leaks: [],
+        intendsToDependOn: [], supersedes: [], supersededBy: [],
+        suggestion: null, suggestions: [],
       });
       bump();
       act({ action: "add", module: { id, label: label || id, domain: domain || "uncategorized" } }).catch(reportErr);
@@ -407,32 +526,52 @@
       act({ action: "delete", module: id }).catch(reportErr);
       return cur;
     },
-    decide(id, verdict, reason) {
+    decide(sid, verdict, reason) {
       // the proposal must still exist on the server to record a decision against it
-      const sid = sidFor(id);
-      if (!sid) { reportErr(new Error("proposal for " + id + " no longer exists")); refetch(true); return cur; }
-      cur.decisions[id] = { verdict, reason: reason || "", at: null };
+      if (!findSug(sid)) { reportErr(new Error("proposal " + sid + " no longer exists")); refetch(true); return cur; }
+      cur.decisions[sid] = { verdict, reason: reason || "", adr: "", at: null };
       bump();
       act({ action: "decide", suggestion_id: sid, decision: VERDICT_TO_DECISION[verdict] || verdict, note: reason || "" }).catch(reportErr);
       return cur;
     },
-    reopen(id) {
+    reopen(sid) {
       // undo a decision: re-open the proposal (decision back to "")
-      const sid = sidFor(id);
-      if (!sid) { reportErr(new Error("proposal for " + id + " no longer exists")); refetch(true); return cur; }
-      delete cur.decisions[id];
+      delete cur.decisions[sid];
       bump();
       act({ action: "decide", suggestion_id: sid, decision: "", note: "" }).catch(reportErr);
       return cur;
     },
-    dismiss(id) {
-      const sid = sidFor(id);
-      if (!sid) { reportErr(new Error("proposal for " + id + " no longer exists")); refetch(true); return cur; }
-      const m = find(id);
-      if (m) m.suggestion = null;
-      delete cur.decisions[id];
+    dismiss(sid) {
+      const hit = findSug(sid);
+      if (hit) {
+        const m = hit.module;
+        m.suggestions = (m.suggestions || []).filter((x) => x.sid !== sid);
+        m.suggestion = m.suggestions.find((x) => !x.decision && x.status !== "done") || null;
+      }
+      delete cur.decisions[sid];
       bump();
       act({ action: "resolve", suggestion_id: sid }).catch(reportErr);
+      return cur;
+    },
+    setStepStatus(planId, stepId, status) {
+      const plan = (cur.plans || []).find((p) => p.id === planId);
+      if (plan) {
+        const step = (plan.steps || []).find((s) => s.id === stepId);
+        if (step) { step.status = status; bump(); }
+      }
+      act({ action: "set_step_status", plan_id: planId, step_id: stepId, status }).catch(reportErr);
+      return cur;
+    },
+    grill(id) {
+      // Hand a candidate off to the /deepen grilling loop. In an MCP-App host this
+      // triggers an agent turn (sendMessage); in a browser it surfaces the prompt
+      // + a resume line to paste. Either way the candidate is persisted 'requested'.
+      const map = currentMap, m = find(id), body = grillBody(m);
+      if (HOST) {
+        hostGrill(map, id, body).then((r) => { if (!r.triggered) showGrillFallback(r.prompt, null); }).catch(reportErr);
+      } else {
+        browserGrill(map, id).then((d) => showGrillFallback(d.prompt, d.resume)).catch(reportErr);
+      }
       return cur;
     },
   };
@@ -501,12 +640,18 @@
     return "shallow";
   }
   function isOrphan(s, m) {
-    const hasOut = (m.dependsOn || []).length > 0 || (m.leaks || []).length > 0;
-    const hasIn = s.modules.some((x) => (x.dependsOn || []).includes(m.id) || (x.leaks || []).includes(m.id));
+    const hasOut = (m.dependsOn || []).length > 0 || (m.leaks || []).length > 0
+      || (m.intendsToDependOn || []).length > 0 || (m.supersedes || []).length > 0;
+    const hasIn = s.modules.some((x) =>
+      (x.dependsOn || []).includes(m.id) || (x.leaks || []).includes(m.id)
+      || (x.intendsToDependOn || []).includes(m.id) || (x.supersedes || []).includes(m.id));
     return !hasOut && !hasIn;
   }
+  function isOpen(model, sug) {
+    return !model.decisions[sug.sid] && sug.status !== "done";
+  }
   function openSuggestions(s) {
-    return s.modules.filter((m) => m.suggestion && !s.decisions[m.id]);
+    return s.modules.flatMap((m) => (m.suggestions || []).filter((x) => isOpen(s, x)));
   }
 
   // named maps (one per project); shared, addressed by id
@@ -521,7 +666,7 @@
 
   window.Arch = {
     Store, subscribe, subscribePrefs, Prefs, whenReady, Maps,
-    tierOf, isOrphan, openSuggestions,
+    tierOf, isOrphan, isOpen, openSuggestions,
     STRENGTHS: {
       strong: { label: "Strong", short: "strong" },
       worth: { label: "Worth exploring", short: "worth" },

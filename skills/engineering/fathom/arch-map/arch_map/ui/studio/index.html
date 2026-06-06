@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/assets/shared/ui.css">
 <link rel="stylesheet" href="/assets/shared/components.css">
 <link rel="stylesheet" href="/assets/studio.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
 <style>
   /* map switcher (named maps, one per project) */
   .map-switcher { position: relative; display: flex; }
@@ -57,10 +57,28 @@
       <div class="help-enc"><span class="sw ring"></span><span class="et"><b>ring + !</b> = the agent has a proposal</span></div>
       <div class="help-enc"><span class="sw upd"></span><span class="et"><b>blue outline</b> = changed since last scan</span></div>
       <div class="help-enc"><span class="ln"></span><span class="et"><b>red dashed</b> = a dependency leak</span></div>
+      <div class="help-enc"><span class="sw planned"></span><span class="et"><b>◇ dashed card</b> = planned (intended) module</span></div>
+      <div class="help-enc"><span class="sw building"></span><span class="et"><b>striped</b> = building · under construction</span></div>
+      <div class="help-enc"><span class="line intended"></span><span class="et"><b>dashed violet line</b> = intended dependency</span></div>
+      <div class="help-enc"><span class="cand-status grilling"></span><span class="et"><b>requested · grilling · grilled</b> pills = a candidate being grilled</span></div>
+    </div>
+    <div class="hsec">
+      <h5>Legend</h5>
+      <div class="legend">
+        <span class="li"><span class="sw deep"></span>deep</span>
+        <span class="li"><span class="sw mid"></span>mid</span>
+        <span class="li"><span class="sw shallow"></span>shallow</span>
+        <span class="li"><span class="sw cov"></span>coverage</span>
+        <span class="li"><span class="sw planned"></span>planned</span>
+        <span class="li"><span class="line"></span>updated</span>
+        <span class="li"><span class="line leak"></span>leak</span>
+        <span class="li"><span class="line intended"></span>intended</span>
+      </div>
     </div>
     <div class="hsec">
       <h5>Shortcuts</h5>
       <div class="kbd-row"><span>Proposals · Inspector · Modules</span><span class="kr-keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></span></div>
+      <div class="kbd-row"><span>Plans</span><span class="kr-keys"><kbd>4</kbd></span></div>
       <div class="kbd-row"><span>Search modules</span><span class="kr-keys"><kbd>/</kbd></span></div>
       <div class="kbd-row"><span>Deselect / close</span><span class="kr-keys"><kbd>esc</kbd></span></div>
       <div class="kbd-row"><span>Zoom · pan the canvas</span><span class="kr-keys">scroll · drag</span></div>
@@ -79,16 +97,9 @@
       <input id="searchInput" placeholder="Search modules…" autocomplete="off">
       <kbd>/</kbd>
     </label>
-    <button class="btn" id="allEdgesBtn" aria-pressed="false">⇢ all edges</button>
+    <button class="btn" id="allEdgesBtn" aria-pressed="false">&#x21E2; all edges</button>
+    <button class="btn" id="overviewBtn" aria-pressed="true">&#x25EB; Overview</button>
     <div class="spacer" style="flex:1"></div>
-    <div class="legend">
-      <span class="li"><span class="sw deep"></span>deep</span>
-      <span class="li"><span class="sw mid"></span>mid</span>
-      <span class="li"><span class="sw shallow"></span>shallow</span>
-      <span class="li"><span class="sw cov"></span>coverage</span>
-      <span class="li"><span class="line"></span>updated</span>
-      <span class="li"><span class="line leak"></span>leak</span>
-    </div>
   </div>
 
   <!-- workspace: graph + agent rail -->
@@ -108,6 +119,7 @@
           <button id="fitBtn" title="Fit to view">⤢</button>
         </div>
         <div class="zoom-ind" id="zoomInd">100%</div>
+        <div class="minimap" id="minimapWrap"><span class="mm-cap">map</span><canvas id="minimap" width="376" height="256"></canvas></div>
       </div>
       <div class="orphan-tray">
         <span class="ot-label">
@@ -134,11 +146,13 @@
         <button class="rtab" data-tab="agent" role="tab" aria-selected="true">Proposals <span class="tcount">0</span></button>
         <button class="rtab" data-tab="inspector" role="tab" aria-selected="false">Inspector</button>
         <button class="rtab" data-tab="modules" role="tab" aria-selected="false">Modules <span class="tcount">0</span></button>
+        <button class="rtab" data-tab="plans" role="tab" aria-selected="false">Plans <span class="tcount">0</span></button>
       </div>
       <div class="rail-body" id="railBody">
         <div class="rail-pane active" data-pane="agent"><div class="agent-pane" id="agentPane"></div></div>
         <div class="rail-pane" data-pane="inspector"><div id="inspPane"></div></div>
         <div class="rail-pane" data-pane="modules"><div class="mods-pane" id="modsPane"></div></div>
+        <div class="rail-pane" data-pane="plans"><div class="plans-pane" id="plansPane"></div></div>
       </div>
     </aside>
   </div>
@@ -158,7 +172,7 @@
     </div>
     <div class="onb-steps">
       <div class="onb-step"><div class="num">1</div><div><div class="t">The graph is the map</div><div class="s">Every card is a module. Position and fill show how deep it sits; the bar shows test coverage. Hover to light up its neighbourhood, click to inspect.</div></div></div>
-      <div class="onb-step"><div class="num">2</div><div><div class="t">The rail is the agent</div><div class="s">On the right: its <b>proposals</b> queue. Each one names a problem, a solution, and the wins. Hover a proposal to find it on the graph.</div></div></div>
+      <div class="onb-step"><div class="num">2</div><div><div class="t">The rail is the agent</div><div class="s">On the right: its <b>proposals</b> queue. Each one names a problem, a solution, and the wins. Hover a proposal to find it on the graph. The agent also drafts <b>plans</b> — the intended structure — in the Plans tab; planned modules show as dashed ghosts on the graph.</div></div></div>
       <div class="onb-step"><div class="num">3</div><div><div class="t">You close the loop</div><div class="s">Accept, defer, reject or dismiss — with a reason. The graph, counts and queue update instantly. That's the whole game.</div></div></div>
     </div>
     <div class="onb-foot">

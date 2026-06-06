@@ -1,0 +1,11 @@
+{
+  "name": "fathom",
+  "owner": { "name": "Ben" },
+  "plugins": [
+    {
+      "name": "fathom",
+      "source": "./",
+      "description": "Deep-module architecture suite + the arch-map MCP spine"
+    }
+  ]
+}

@@ -156,6 +156,55 @@
 .mods-add .field { margin: 0; }
 .mods-add .field.full { grid-column: 1 / -1; }
 
+/* ---------- PLANS pane ---------- */
+.plans-pane { padding: 14px 14px 28px; }
+.plan-card {
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel);
+  box-shadow: var(--shadow-sm); margin-bottom: 12px; padding: 13px 14px 14px;
+  transition: box-shadow .15s, border-color .15s;
+}
+.plan-card:hover { box-shadow: var(--shadow-md); }
+.plan-hd { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+.plan-hd .p-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+.plan-hd .p-title { font-size: 13.5px; font-weight: 600; line-height: 1.3; flex: 1; min-width: 0; }
+.plan-hd .spacer { flex: 1; }
+.plan-status {
+  font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong);
+  color: var(--text-dim); background: var(--panel-2, var(--panel)); white-space: nowrap; flex: 0 0 auto;
+}
+.plan-status.draft { color: var(--warn, #b8860b); border-color: var(--warn, #b8860b); }
+.plan-status.active { color: var(--accent-text); border-color: var(--accent); }
+.plan-status.done { color: var(--strong); border-color: var(--strong); }
+.plan-status.abandoned { color: var(--text-faint); border-color: var(--border); text-decoration: line-through; }
+.plan-intent { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin: 6px 0 10px; }
+.plan-modules { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 11px; }
+.plan-modules .pm-pill {
+  font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); transition: .12s;
+}
+.plan-modules .pm-pill:hover { border-color: var(--accent); color: var(--accent-text); }
+.plan-steps { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.pstep { display: flex; align-items: center; gap: 9px; padding: 8px 11px; background: var(--panel); }
+.pstep:hover { background: var(--panel-2); }
+.pstep .ps-title { flex: 1; min-width: 0; font-size: 12px; color: var(--text-dim); }
+.pstep .ps-title .ps-num { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); margin-right: 6px; }
+.ps-status {
+  font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
+  padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-strong);
+  color: var(--text-faint); flex: 0 0 auto; white-space: nowrap;
+}
+.ps-status.todo { color: var(--text-faint); border-color: var(--border); }
+.ps-status.in-progress { color: var(--accent-text); border-color: var(--accent); }
+.ps-status.done { color: var(--strong); border-color: var(--strong); }
+.ps-status.blocked { color: var(--leak); border-color: var(--leak); }
+.ps-controls { display: inline-flex; gap: 4px; flex: 0 0 auto; }
+.ps-controls button {
+  font-size: 10.5px; line-height: 1; padding: 4px 7px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--panel); color: var(--text-faint); transition: .12s;
+}
+.ps-controls button:hover { color: var(--text); border-color: var(--border-strong); }
+
 /* ---------- rail collapse toggle (on canvas) ---------- */
 .rail-toggle {
   position: absolute; top: 14px; right: 14px; z-index: 6;
@@ -175,15 +224,19 @@
 
 /* ---------- level of detail (driven by zoom) ---------- */
 .node { transition: box-shadow .15s, border-color .15s, opacity .18s, transform .12s, outline-color .15s; }
-/* MID zoom: drop the domain micro-label to cut clutter */
-.lod-mid .node-dom { display: none; }
-/* FAR zoom: collapse to a big id + status dots, vertically centred */
-.lod-far .node { padding: 0 14px; justify-content: center; }
-.lod-far .node-label, .lod-far .node-dom, .lod-far .cov-bar { display: none; }
+/* MID zoom: hide secondary label + reduce height */
+.lod-mid .node .node-label { display: none; }
+.lod-mid .node { height: 64px !important; }
+/* FAR zoom: big id only */
+.lod-far .node { padding: 0 14px 0 17px; justify-content: center; }
+.lod-far .node-label, .lod-far .node-dom, .lod-far .node-foot, .lod-far .cov-bar, .lod-far .cov-pct { display: none; }
 .lod-far .node-top { align-items: center; }
-.lod-far .node-id { font-size: 22px; line-height: 1.1; }
-.lod-far .node-flags { transform: scale(1.5); transform-origin: right center; }
+.lod-far .node-id { font-size: 18px; line-height: 1.1; }
+.lod-far .node-flags { transform: scale(1.4); transform-origin: right center; }
 .lod-far .node { box-shadow: var(--shadow-md); }
+
+/* minimap position: below zoom controls, not over them */
+.minimap { bottom: 14px; right: 14px; position: absolute; z-index: 5; }
 
 /* responsive: rail becomes overlay on small screens (contained within workspace) */
 @media (max-width: 720px) {
