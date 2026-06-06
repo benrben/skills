@@ -1098,6 +1098,13 @@ window.Studio = window.Studio || {};
     renderChips();
   };
 
+  // expose so the issues panel (and any other caller) can force detail mode
+  // before navigating to a specific node that only exists in detail view
+  S.showNodeInGraph = async function (id) {
+    if (mode !== "detail") await enterDetail();
+    S.centerOn(id, true);
+  };
+
   S.softUpdateGraph = function () {
     softUpdate();
     renderOrphans();

@@ -591,8 +591,10 @@ window.Studio = window.Studio || {};
 
     ipListEl.querySelectorAll("[data-ipnav]").forEach((el) => el.onclick = () => {
       const id = el.dataset.ipnav;
-      S.selectNode(id);
-      S.centerOn && S.centerOn(id, true);
+      S.selectNode(id);  // opens inspector tab + highlights node
+      // if in overview mode, switch to detail first so the node card is visible
+      if (S.showNodeInGraph) S.showNodeInGraph(id);
+      else if (S.centerOn) S.centerOn(id, true);
     });
   }
 
