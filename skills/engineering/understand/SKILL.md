@@ -88,11 +88,21 @@ The modules a caller or a newcomer meets first. Find them structurally: modules 
 Sort by `depth` (`render_view` with `sortBy: "depth", sortDir: "desc"`, or read it off `get_model`). The deepest modules are where a lot of behaviour sits behind a small interface — the load-bearing parts worth understanding well. Use the **deletion test** to explain *why* each is deep: deleting it would scatter its complexity across N callers. Note their `coverage` — a deep module with high interface coverage is one you can lean on with confidence; a deep module with low coverage is the one to be careful around.
 
 **Lens C — Hot-spots: "where is the friction?"**
-The places that explain why the codebase feels harder than its size suggests:
+The places that explain why the codebase feels harder than its size suggests. Start with `scan_signals(map)` — it returns every module carrying a structural signal sorted worst-first by health score, which is the fastest triage of the whole map. Then narrate what you find:
+
+- **Structural signals** — the computed issues `scan_signals` surfaces. The ones worth narrating on a tour:
+  - `danger-zone` (high churn + low coverage) — the module most likely to cause a production incident
+  - `critical-path-untested` (high blast-radius + low coverage) — a bug here breaks the most
+  - `needs-refactor` (high fan-out + low depth) — does too much, hides nothing
+  - `bottleneck` (many dependents + shallow) — everyone relies on it but it's fragile
+  - `leaky-seam` — reaches across seams it shouldn't
+  - `test-first` — highest-priority for adding tests before any refactor
 - **Leaks** (`leaksTo`, red edges) — where a module reaches across another's seam instead of through its interface. Narrate what coupling this creates and which two modules are now hard to change independently.
 - **Not-connected** (`orphans`) — modules with no edge in any direction. Either dead, or connected through a path the map doesn't yet record (a reconcile question for [fathom:map](#hand-offs)).
 - **Shallow clusters** — runs of low-`depth` modules in one domain, where understanding one concept means bouncing between many small modules with no **locality**. Name the friction; don't prescribe the merge.
 - **Open candidates** — modules already carrying a deepening candidate (the ⚠ ring). Report the candidate's `title` and `strength` (`"Strong"` / `"Worth exploring"` / `"Speculative"`) and that someone has already noticed this friction — then move on.
+
+You may also use `get_metrics(map, module)` to pull a single module's raw numbers (fanIn, fanOut, instability, blastRadius, health) when a user asks "how bad is this one specifically?" That gives you the numbers; `scan_signals` gives you the interpretation.
 
 Scope each lens to what the user asked for. "Give me a tour" earns all three across all domains; "what does the billing area do?" earns all three filtered to that domain (`render_view(map, {"of": "<domain>"})`, then `get_modules` for the bodies).
 

@@ -116,7 +116,10 @@ render_view("my-repo", {"kind": "table", "of": "orphans"})            # nodes wi
 render_view("my-repo", {"kind": "table", "of": "low-coverage"})       # interfaces tests don't cross
 render_view("my-repo", {"kind": "table", "of": "leaks"})              # seam violations
 render_view("my-repo", {"kind": "bar", "metric": "depth", "groupBy": "domain"})  # which domains are shallow
+scan_signals("my-repo")                                               # all structural issues, worst-first
 ```
+
+`scan_signals` returns every module carrying a structural signal (danger-zone, needs-refactor, bottleneck, leaky-seam, etc.) sorted by health score. Use it to surface the riskiest spots quickly — especially `scan_signals("my-repo", "test-first")` (high blast-radius + low coverage) and `scan_signals("my-repo", "danger-zone")` (high churn + low coverage). This is the same signal layer the studio's inspector shows; calling it here gives you the same triage list in your context.
 
 Walk the orphans and leaks with the maintainer. An **orphan is almost always a real edge you missed** — fix its `dependsOn` rather than leave it floating; only rarely is it genuinely dead code. The map should match how the maintainer describes the system; **where it doesn't, the map is wrong** — correct it with `update_module` / `set_depth` / `set_coverage`.
 
@@ -128,6 +131,7 @@ A reconcile is an explicit re-walk of the parts of the repo that may have change
 - **For files that belong to no module**, decide: do they extend an existing module (add to that module's `files`), or are they a newly-discovered module (`add_module`)?
 - **For modules whose files no longer exist**, `delete_modules(map, [...])` — this prunes dangling edges. If a file merely **moved**, prefer updating `files` over deleting, so hand-curated iface/seam prose isn't lost.
 - **Clear the halos.** Once a module's model matches reality again, `mark_updated(map, module, False)` so it stops showing the "changed since last scan" halo.
+- **Record churn from git.** For each module in the reconcile scope, compute commit frequency from `git log --follow -- <files>` over the last 90 days, normalise to 0..1 (0 = never changes, 1 = changes every week), and call `set_churn(map, module, churn)`. Churn feeds the `danger-zone` signal (high churn + low coverage) and the health score visible in the studio inspector — without it those signals can't fire.
 
 ```
 get_modules("my-repo", ["order-intake", "pricing"])

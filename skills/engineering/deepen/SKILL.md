@@ -90,7 +90,8 @@ Use the **same vocabulary as everywhere else** — module, interface, depth, sea
 
 1. `list_maps()` — find the map for this project and reuse its `map` id. (If none exists, hand off to **fathom:map** to seed it first — see step 1.)
 2. `show_map(map)` — render the network. Node size = depth, green ring = coverage, blue halo = updated, ⚠ ring = open suggestion (coloured by strength), red edge = leak, orphan tray = **not connected**. The shallow nodes, leak edges, and thin coverage rings are your candidate list.
-3. `get_model(map)` (full model) or `get_module(map, module)` (one node) when you need the interface text, files, tests, and any existing suggestions back **in your context** — a tool result rendered into the studio does not reach you on its own (see "The tool result is invisible to the model" below).
+3. `scan_signals(map)` — get the triage list: every module with a structural issue (danger-zone, critical-path-untested, needs-refactor, bottleneck, leaky-seam, …) sorted worst-first by health score. This is faster than eyeballing the graph when a map has many modules. Use `scan_signals(map, "test-first")` to find the highest blast-radius modules with the least test cover — those are the ones where a `flag_deepening` candidate is most urgent. The signal ids you'll use most: `danger-zone`, `needs-refactor`, `leaky-seam`, `test-first`, `bottleneck`.
+4. `get_model(map)` (full model) or `get_module(map, module)` (one node) when you need the interface text, files, tests, and any existing suggestions back **in your context** — a tool result rendered into the studio does not reach you on its own (see "The tool result is invisible to the model" below).
 
 #### Flag a candidate per friction you found
 
