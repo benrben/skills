@@ -102,6 +102,7 @@
       <h5>Shortcuts</h5>
       <div class="kbd-row"><span>Proposals · Inspector · Modules</span><span class="kr-keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></span></div>
       <div class="kbd-row"><span>Plans</span><span class="kr-keys"><kbd>4</kbd></span></div>
+      <div class="kbd-row"><span>Issues panel</span><span class="kr-keys"><kbd>p</kbd></span></div>
       <div class="kbd-row"><span>Search modules</span><span class="kr-keys"><kbd>/</kbd></span></div>
       <div class="kbd-row"><span>Deselect / close</span><span class="kr-keys"><kbd>esc</kbd></span></div>
       <div class="kbd-row"><span>Zoom · pan the canvas</span><span class="kr-keys">scroll · drag</span></div>
@@ -124,6 +125,26 @@
     <button class="btn" id="overviewBtn" aria-pressed="true">&#x25EB; Overview</button>
     <div class="spacer" style="flex:1"></div>
   </div>
+
+  <!-- issues panel (slides from left) -->
+  <aside class="issues-panel" id="issuesPanel">
+    <div class="ip-head">
+      <span class="ip-title">⚠ Issues</span>
+      <span class="ip-counts" id="ipCounts"></span>
+      <button class="ip-close" id="ipClose" title="Close (P)">✕</button>
+    </div>
+    <div class="ip-search">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="ipSearch" placeholder="Search modules…" autocomplete="off">
+    </div>
+    <div class="ip-filters" id="ipFilters"></div>
+    <div class="ip-list" id="ipList"></div>
+  </aside>
+  <!-- issues panel tab (always visible, even when closed) -->
+  <button class="ip-tab" id="ipTab" title="Issues panel (P)">
+    <span class="ip-tab-icon">⚠</span>
+    <span class="ip-tab-count" id="ipTabCount">0</span>
+  </button>
 
   <!-- workspace: graph + agent rail -->
   <div class="workspace">

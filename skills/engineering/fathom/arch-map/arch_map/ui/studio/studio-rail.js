@@ -501,6 +501,109 @@ window.Studio = window.Studio || {};
     });
   }
 
+  /* ============ issues panel ============ */
+  let ipOpen = false;
+  let ipFilter = "all";   // "all" | "bad" | "warn" | "info"
+  let ipSearch = "";
+
+  const SEV_ORDER = { bad: 0, warn: 1, info: 2 };
+  const SEV_LABEL = { bad: "🔴 Critical", warn: "🟠 Warn", info: "🟡 Info" };
+
+  function allSignals() {
+    return S.model.modules.flatMap((m) => {
+      const sigs = computeSignals(m);
+      return sigs.length ? [{ m, sigs }] : [];
+    }).sort((a, b) => {
+      const ah = a.m.metrics ? a.m.metrics.health : 50;
+      const bh = b.m.metrics ? b.m.metrics.health : 50;
+      return ah - bh;
+    });
+  }
+
+  function renderIssuesPanel() {
+    const ipPanel = document.getElementById("issuesPanel");
+    const ipListEl = document.getElementById("ipList");
+    const ipFiltersEl = document.getElementById("ipFilters");
+    const ipCountsEl = document.getElementById("ipCounts");
+    const ipTabCount = document.getElementById("ipTabCount");
+    if (!ipPanel) return;
+
+    const all = allSignals();
+    const counts = { bad: 0, warn: 0, info: 0 };
+    all.forEach(({ sigs }) => sigs.forEach((s) => { if (counts[s.sev] !== undefined) counts[s.sev]++; }));
+    const total = all.length;
+
+    // tab badge
+    if (ipTabCount) ipTabCount.textContent = total;
+    document.getElementById("ipTab").classList.toggle("has-issues", total > 0);
+
+    // counts line
+    if (ipCountsEl) {
+      ipCountsEl.innerHTML = [
+        counts.bad  ? `<span class="ip-ct bad">${counts.bad}</span>`   : "",
+        counts.warn ? `<span class="ip-ct warn">${counts.warn}</span>` : "",
+        counts.info ? `<span class="ip-ct info">${counts.info}</span>` : "",
+      ].join("") || `<span class="ip-ct ok">✓ clean</span>`;
+    }
+
+    // filter chips
+    if (ipFiltersEl) {
+      const chips = [["all","All"], ["bad","🔴 Critical"], ["warn","🟠 Warn"], ["info","🟡 Info"]];
+      ipFiltersEl.innerHTML = chips.map(([k, label]) =>
+        `<button class="ip-chip${ipFilter === k ? " active" : ""}" data-ipf="${k}">${label}</button>`
+      ).join("");
+      ipFiltersEl.querySelectorAll("[data-ipf]").forEach((b) => b.onclick = () => {
+        ipFilter = b.dataset.ipf;
+        renderIssuesPanel();
+      });
+    }
+
+    // list
+    const q = ipSearch.toLowerCase();
+    const filtered = all.filter(({ m, sigs }) => {
+      if (ipFilter !== "all" && !sigs.some((s) => s.sev === ipFilter)) return false;
+      if (q && !m.id.toLowerCase().includes(q) && !m.label.toLowerCase().includes(q) && !m.domain.toLowerCase().includes(q)) return false;
+      return true;
+    });
+
+    if (!ipListEl) return;
+    if (!filtered.length) {
+      ipListEl.innerHTML = `<div class="ip-empty">${q || ipFilter !== "all" ? "No matches" : "✓ No issues found"}</div>`;
+      return;
+    }
+
+    ipListEl.innerHTML = filtered.map(({ m, sigs }) => {
+      const health = m.metrics ? m.metrics.health : 50;
+      const hcls = health >= 70 ? "good" : health >= 40 ? "warn" : "bad";
+      const badges = sigs.map((s) => `<span class="ip-badge ip-badge-${s.sev}" title="${s.why}">${s.icon} ${s.label}</span>`).join("");
+      return `<div class="ip-row" data-ipnav="${m.id}">
+        <div class="ip-row-main">
+          <div class="ip-row-top">
+            <span class="ip-health health-${hcls}">${health}</span>
+            <span class="ip-id">${esc(m.id)}</span>
+            <span class="ip-dom">${esc(m.domain)}</span>
+          </div>
+          <div class="ip-badges">${badges}</div>
+        </div>
+        <button class="ip-goto" data-ipnav="${m.id}" title="Find in graph">⌖</button>
+      </div>`;
+    }).join("");
+
+    ipListEl.querySelectorAll("[data-ipnav]").forEach((el) => el.onclick = () => {
+      const id = el.dataset.ipnav;
+      S.selectNode(id);
+      S.centerOn && S.centerOn(id, true);
+    });
+  }
+
+  S.toggleIssuesPanel = function (open) {
+    const panel = document.getElementById("issuesPanel");
+    if (!panel) return;
+    ipOpen = open === undefined ? !ipOpen : !!open;
+    panel.classList.toggle("open", ipOpen);
+    renderIssuesPanel();
+  };
+
   /* ============ tab counts ============ */
   function renderTabCounts() {
     const open = openSuggestions(S.model).length;
@@ -520,6 +623,7 @@ window.Studio = window.Studio || {};
     renderModules();
     renderPlans();
     renderTabCounts();
+    renderIssuesPanel();
   };
 
   /* ============ select / deselect ============ */
@@ -597,10 +701,20 @@ window.Studio = window.Studio || {};
     if (q.get("q")) { S._searchBox.value = q.get("q"); S._searchBox.dispatchEvent(new Event("input")); }
     if (q.get("sel")) S.selectNode(q.get("sel"));
 
+    // issues panel wiring
+    const ipTab = document.getElementById("ipTab");
+    const ipClose = document.getElementById("ipClose");
+    const ipSearchEl = document.getElementById("ipSearch");
+    if (ipTab) ipTab.onclick = () => S.toggleIssuesPanel();
+    if (ipClose) ipClose.onclick = () => S.toggleIssuesPanel(false);
+    if (ipSearchEl) ipSearchEl.oninput = () => { ipSearch = ipSearchEl.value.trim(); renderIssuesPanel(); };
+
     // keyboard
     window.addEventListener("keydown", (e) => {
+      if (document.activeElement === ipSearchEl) return;
       if (e.key === "/" && document.activeElement !== S._searchBox) { e.preventDefault(); S._searchBox.focus(); }
-      if (e.key === "Escape") S.deselect();
+      if (e.key === "Escape") { S.deselect(); S.toggleIssuesPanel(false); }
+      if (e.key === "p" || e.key === "P") S.toggleIssuesPanel();
       if (e.key === "1") setTab("agent");
       if (e.key === "2") setTab("inspector");
       if (e.key === "3") setTab("modules");
