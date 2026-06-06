@@ -158,7 +158,7 @@ window.Studio = window.Studio || {};
       sev: "bad",
       label: "Critical path untested",
       icon: "⚠",
-      check: (m, mx) => mx.blastRadius >= 10 && m.coverage < 60,
+      check: (m, mx) => mx.blastRadius >= 5 && m.coverage < 60,
       why: "Many modules depend on this one but it lacks test coverage — a bug here breaks a lot.",
       how: "Add interface-level tests before touching anything else. Even 60% coverage dramatically reduces blast risk.",
     },
@@ -185,7 +185,7 @@ window.Studio = window.Studio || {};
       sev: "warn",
       label: "God module",
       icon: "✦",
-      check: (m, mx) => mx.fanIn >= 8 && mx.fanOut >= 6,
+      check: (m, mx) => mx.fanIn >= 5 && mx.fanOut >= 4,
       why: "Everything depends on it AND it depends on everything. The hardest kind of module to change safely.",
       how: "Split along responsibility lines. One cluster of callers usually wants a narrower interface — extract that first.",
     },
@@ -194,7 +194,7 @@ window.Studio = window.Studio || {};
       sev: "warn",
       label: "Bottleneck",
       icon: "⬡",
-      check: (m, mx) => mx.fanIn >= 8 && m.depth < 40,
+      check: (m, mx) => mx.fanIn >= 5 && m.depth < 40,
       why: "Lots of modules depend on this but it's shallow — it's a wide, fragile load-bearing surface.",
       how: "Deepen it: push implementation details in and shrink the interface. Each caller should need to know less.",
     },
@@ -203,7 +203,7 @@ window.Studio = window.Studio || {};
       sev: "warn",
       label: "Test this first",
       icon: "⬟",
-      check: (m, mx) => mx.blastRadius >= 5 && m.coverage < 30,
+      check: (m, mx) => mx.blastRadius >= 3 && m.coverage < 40,
       why: "Changes here affect at least " + "N" + " other modules, but it's barely tested.",
       how: "Before refactoring anything in this module, get coverage above 60% at the interface. Tests act as a safety net for the downstream blast.",
       dynamic: (m, mx) => `Changes here affect at least ${mx.blastRadius} other modules, but it's barely tested.`,
@@ -213,7 +213,7 @@ window.Studio = window.Studio || {};
       sev: "warn",
       label: "Unstable API",
       icon: "≋",
-      check: (m, mx) => mx.instability > 0.7 && mx.fanIn >= 3,
+      check: (m, mx) => mx.instability > 0.7 && mx.fanIn >= 2,
       why: "High instability (depends on many things) but other modules depend on it — any change inside ripples out.",
       how: "Introduce a stable interface layer. The volatile implementation should hide behind a thin, unchanging contract.",
     },
@@ -222,17 +222,17 @@ window.Studio = window.Studio || {};
       sev: "info",
       label: "Split candidate",
       icon: "⊕",
-      check: (m, mx) => mx.fanOut >= 5 && mx.coupling >= 3,
+      check: (m, mx) => mx.fanOut >= 4 && mx.coupling >= 2,
       why: "Reaches into too many different domains — a sign it's doing multiple jobs.",
       how: "Group the dependencies by domain. Each group is probably a separate responsibility that deserves its own module.",
     },
     {
       id: "leaky-seam",
-      sev: "info",
+      sev: "warn",
       label: "Leaky seam",
       icon: "⤼",
       check: (m, mx) => (m.leaks || []).length > 0,
-      why: `Imports ${(m && m.leaks || []).length} module(s) it shouldn't — a seam violation that creates hidden coupling.`,
+      why: "Imports modules it shouldn't — a seam violation that creates hidden coupling.",
       how: "Invert the dependency or route through an interface. The module being leaked into should not be aware of its caller.",
       dynamic: (m) => `Imports ${(m.leaks || []).length} module(s) it shouldn't — a seam violation that creates hidden coupling.`,
     },
@@ -241,10 +241,10 @@ window.Studio = window.Studio || {};
   function computeSignals(m) {
     if (!m || !m.metrics) return [];
     const mx = m.metrics;
-    return SIGNALS.filter(s => s.check(m, mx)).map(s => ({
-      ...s,
-      why: s.dynamic ? s.dynamic(m, mx) : s.why,
-    }));
+    try {
+      return SIGNALS.filter(s => { try { return s.check(m, mx); } catch(e) { return false; } })
+        .map(s => ({ ...s, why: s.dynamic ? s.dynamic(m, mx) : s.why }));
+    } catch(e) { return []; }
   }
 
   function signalsSection(m) {
