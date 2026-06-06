@@ -1,8 +1,6 @@
-# engineering
+# Skills
 
-Skills for daily code work.
-
-The **Fathom** suite — six skills on the deep-module principle, sharing the `arch-map` spine (see the [top-level README](../../README.md)). Lifecycle order: map → understand → deepen → plan → code, with adr-writer recording decisions.
+The **Fathom** suite — six skills on the deep-module principle, sharing the `arch-map` spine (see the [top-level README](../README.md)). Lifecycle order: map → understand → deepen → plan → code, with adr-writer recording decisions.
 
 - [`map`](./map/SKILL.md) — build and keep honest the **actual** model of what a codebase IS (seed via exploration, reconcile on demand, inspect). The only writer of the actual plane besides `code`.
 - [`understand`](./understand/SKILL.md) — read-only guided tour of a map (entry interfaces, deepest modules, leak hot-spots). The front door; writes nothing.

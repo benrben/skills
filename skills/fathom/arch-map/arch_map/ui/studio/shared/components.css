@@ -187,6 +187,20 @@
 .edge-supersedes.hot  { opacity: .8; stroke-width: 2; }
 .edge-supersedes.fade { opacity: .06; }
 
+/* generic fade/hide fallbacks (filter + isolate) —
+   .fade on an untyped edge still works; the per-type rules above already
+   set opacity .06, this is the safety net. .node.fade is the hard-hide used by
+   isolate / filtered-out-of-layout — distinct from .node.dim (opacity, still laid out).
+   (Kept identical to the copies in studio.css so load order never changes the result.) */
+.edge.fade      { opacity: .06; }
+.node.fade      { display: none; }
+.supernode.fade { display: none; }
+
+/* detail dep-edge weight buckets (alt to inline stroke-width / opacity) —
+   declarations match studio.css exactly so the merged cascade is order-independent */
+.edge-dep.weak  { stroke-width: 1px;   opacity: .3; }
+.edge-dep.heavy { stroke-width: 2.4px; opacity: .8; }
+
 /* leak midpoint mark */
 .leak-x { fill: var(--leak); font-size: 9px; font-weight: 700; opacity: .9; }
 .leak-x.fade { opacity: .06; }
@@ -295,6 +309,9 @@
 /* legacy cov-bar compat (old dagre layout had a direct child cov-bar) */
 .node > .cov-bar:not(.node-foot .cov-bar) { margin: 9px -11px 0; height: 4px; border-radius: 0; }
 .node > .cov-bar:not(.node-foot .cov-bar) > i { background: var(--cov); border-radius: 0; }
+/* NOTE: LOD-gating of node flags + health-dot de-dup (PLAN FILE B item 2) lives
+   in studio.css (.lod-mid/.lod-far descendant rules) to keep all LOD selectors in
+   one cascade — not duplicated here. */
 
 /* card-fill-tint + planned-cap (from nodeInner) */
 .card-fill-tint { position: absolute; inset: 0; background: var(--intended, oklch(0.55 0.20 300)); opacity: .045; pointer-events: none; }
@@ -307,7 +324,8 @@
   box-shadow: var(--shadow-md); padding: 13px 16px 13px 20px;
   display: flex; flex-direction: column; gap: 6px; cursor: pointer;
   overflow: hidden;
-  transition: opacity .16s, box-shadow .16s, transform .12s, border-color .16s;
+  outline: 2px solid transparent; outline-offset: 2px; /* :focus-visible ring slot (keyboard nav) */
+  transition: opacity .16s, box-shadow .16s, transform .12s, border-color .16s, outline-color .15s;
 }
 .supernode::before {
   content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
@@ -648,6 +666,15 @@
 .toast .tk { width: 7px; height: 7px; border-radius: 50%; background: var(--strong); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
+/* undo toast — a toast variant that carries an inline Undo action */
+.toast.undo-toast { padding-right: 8px; }
+.undo-toast .undo-act {
+  margin-left: 10px; font: inherit; font-weight: 600; line-height: 1;
+  color: var(--accent-text); background: none; border: 0;
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.undo-toast .undo-act:hover { color: var(--accent); }
+
 .empty-note { font-size: 13px; color: var(--text-faint); font-style: italic; padding: 30px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius); }
 
 /* ---------- help popover + onboarding ---------- */
@@ -802,3 +829,57 @@
   text-decoration: none; border-bottom: 1px solid transparent; transition: border-color .12s;
 }
 .adr-link:hover { border-bottom-color: var(--accent); }
+
+/* ============================================================= *
+ *  UX overhaul — dispatch ("Ask agent to…"), cross-links, pulse
+ * ============================================================= */
+
+/* dispatch buttons — "Ask agent to fix / rescan / realize / triage" actions.
+   Behavior layer wires data-fix / data-ipfix / data-rescan / data-realize /
+   #dispatchTop to Arch.Store.dispatch(req). Light + dark via accent tokens. */
+.dispatch-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 500; line-height: 1.3;
+  padding: 5px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--accent); background: var(--accent-weak);
+  color: var(--accent-text); cursor: pointer; white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.dispatch-btn:hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.dispatch-btn:disabled { opacity: .5; cursor: default; }
+/* full-width batch variant — "Triage top criticals" footer button */
+.dispatch-btn.batch { width: 100%; justify-content: center; margin-top: 8px; }
+/* contextual placements */
+.sig-how-wrap .dispatch-btn { margin: 6px 10px 10px; }   /* sig-card "Ask agent to fix" */
+.ip-row .dispatch-btn { flex: 0 0 auto; padding: 3px 8px; font-size: 11px; align-self: center; }
+
+/* ---- cross-link chips: the same module surfaced across issues / proposal /
+   chip / inspector signal. data-xkind tags the destination surface. ---- */
+.xlink-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.xlink-chip {
+  font-family: var(--font-mono); font-size: 9.5px; line-height: 1.5;
+  padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--panel-2);
+  color: var(--text-dim); cursor: pointer; white-space: nowrap;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.xlink-chip:hover { border-color: var(--accent); color: var(--accent-text); }
+/* per-surface accents (taxonomy bridge: issue/proposal/chip/signal share one id) */
+.xlink-chip[data-xkind="issue"]    { border-color: color-mix(in oklch, var(--leak) 45%, var(--border-strong)); color: var(--leak); }
+.xlink-chip[data-xkind="proposal"] { border-color: color-mix(in oklch, var(--worth) 50%, var(--border-strong)); color: oklch(0.5 0.12 78); }
+[data-theme="dark"] .xlink-chip[data-xkind="proposal"] { color: var(--worth); }
+.xlink-chip[data-xkind="signal"]   { border-color: var(--accent-ring); color: var(--accent-text); }
+.xlink-chip[data-xkind="chip"]     { border-color: var(--border-strong); color: var(--text-dim); }
+
+/* proposal↔plan cross-reference link (reuses the xlink-chip look) */
+.aprop .plan-link,
+.plan-card .src-proposals { font-size: 11px; }
+
+/* ---- onboarding first-run pulse on the Issues tab ---- *
+ * Behavior layer adds .pulse-once once, when the count first crosses 0→N.
+ * Gated by the global prefers-reduced-motion block in ui.css.              */
+.ip-tab.pulse-once { animation: ipPulse 1.6s ease-out 2; }
+@keyframes ipPulse {
+  0%, 100% { box-shadow: var(--shadow-md); }
+  50%      { box-shadow: 0 0 0 4px var(--accent-ring), var(--shadow-md); }
+}

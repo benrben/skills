@@ -43,6 +43,28 @@
 .astat .l { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); margin-top: 2px; }
 .astat.warn .n { color: var(--warn); } .astat.leak .n { color: var(--leak); } .astat.acc .n { color: var(--accent-text); }
 
+/* agent narration log — what the agent just changed (item 10).
+ * lives in .agent-head after #agentStats; rail's S.pushActivity prepends .activity-row. */
+.activity-strip {
+  margin-top: 10px; display: flex; flex-direction: column; gap: 3px;
+  max-height: 96px; overflow-y: auto;
+}
+.activity-strip:empty { display: none; }
+.activity-row {
+  display: flex; gap: 7px; align-items: baseline; font-size: 11px; color: var(--text-dim);
+  padding: 3px 6px; border-radius: var(--radius-sm); cursor: pointer; transition: background .1s;
+}
+.activity-row:hover { background: var(--panel-2); }
+.activity-row .at { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint); flex: 0 0 auto; }
+.activity-row .av { min-width: 0; line-height: 1.4; }
+.activity-row .av b { color: var(--text); font-weight: 600; }
+/* entry flash for a freshly-narrated edit */
+.activity-row.is-new { animation: actIn .5s ease; }
+@keyframes actIn { from { background: var(--accent-weak); } to { background: transparent; } }
+/* optional agent/human source styling */
+.activity-row.agent .av b { color: var(--accent-text); }
+.activity-row.human .at { color: var(--text-dim); }
+
 /* tabs */
 .rail-tabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--border); }
 .rtab {
@@ -218,15 +240,56 @@
 /* stage tools shift left when rail open is not needed; fit stays top-right-ish */
 .stage-tools { right: 14px; top: 56px; }
 
+/* ---------- stage loading overlay (item 6) ---------- */
+/* shown while buildGraph lays out modules; behavior layer toggles .show. */
+.stage-loading {
+  position: absolute; inset: 0; z-index: 7; display: none;
+  flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: color-mix(in oklch, var(--bg) 78%, transparent);
+  backdrop-filter: blur(1px); -webkit-backdrop-filter: blur(1px);
+}
+.stage-loading.show { display: flex; }
+/* reuse the agent-orb pulse markup at a larger size */
+.stage-loading .agent-orb { width: 34px; height: 34px; border-radius: 11px; }
+[data-dir="b"] .stage-loading .agent-orb { border-radius: 6px; }
+.sl-label { font-size: 12.5px; color: var(--text-dim); font-family: var(--font-mono); letter-spacing: .01em; }
+
+/* ---------- breadcrumb / mode + scope readout (item 12) ---------- */
+/* lives in .toolbar after #overviewBtn; replaces the dead #lodTag.
+ * children: .bc-seg (clickable "way back"), .bc-sep ("›"), .bc-cur (current scope). */
+.breadcrumb {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint);
+  min-width: 0; max-width: 320px;
+}
+.breadcrumb:empty { display: none; }
+.bc-seg {
+  background: none; border: 0; color: var(--text-dim);
+  padding: 2px 6px; border-radius: var(--radius-sm);
+  font-family: inherit; font-size: inherit; cursor: pointer; transition: .12s;
+}
+.bc-seg:hover { background: var(--panel-2); color: var(--text); }
+.bc-sep { color: var(--text-faint); flex: 0 0 auto; }
+.bc-cur {
+  color: var(--text); font-weight: 600;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ---------- node "centered" flash ---------- */
 .node.flash { animation: nodeflash 1.3s ease; }
 @keyframes nodeflash { 0%,100% { outline-color: transparent; } 30%,60% { outline-color: var(--accent); } }
 
 /* ---------- level of detail (driven by zoom) ---------- */
+/* stage carries one of .lod-near / .lod-mid / .lod-far (applyLOD). near = default (no gating). */
 .node { transition: box-shadow .15s, border-color .15s, opacity .18s, transform .12s, outline-color .15s; }
+
+/* NEAR zoom: everything shown; give the id room next to the flags. */
+.lod-near .node-top { gap: 6px; }
+
 /* MID zoom: hide secondary label + reduce height */
 .lod-mid .node .node-label { display: none; }
 .lod-mid .node { height: 64px !important; }
+
 /* FAR zoom: big id only */
 .lod-far .node { padding: 0 14px 0 17px; justify-content: center; }
 .lod-far .node-label, .lod-far .node-dom, .lod-far .node-foot, .lod-far .cov-bar, .lod-far .cov-pct { display: none; }
@@ -234,6 +297,52 @@
 .lod-far .node-id { font-size: 18px; line-height: 1.1; }
 .lod-far .node-flags { transform: scale(1.4); transform-origin: right center; }
 .lod-far .node { box-shadow: var(--shadow-md); }
+
+/* ---------- LOD flag gating: which flags survive at which zoom (item 17) ---------- *
+ * Priority order keep: .sug-ring (proposal) + .flag-leak (leak) are the alert flags
+ * worth carrying when the card shrinks; .flag-cycle and .grill-flag are secondary.
+ * The health dot duplicates the coverage gauge, so it only earns its slot at near. */
+
+/* health dot is a redundant "is this ok" gauge once the card is small — drop it. */
+.lod-mid .node-foot .health-dot,
+.lod-far .node-foot .health-dot { display: none; }
+
+/* MID: drop the secondary flags, keep proposal + leak. */
+.lod-mid .node-flags .flag-cycle,
+.lod-mid .node-flags .grill-flag { display: none; }
+
+/* FAR: hide everything in the flag cluster, then re-show only proposal + leak. */
+.lod-far .node-flags > * { display: none; }
+.lod-far .node-flags .sug-ring,
+.lod-far .node-flags .flag-leak { display: inline-flex; }
+
+/* ---------- edge bundling / weighting visual states (item 17) ---------- *
+ * Overview already collapses parallel deps into one aggregated edge (.edge-dep.agg,
+ * styled in components.css). In detail mode the behavior layer buckets dep edges by
+ * weight (fan-in / duplicate count) onto these classes instead of inline styles. */
+.edge-dep.weak  { stroke-width: 1px;   opacity: .3; }
+.edge-dep.heavy { stroke-width: 2.4px; opacity: .8; }
+/* generic-fade safety fallback so toggling the bare `.fade` class hides an untyped
+ * edge even before its per-type class (.edge-dep.fade etc. live in components.css). */
+.edge.fade { opacity: .06; }
+
+/* ---------- isolate: focus one module's neighbourhood (item 14) ---------- *
+ * S.isolate() puts .isolating on #stage and marks the kept nodes/edges with .iso-in.
+ * Everything else drops out of view; the behavior layer may instead toggle
+ * .fade / .node.fade directly — both mechanisms are supported. */
+.stage.isolating .node:not(.iso-in):not(.supernode) { display: none; }
+.stage.isolating .supernode:not(.iso-in) { display: none; }
+.stage.isolating .edge:not(.iso-in) { opacity: .04; }
+.stage.isolating .leak-x:not(.iso-in) { opacity: .04; }
+/* hard-hide tokens the behavior layer can toggle on individual elements.
+ * (.node.dim = opacity .22 + desaturate, defined in components.css, is intentionally
+ *  distinct: .fade fully removes a card from the layout's visual flow.) */
+.node.fade { display: none; }
+.supernode.fade { display: none; }
+
+/* keyboard focus ring for supernodes: give them an outline slot so :focus-visible
+ * (authored globally in ui.css) lands on the same place as plain nodes (item 3). */
+.supernode { outline: 2px solid transparent; outline-offset: 2px; }
 
 /* minimap position: below zoom controls, not over them */
 .minimap { bottom: 14px; right: 14px; position: absolute; z-index: 5; }

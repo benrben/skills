@@ -39,7 +39,7 @@
       <span class="mark"><span class="am">arch</span>-map</span>
       <div class="map-switcher" id="mapSwitcher"></div>
     </div>
-    <div class="subline">fill <span class="enc">= depth tier</span> · vertical position <span class="enc">= dependency depth</span> · bottom bar <span class="enc">= coverage</span></div>
+    <div class="subline" id="subline" data-mode="overview">fill <span class="enc">= depth tier</span> · vertical position <span class="enc">= dependency depth</span> · bottom bar <span class="enc">= coverage</span></div>
     <div class="spacer"></div>
     <span class="count-pill" id="openCount"><span class="n">0</span> open proposals</span>
     <button class="help-btn" id="helpBtn" title="What am I looking at?">?</button>
@@ -123,11 +123,13 @@
     </label>
     <button class="btn" id="allEdgesBtn" aria-pressed="false">&#x21E2; all edges</button>
     <button class="btn" id="overviewBtn" aria-pressed="true">&#x25EB; Overview</button>
+    <div class="breadcrumb" id="breadcrumb" aria-label="Current view scope"></div>
+    <button class="btn" id="isolateBtn" aria-pressed="false" aria-label="Isolate the selected module's neighbourhood" disabled>&#x2299; Isolate</button>
     <div class="spacer" style="flex:1"></div>
   </div>
 
   <!-- issues panel (slides from left) -->
-  <aside class="issues-panel" id="issuesPanel">
+  <aside class="issues-panel" id="issuesPanel" role="region" aria-label="Issues panel">
     <div class="ip-head">
       <span class="ip-title">⚠ Issues</span>
       <span class="ip-counts" id="ipCounts"></span>
@@ -141,7 +143,7 @@
     <div class="ip-list" id="ipList"></div>
   </aside>
   <!-- issues panel tab (always visible, even when closed) -->
-  <button class="ip-tab" id="ipTab" title="Issues panel (P)">
+  <button class="ip-tab" id="ipTab" title="Issues panel (P)" aria-label="Toggle issues panel" aria-expanded="false">
     <span class="ip-tab-icon">⚠</span>
     <span class="ip-tab-count" id="ipTabCount">0</span>
   </button>
@@ -150,17 +152,18 @@
   <div class="workspace">
     <div class="canvas-col">
       <div class="stage-wrap">
-        <div class="stage" id="stage">
+        <div class="stage" id="stage" role="application" aria-label="Architecture dependency graph">
           <div class="viewport" id="viewport">
             <svg class="edges" id="edges" xmlns="http://www.w3.org/2000/svg"></svg>
             <div id="nodeLayer"></div>
           </div>
         </div>
+        <div class="stage-loading" id="stageLoading" role="status" aria-live="polite" aria-hidden="true"><div class="agent-orb"></div><span class="sl-label">Laying out modules…</span></div>
         <button class="rail-toggle" id="railToggle"><span class="lbl">Hide</span> agent <span class="badge" id="openCount2" style="display:none"></span></button>
         <div class="stage-tools">
-          <button id="zoomIn" title="Zoom in">+</button>
-          <button id="zoomOut" title="Zoom out">−</button>
-          <button id="fitBtn" title="Fit to view">⤢</button>
+          <button id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+          <button id="fitBtn" title="Fit to view" aria-label="Fit to view">⤢</button>
         </div>
         <div class="zoom-ind" id="zoomInd">100%</div>
         <div class="minimap" id="minimapWrap"><span class="mm-cap">map</span><canvas id="minimap" width="376" height="256"></canvas></div>
@@ -185,6 +188,7 @@
         </div>
         <div class="agent-sub" id="agentSub"></div>
         <div class="agent-stats" id="agentStats"></div>
+        <div class="activity-strip" id="activityFeed" role="log" aria-live="polite" aria-label="Agent activity"></div>
       </div>
       <div class="rail-tabs" id="railTabs" role="tablist">
         <button class="rtab" data-tab="agent" role="tab" aria-selected="true">Proposals <span class="tcount">0</span></button>
@@ -218,6 +222,7 @@
       <div class="onb-step"><div class="num">1</div><div><div class="t">The graph is the map</div><div class="s">Every card is a module. Position and fill show how deep it sits; the bar shows test coverage. Hover to light up its neighbourhood, click to inspect.</div></div></div>
       <div class="onb-step"><div class="num">2</div><div><div class="t">The rail is the agent</div><div class="s">On the right: its <b>proposals</b> queue. Each one names a problem, a solution, and the wins. Hover a proposal to find it on the graph. The agent also drafts <b>plans</b> — the intended structure — in the Plans tab; planned modules show as dashed ghosts on the graph.</div></div></div>
       <div class="onb-step"><div class="num">3</div><div><div class="t">You close the loop</div><div class="s">Accept, defer, reject or dismiss — with a reason. The graph, counts and queue update instantly. That's the whole game.</div></div></div>
+      <div class="onb-step" id="onbIssues"><div class="num">4</div><div><div class="t">Find the trouble fast</div><div class="s">The <b>⚠ Issues</b> panel (left edge or <b>p</b>) ranks every structural problem. Toggle <b>Overview ↔ Detail</b> to zoom from domains to modules. Click any card → the Inspector shows its <b>graph metrics</b> and <b>signals</b> (leaky seam, god module, bottleneck…).</div></div></div>
     </div>
     <div class="onb-foot">
       <span class="spacer"></span>

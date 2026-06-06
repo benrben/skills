@@ -206,6 +206,7 @@
   function applyServerModel(rawText) {
     if (rawText === lastServerJson) return false;  // byte-identical: nothing changed
     lastServerJson = rawText;
+    Store.prevModel = cur;                          // expose the pre-swap model for diffing (item 10)
     cur = normalize(JSON.parse(rawText));
     return true;
   }
@@ -214,6 +215,7 @@
     // force the cache to server truth, bypassing the byte short-circuit — used to
     // roll back a rejected optimistic write even when server state is unchanged.
     lastServerJson = rawText;
+    Store.prevModel = cur;                          // expose the pre-swap model for diffing (item 10)
     cur = normalize(JSON.parse(rawText));
     broadcast(cur);
   }
@@ -258,7 +260,7 @@
   function adoptModelObject(obj) {
     const txt = JSON.stringify(obj);
     if (txt === lastServerJson) return false;
-    lastServerJson = txt; cur = normalize(obj); return true;
+    lastServerJson = txt; Store.prevModel = cur; cur = normalize(obj); return true;
   }
   async function hostRefresh() {
     if (!currentMap) return false;
@@ -451,6 +453,89 @@
     return d;   // { prompt, resume }
   }
 
+  // ---- generalized dispatch: "ask the agent to X" (item 11) -----------------
+  // grill() proved the pattern (persist a request, stage a body, trigger an agent
+  // turn via sendMessage; browser falls back to a copy-paste prompt). dispatch
+  // reuses that exact plumbing for the other actionable asks — fix / rescan /
+  // realize / triage — so every "Ask agent to …" button rides one code path.
+  //
+  // Host mode maps `kind` to the live MCP tool(s); a successful sendMessage IS the
+  // agent turn. Browser mode has no generic /api/dispatch endpoint (only
+  // /api/grill exists, see assumption below), so non-grill kinds surface the
+  // prompt for copy-paste — satisfying item 11's "browser fallback surfaces a
+  // prompt". `kind:"grill"` keeps using the proven hostGrill/browserGrill paths
+  // verbatim, so Store.grill stays a thin alias and its behavior is unchanged.
+
+  // build the per-kind agent prompt (also the browser copy-paste fallback body)
+  function dispatchPrompt(req) {
+    const id = req.module || "";
+    const m = id ? find(id) : null;
+    switch (req.kind) {
+      case "fix": {
+        const s = m && (m.suggestion || (req.suggestion_id
+          ? (m.suggestions || []).find((x) => x.sid === req.suggestion_id) : null));
+        return [
+          "Fix module '" + id + "'" + (m ? " (" + (m.label || id) + ", domain '" + m.domain + "')" : "") + ".",
+          s && s.problem ? "Why: " + s.problem : "",
+          s && s.solution ? "How: " + s.solution : "",
+        ].filter(Boolean).join("\n");
+      }
+      case "rescan": return "Re-scan module '" + id + "' for fresh signals.";
+      case "realize": return "Realize planned module '" + id + "'.";
+      case "triage": {
+        const ids = (req.modules || []).join(", ");
+        return "Triage the top critical modules: " + (ids || "(none)") + ".";
+      }
+      case "grill": return grillBody(m);
+      default: return "Agent request (" + req.kind + ")" + (id ? " for module '" + id + "'" : "") + ".";
+    }
+  }
+
+  // host: which MCP tool(s) carry out each kind (1.6). Each entry is a [name, args]
+  // invoked best-effort before staging the body + sendMessage. Only tools whose
+  // full arg shape we can supply here are pre-called; the rest are left to the
+  // agent turn the prompt triggers (flag_deepening needs title/strength/problem/…
+  // the agent authors, scan_signals takes no module, so we don't pre-call those —
+  // we re-scan via mark_updated(false) to clear the stale halo and let the agent
+  // re-evaluate). This keeps strict (additionalProperties:false) hosts from
+  // rejecting a malformed pre-call.
+  function dispatchTools(map, req) {
+    switch (req.kind) {
+      case "rescan":  return [["mark_updated", { map, module: req.module, updated: false }]];
+      case "realize": return [["realize_module", { map, module: req.module }]];
+      default:        return [];   // fix / triage: the sendMessage turn does the work
+    }
+  }
+
+  async function hostDispatch(map, req) {
+    if (req.kind === "grill") return hostGrill(map, req.module, dispatchPrompt(req));
+    const app = await hostConnect();
+    const caps = (app.getHostCapabilities && app.getHostCapabilities()) || {};
+    const body = dispatchPrompt(req);
+    // (1) carry out the underlying tool(s) — best-effort, mirrors start_grilling's persist step
+    for (const [name, args] of dispatchTools(map, req)) {
+      try { await app.callServerTool({ name, arguments: args }); } catch (e) { /* best-effort */ }
+    }
+    if (!caps.message) return { triggered: false, prompt: body, reason: "no-message-capability" };
+    try {                                          // (2) stage the request body for the next turn (no trigger)
+      if (caps.updateModelContext && body) await app.updateModelContext({ content: [{ type: "text", text: body }] });
+    } catch (e) { /* best-effort */ }
+    const sent = await app.sendMessage({ role: "user", content: [{ type: "text", text: body }] });  // (3) the trigger
+    return { triggered: !(sent && sent.isError), prompt: body };
+  }
+
+  async function browserDispatch(map, req) {
+    if (req.kind === "grill") {
+      const d = await browserGrill(map, req.module);   // proven /api/grill path
+      showGrillFallback(d.prompt, d.resume);
+      return d;
+    }
+    // No generic /api/dispatch backend (assumption 1): surface the prompt to paste.
+    const prompt = dispatchPrompt(req);
+    showGrillFallback(prompt, null);
+    return { prompt };
+  }
+
   // POST an action; reconcile the cache from the authoritative response.
   async function act(body) {
     if (body && body.action === "update" && body.fields) {
@@ -498,6 +583,13 @@
   const Store = {
     get() { return cur; },
 
+    // the model as it was before the most recent server swap, so onExternal
+    // consumers can diff old→new for narration (item 10). null until first swap.
+    prevModel: null,
+    // snapshot of the last module removed via deleteModule, for undo (item 16).
+    // { module, edges:[{from,field,to}], decision } | null
+    lastDeleted: null,
+
     reset() { refetch(true); return cur; },   // no client seed: re-sync from server
 
     setDepth(id, delta) {
@@ -526,6 +618,18 @@
       return cur;
     },
     deleteModule(id) {
+      // snapshot before mutating so undoDelete can re-create the module and every
+      // inbound edge it strips off other modules (item 16).
+      const gone = cur.modules.find((x) => x.id === id);
+      const inbound = [];
+      cur.modules.forEach((m) => {
+        if ((m.dependsOn || []).includes(id)) inbound.push({ from: m.id, field: "dependsOn", to: id });
+        if ((m.leaks || []).includes(id))     inbound.push({ from: m.id, field: "leaksTo",   to: id });
+      });
+      Store.lastDeleted = gone
+        ? { module: JSON.parse(JSON.stringify(gone)), edges: inbound, decision: cur.decisions[id] }
+        : null;
+
       cur.modules = cur.modules.filter((x) => x.id !== id);
       cur.modules.forEach((m) => {
         m.dependsOn = m.dependsOn.filter((d) => d !== id);
@@ -534,6 +638,39 @@
       delete cur.decisions[id];
       bump();
       act({ action: "delete", module: id }).catch(reportErr);
+      return cur;
+    },
+    undoDelete() {
+      // re-add the last-deleted module and its inbound edges. Optimistic locally,
+      // then re-create on the server (no native "undelete" — assumption 2): add the
+      // module, restore its captured fields via update_module, and re-point each
+      // referrer's dependsOn/leaksTo back at it.
+      const snap = Store.lastDeleted;
+      if (!snap) return cur;
+      const m = snap.module;
+      if (!find(m.id)) cur.modules.push(JSON.parse(JSON.stringify(m)));
+      snap.edges.forEach((e) => {
+        const src = find(e.from);
+        if (!src) return;
+        const arr = e.field === "leaksTo" ? "leaks" : "dependsOn";
+        src[arr] = src[arr] || [];
+        if (!src[arr].includes(e.to)) src[arr].push(e.to);
+      });
+      bump();
+      Store.lastDeleted = null;
+
+      act({ action: "add", module: { id: m.id, label: m.label, domain: m.domain } })
+        .then(() => act({ action: "update", module: m.id, fields: {
+          iface: m.interface, depth: m.depth / 100, coverage: m.coverage / 100,
+          dependsOn: m.dependsOn, leaksTo: m.leaks,
+        } }))
+        .then(() => Promise.all(snap.edges.map((e) => {
+          const src = find(e.from);
+          if (!src) return null;
+          return act({ action: "update", module: e.from,
+            fields: e.field === "leaksTo" ? { leaksTo: src.leaks } : { dependsOn: src.dependsOn } });
+        })))
+        .catch(reportErr);
       return cur;
     },
     decide(sid, verdict, reason) {
@@ -572,17 +709,28 @@
       act({ action: "set_step_status", plan_id: planId, step_id: stepId, status }).catch(reportErr);
       return cur;
     },
-    grill(id) {
-      // Hand a candidate off to the /deepen grilling loop. In an MCP-App host this
-      // triggers an agent turn (sendMessage); in a browser it surfaces the prompt
-      // + a resume line to paste. Either way the candidate is persisted 'requested'.
-      const map = currentMap, m = find(id), body = grillBody(m);
+    dispatch(req) {
+      // Generalized "ask the agent to X" router (item 11). Routes fix / rescan /
+      // realize / triage / grill through the same host grill bridge (MCP-App
+      // sendMessage) with a browser fallback that surfaces the prompt. Fire-and-
+      // forget like the other mutators; the rail wrapper toasts + re-syncs.
+      if (!req || !req.kind) return cur;
+      const map = currentMap;
       if (HOST) {
-        hostGrill(map, id, body).then((r) => { if (!r.triggered) showGrillFallback(r.prompt, null); }).catch(reportErr);
+        hostDispatch(map, req).then((r) => { if (r && !r.triggered) showGrillFallback(r.prompt, null); }).catch(reportErr);
       } else {
-        browserGrill(map, id).then((d) => showGrillFallback(d.prompt, d.resume)).catch(reportErr);
+        browserDispatch(map, req).catch(reportErr);
       }
       return cur;
+    },
+    grill(id) {
+      // Hand a candidate off to the /deepen grilling loop. Thin alias over the
+      // generalized dispatch router (item 11) — the kind:"grill" branch keeps the
+      // proven hostGrill/browserGrill paths verbatim, so behavior is unchanged. In
+      // an MCP-App host this triggers an agent turn (sendMessage); in a browser it
+      // surfaces the prompt + a resume line to paste. Either way the candidate is
+      // persisted 'requested'.
+      return Store.dispatch({ kind: "grill", module: id });
     },
   };
 
@@ -664,6 +812,48 @@
     return s.modules.flatMap((m) => (m.suggestions || []).filter((x) => isOpen(s, x)));
   }
 
+  // ---- model diff: narrate agent edits (item 10) ---------------------------
+  // Pure helper. Given two NORMALIZED models (prev, next — the studio shapes, not
+  // the raw backend payloads), return a flat list of field-level changes for the
+  // activity feed to format into human verbs. Synthetic +module / -module rows are
+  // emitted for added / removed modules. No I/O — safe to call on every poll diff.
+  function diffModels(prev, next) {
+    const out = [];
+    const prevMods = (prev && prev.modules) || [];
+    const nextMods = (next && next.modules) || [];
+    const prevById = {};
+    prevMods.forEach((m) => { prevById[m.id] = m; });
+    const nextById = {};
+    nextMods.forEach((m) => { nextById[m.id] = m; });
+
+    // removed modules (present before, gone now)
+    prevMods.forEach((m) => {
+      if (!(m.id in nextById)) out.push({ id: m.id, field: "-module", from: m.label || m.id, to: null });
+    });
+
+    const openCount = (m) =>
+      (m.suggestions || []).filter((x) => !x.decision && x.status !== "done").length;
+
+    nextMods.forEach((m) => {
+      const p = prevById[m.id];
+      if (!p) {                                   // added module (new this diff)
+        out.push({ id: m.id, field: "+module", from: null, to: m.label || m.id });
+        return;
+      }
+      const cmp = (field, a, b) => { if (a !== b) out.push({ id: m.id, field, from: a, to: b }); };
+      cmp("depth", p.depth, m.depth);
+      cmp("coverage", p.coverage, m.coverage);
+      cmp("updated", p.updated, m.updated);
+      cmp("lifecycle", p.lifecycle, m.lifecycle);
+      cmp("plane", p.plane, m.plane);
+      cmp("health", (p.metrics && p.metrics.health), (m.metrics && m.metrics.health));
+      cmp("leaks", (p.leaks || []).length, (m.leaks || []).length);
+      cmp("dependsOn", (p.dependsOn || []).length, (m.dependsOn || []).length);
+      cmp("suggestions", openCount(p), openCount(m));
+    });
+    return out;
+  }
+
   // named maps (one per project); shared, addressed by id
   const Maps = {
     list: () => mapList.slice(),
@@ -676,7 +866,7 @@
 
   window.Arch = {
     Store, subscribe, subscribePrefs, Prefs, whenReady, Maps,
-    tierOf, isOrphan, isOpen, openSuggestions,
+    tierOf, isOrphan, isOpen, openSuggestions, diffModels,
     STRENGTHS: {
       strong: { label: "Strong", short: "strong" },
       worth: { label: "Worth exploring", short: "worth" },
