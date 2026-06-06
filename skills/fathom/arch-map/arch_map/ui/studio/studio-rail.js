@@ -69,11 +69,21 @@ window.Studio = window.Studio || {};
     wireProps(els.agentPane);
   }
 
+  // #15: the plan a suggestion belongs to (Suggestion.planId), or null.
+  function planFor(s) {
+    if (!s || !s.planId) return null;
+    return (S.model.plans || []).find((p) => p.id === s.planId) || null;
+  }
   function propCard(s) {
     const st = STRENGTHS[s.strength], dec = S.model.decisions[s.sid];
     const statusPill = s.status && s.status !== "open" ? `<span class="cand-status ${s.status}">${s.status}</span>` : "";
     const catTag = s.category ? `<span class="cat-tag">${esc(s.category)}</span>` : "";
     const adr = s.adrRef ? `<a class="adr-link" href="#">${esc(s.adrRef)}</a>` : "";
+    // #15: forward link — proposal → its plan (switches to Plans tab + flashes it).
+    const plan = planFor(s);
+    const planLink = plan
+      ? `<button class="xlink-chip plan-link" data-nav-plan="${esc(plan.id)}" title="Part of plan: ${esc(plan.title)}">↳ plan: ${esc(plan.title)}</button>`
+      : "";
     const verdict = dec && VERDICT[dec.verdict] ? `
       <div class="aprop-verdict ${VERDICT[dec.verdict].cls}">
         <span class="vlabel">${VERDICT[dec.verdict].verb}</span>
@@ -108,6 +118,7 @@ window.Studio = window.Studio || {};
             <p><b>Solution.</b> ${s.solution}</p>
           </div>
           <ul class="wins">${(s.wins || []).map((w) => `<li>${w}</li>`).join("")}</ul>
+          ${planLink ? `<div class="xlink-row">${planLink}</div>` : ""}
           ${actions}
         </div>
         ${verdict}
@@ -120,8 +131,10 @@ window.Studio = window.Studio || {};
       card.addEventListener("mouseenter", () => { S.setRailHot(id); card.classList.add("hot"); });
       card.addEventListener("mouseleave", () => { S.setRailHot(null); card.classList.remove("hot"); });
     });
-    root.querySelectorAll("[data-locate]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.centerOn(b.dataset.locate, true); });
-    root.querySelectorAll("[data-open]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.selectNode(b.dataset.open); S.centerOn(b.dataset.open, true); });
+    root.querySelectorAll("[data-locate]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.reveal(b.dataset.locate, {}); });   // #9
+    root.querySelectorAll("[data-open]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.selectNode(b.dataset.open); S.reveal(b.dataset.open, {}); });   // #9
+    // #15 forward link: proposal → its plan (open Plans tab + flash the plan card).
+    root.querySelectorAll("[data-nav-plan]").forEach((b) => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setTab("plans"); flashPlan(b.dataset.navPlan); });
     root.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => {
       const sid = b.dataset.id, mod = b.dataset.module, act = b.dataset.act;
       if (act === "grill") { Store.grill(mod); S.toast("Grilling " + mod, "var(--accent)"); S.onModelMutated(mod); return; }
@@ -250,6 +263,8 @@ window.Studio = window.Studio || {};
   function signalsSection(m) {
     const sigs = computeSignals(m);
     if (!sigs.length) return `<div class="dr-sec"><h5>Recommendations</h5><div class="sig-clean">✓ No structural issues detected</div></div>`;
+    // #11: the open suggestion (if any) so the agent fix request carries its context.
+    const sid = m.suggestion ? m.suggestion.sid : "";
     return `<div class="dr-sec">
       <h5>Recommendations</h5>
       <div class="sig-list">
@@ -263,6 +278,7 @@ window.Studio = window.Studio || {};
             <details class="sig-how-wrap">
               <summary>How to fix</summary>
               <div class="sig-how">${s.how}</div>
+              <button class="dispatch-btn" data-fix="${esc(m.id)}" data-sid="${esc(sid)}" title="Ask the agent to fix this">Ask agent to fix →</button>
             </details>
           </div>`).join("")}
       </div>
@@ -355,10 +371,21 @@ window.Studio = window.Studio || {};
     const supersededBySec = (m.supersededBy || []).length ? `<div class="dr-sec"><h5>Superseded by</h5>${navPills(m.supersededBy)}</div>` : "";
     const intendsSec = (m.intendsToDependOn || []).length ? `<div class="dr-sec"><h5>Intends to depend on</h5>${navPills(m.intendsToDependOn)}</div>` : "";
 
+    // #11: contextual dispatch surfaces — Re-scan an updated module, or realize a planned one.
+    const dispatchActions = [
+      m.updated ? `<button class="dispatch-btn" data-rescan="${esc(m.id)}" title="Ask the agent to re-scan this module for fresh signals">Re-scan →</button>` : "",
+      m.plane === "intended" ? `<button class="dispatch-btn" data-realize="${esc(m.id)}" title="Ask the agent to build this planned module">Ask agent to realize →</button>` : "",
+    ].filter(Boolean).join("");
+    const dispatchRow = dispatchActions ? `<div class="insp-dispatch">${dispatchActions}</div>` : "";
+    // #18: cross-link chips — the same module across Issues / proposal / graph chips.
+    const xrow = crossLinkRow(m.id, {});
+
     els.inspPane.innerHTML = `
       <div class="insp-head">
         <div class="it"><div><div class="insp-id">${m.id}</div><div class="insp-label">${m.label} · ${m.domain}${m.plane === "intended" ? ' · <span class="planned-tag">planned</span>' : ""}</div></div></div>
         <div class="insp-tags">${tags.join("")}</div>
+        ${xrow}
+        ${dispatchRow}
       </div>
       <div class="insp-body">
         <div class="dr-sec"><h5>Interface</h5><div class="iface">${m.interface || "—"}</div></div>
@@ -379,13 +406,26 @@ window.Studio = window.Studio || {};
         <div class="danger-zone" id="dz"></div>
       </div>`;
 
-    els.inspPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.nav); S.centerOn(b.dataset.nav, true); });
+    els.inspPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.nav); S.reveal(b.dataset.nav, {}); });   // #9
     els.inspPane.querySelectorAll("[data-step]").forEach((b) => b.onclick = () => {
       const [kind, dir] = b.dataset.step.split(":"), delta = dir === "up" ? 5 : -5;
       S.model = kind === "depth" ? Store.setDepth(m.id, delta) : Store.setCoverage(m.id, delta);
       S.onModelMutated(m.id);
     });
     els.inspPane.querySelectorAll("[data-grill]").forEach((grill) => grill.onclick = () => { Store.grill(m.id); setTab("agent"); flashProp(m.id); });
+    // #11 dispatch surfaces: sig-card fix, updated→rescan, planned→realize.
+    els.inspPane.querySelectorAll("[data-fix]").forEach((b) => b.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      S.dispatch({ kind: "fix", module: b.dataset.fix, suggestion_id: b.dataset.sid || undefined });
+    });
+    els.inspPane.querySelectorAll("[data-rescan]").forEach((b) => b.onclick = (e) => {
+      e.preventDefault(); S.dispatch({ kind: "rescan", module: b.dataset.rescan });
+    });
+    els.inspPane.querySelectorAll("[data-realize]").forEach((b) => b.onclick = (e) => {
+      e.preventDefault(); S.dispatch({ kind: "realize", module: b.dataset.realize });
+    });
+    // #18: make the cross-link chips clickable (issue → panel, proposal → tab, chip → filter).
+    wireCrossLinks(els.inspPane);
     renderDanger(m.id);
   }
   function stepper(kind) {
@@ -399,12 +439,19 @@ window.Studio = window.Studio || {};
       dz.innerHTML = `<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Delete <b style="font-family:var(--font-mono)">${id}</b> and its edges?</div>
         <div class="confirm-row"><button class="btn" id="cancel">Cancel</button><button class="btn danger-solid" id="yes">Delete</button></div>`;
       dz.querySelector("#cancel").onclick = () => renderDanger(id);
-      dz.querySelector("#yes").onclick = () => { S.model = Store.deleteModule(id); S.selectedId = null; S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)"); };
+      dz.querySelector("#yes").onclick = () => { S.model = Store.deleteModule(id); S.selectedId = null; S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)", { undo: true }); };
     };
   }
   function flashProp(id) {
     setTimeout(() => {
       const card = els.agentPane.querySelector(`[data-prop="${id}"]`);
+      if (card) { els.railBody.scrollTop = card.offsetTop - 12; card.classList.add("hot"); setTimeout(() => card.classList.remove("hot"), 1400); }
+    }, 60);
+  }
+  // #15: scroll to + flash a plan card in the Plans tab (the proposal→plan jump).
+  function flashPlan(planId) {
+    setTimeout(() => {
+      const card = els.plansPane.querySelector(`[data-plan="${planId}"]`);
       if (card) { els.railBody.scrollTop = card.offsetTop - 12; card.classList.add("hot"); setTimeout(() => card.classList.remove("hot"), 1400); }
     }, 60);
   }
@@ -444,7 +491,7 @@ window.Studio = window.Studio || {};
     const sb = els.modsPane.querySelector("#modSearch");
     sb.oninput = () => { modSearch = sb.value.trim().toLowerCase(); const pos = sb.selectionStart; renderModules(); const nb = els.modsPane.querySelector("#modSearch"); nb.focus(); nb.setSelectionRange(pos, pos); };
 
-    els.modsPane.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.open); S.centerOn(b.dataset.open, true); });
+    els.modsPane.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.open); S.reveal(b.dataset.open, {}); });   // #9
     els.modsPane.querySelectorAll(".mrow").forEach((r) => {
       const id = r.dataset.row;
       r.addEventListener("mouseenter", () => S.setRailHot(id));
@@ -452,7 +499,7 @@ window.Studio = window.Studio || {};
     });
     els.modsPane.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
       const id = b.dataset.del;
-      if (b.dataset.confirm) { S.model = Store.deleteModule(id); if (S.selectedId === id) S.selectedId = null; S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)"); }
+      if (b.dataset.confirm) { S.model = Store.deleteModule(id); if (S.selectedId === id) S.selectedId = null; S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)", { undo: true }); }
       else { b.dataset.confirm = "1"; b.textContent = "?"; b.style.color = "var(--leak)"; b.style.borderColor = "var(--leak)"; setTimeout(() => { if (b.isConnected) { b.dataset.confirm = ""; b.textContent = "✕"; b.style.color = ""; b.style.borderColor = ""; } }, 2000); }
     });
     els.modsPane.querySelector("#mAddSave").onclick = () => {
@@ -473,11 +520,23 @@ window.Studio = window.Studio || {};
       els.plansPane.innerHTML = `<div class="no-sug" style="padding:18px;border:0">No plans yet — fathom:plan creates intended structure here.</div>`;
       return;
     }
+    // #15: reverse index — every suggestion (across all modules) that names this plan.
+    const suggsByPlan = {};
+    S.model.modules.forEach((m) => (m.suggestions || []).forEach((s) => {
+      if (s.planId) (suggsByPlan[s.planId] = suggsByPlan[s.planId] || []).push(s);
+    }));
+
     els.plansPane.innerHTML = plans.map((p) => {
       const mods = (p.moduleIds || []).length
         ? `<div class="plan-modules">${p.moduleIds.map((id) => `<button class="pill" data-nav="${id}">${id}</button>`).join("")}</div>` : "";
       const adrs = (p.adrRefs || []).length
         ? `<div class="plan-adrs">${p.adrRefs.map((a) => `<a class="adr-link" href="#">${esc(a)}</a>`).join("")}</div>` : "";
+      // #15: back-link(s) — proposals this plan realizes (open the Proposals tab + flash).
+      const srcSuggs = suggsByPlan[p.id] || [];
+      const backLinks = srcSuggs.length
+        ? `<div class="src-proposals">${srcSuggs.map((s) =>
+            `<button class="xlink-chip" data-xkind="proposal" data-back-prop="${esc(s.module)}" title="From proposal: ${esc(s.title)}">↰ from proposal: ${esc(s.title || s.module)}</button>`
+          ).join("")}</div>` : "";
       const steps = (p.steps || []).map((st) => `
         <div class="pstep">
           <div class="ps-top"><span class="ps-title">${esc(st.title)}</span><span class="ps-status ${st.status}">${st.status}</span></div>
@@ -488,12 +547,14 @@ window.Studio = window.Studio || {};
       return `<article class="plan-card" data-plan="${p.id}">
         <div class="plan-hd"><span class="plan-title">${esc(p.title)}</span><span class="plan-status ${p.status}">${p.status}</span></div>
         <div class="plan-intent">${esc(p.intent || "")}</div>
-        ${mods}${adrs}
+        ${mods}${adrs}${backLinks}
         <div class="plan-steps">${steps || `<div class="no-sug" style="padding:9px;border:0">no steps</div>`}</div>
       </article>`;
     }).join("");
 
-    els.plansPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.nav); S.centerOn(b.dataset.nav, true); });
+    els.plansPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.nav); S.reveal(b.dataset.nav, {}); });   // #9
+    // #15 back-link: plan → its source proposal (open Proposals tab + flash the card).
+    els.plansPane.querySelectorAll("[data-back-prop]").forEach((b) => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setTab("agent"); flashProp(b.dataset.backProp); });
     els.plansPane.querySelectorAll(".ps-set").forEach((b) => b.onclick = () => {
       S.model = Store.setStepStatus(b.dataset.plan, b.dataset.step, b.dataset.pstatus);
       S.toast("Step → " + b.dataset.pstatus, "var(--accent)");
@@ -546,12 +607,13 @@ window.Studio = window.Studio || {};
       ].join("") || `<span class="ip-ct ok">✓ clean</span>`;
     }
 
-    // filter chips
+    // filter chips (+ #11 batch "triage top criticals" footer button)
     if (ipFiltersEl) {
       const chips = [["all","All"], ["bad","🔴 Critical"], ["warn","🟠 Warn"], ["info","🟡 Info"]];
       ipFiltersEl.innerHTML = chips.map(([k, label]) =>
         `<button class="ip-chip${ipFilter === k ? " active" : ""}" data-ipf="${k}">${label}</button>`
-      ).join("");
+      ).join("") +
+        (total ? `<button class="dispatch-btn batch" id="dispatchTop" title="Ask the agent to triage the worst modules">Triage top criticals →</button>` : "");
       ipFiltersEl.querySelectorAll("[data-ipf]").forEach((b) => b.onclick = () => {
         ipFilter = b.dataset.ipf;
         renderIssuesPanel();
@@ -585,17 +647,30 @@ window.Studio = window.Studio || {};
           </div>
           <div class="ip-badges">${badges}</div>
         </div>
+        <button class="dispatch-btn" data-ipfix="${m.id}" title="Ask the agent to fix this">fix →</button>
         <button class="ip-goto" data-ipnav="${m.id}" title="Find in graph">⌖</button>
       </div>`;
     }).join("");
 
-    ipListEl.querySelectorAll("[data-ipnav]").forEach((el) => el.onclick = () => {
+    // #9 canonical: locate → focus → act, closing the panel in one motion.
+    ipListEl.querySelectorAll("[data-ipnav]").forEach((el) => el.onclick = (ev) => {
+      if (ev.target.closest("[data-ipfix]")) return;   // the fix button has its own handler
       const id = el.dataset.ipnav;
-      S.selectNode(id);  // opens inspector tab + highlights node
-      // if in overview mode, switch to detail first so the node card is visible
-      if (S.showNodeInGraph) S.showNodeInGraph(id);
-      else if (S.centerOn) S.centerOn(id, true);
+      S.selectNode(id);                                // opens inspector + highlights
+      S.reveal(id, { close: true });                   // enters detail, centers, closes panel
     });
+    // #11 per-row "fix →": ask the agent to fix this module.
+    ipListEl.querySelectorAll("[data-ipfix]").forEach((b) => b.onclick = (ev) => {
+      ev.stopPropagation();
+      S.dispatch({ kind: "fix", module: b.dataset.ipfix });
+    });
+    // #11 footer "Triage top criticals": batch-fix the worst few.
+    const topBtn = ipFiltersEl && document.getElementById("dispatchTop");
+    if (topBtn) topBtn.onclick = () => {
+      const bad = filtered.filter(({ sigs }) => sigs.some((s) => s.sev === "bad")).slice(0, 5).map((x) => x.m.id);
+      const mods = (bad.length ? bad : filtered.slice(0, 5).map((x) => x.m.id));
+      if (mods.length) S.dispatch({ kind: "triage", modules: mods });
+    };
   }
 
   S.toggleIssuesPanel = function (open) {
@@ -635,8 +710,27 @@ window.Studio = window.Studio || {};
     renderInspector();
     S.refreshVisualState();
     if (S.railCollapsed) S.toggleRail(true);
+    // #2 deep-link: mirror the selection into ?sel so the view is bookmarkable.
+    syncSelUrl(id);
+    // #12: reflect the selected module in the breadcrumb (graph owns the readout).
+    if (S.setBreadcrumb) S.setBreadcrumb({ mode: "detail", moduleId: id });
   };
-  S.deselect = function () { S.selectedId = null; renderInspector(); S.refreshVisualState(); };
+  S.deselect = function () {
+    S.selectedId = null;
+    renderInspector();
+    S.refreshVisualState();
+    syncSelUrl(null);                       // #2: drop ?sel
+    if (S.setBreadcrumb) S.setBreadcrumb({});
+  };
+
+  // #2: write/clear the ?sel query param (mirrors doSearch's ?q pattern in graph).
+  function syncSelUrl(id) {
+    try {
+      const url = new URL(location.href);
+      if (id) url.searchParams.set("sel", id); else url.searchParams.delete("sel");
+      history.replaceState(null, "", url);
+    } catch (e) { /* non-fatal */ }
+  }
 
   /* ============ rail collapse ============ */
   S.railCollapsed = false;
@@ -649,10 +743,135 @@ window.Studio = window.Studio || {};
 
   /* ============ toast ============ */
   let toastT;
-  S.toast = function (msg, color) {
+  S.toast = function (msg, color, opts) {
+    opts = opts || {};
+    if (opts.undo) {
+      // #16 undo toast: carries an Undo action; longer-lived so it can be acted on.
+      els.toast.innerHTML = `<div class="toast undo-toast"><span class="tk" style="background:${color || "var(--leak)"}"></span>${esc(msg)}<button class="undo-act" id="undoAct">Undo</button></div>`;
+      const btn = els.toast.querySelector("#undoAct");
+      if (btn) btn.onclick = () => {
+        Store.undoDelete();
+        S.model = Store.get();
+        S.rebuildGraph(); S.renderRail();
+        els.toast.innerHTML = "";
+        S.toast("Restored", "var(--strong)");
+      };
+      clearTimeout(toastT); toastT = setTimeout(() => (els.toast.innerHTML = ""), 6000);
+      return;
+    }
     els.toast.innerHTML = `<div class="toast"><span class="tk" style="background:${color || "var(--strong)"}"></span>${msg}</div>`;
     clearTimeout(toastT); toastT = setTimeout(() => (els.toast.innerHTML = ""), 2200);
   };
+
+  /* ============ #11 dispatch: "ask the agent to X" ============ */
+  // thin wrapper over Arch.Store.dispatch — toasts + re-syncs the touched module.
+  S.dispatch = function (req) {
+    if (!req || !req.kind) return;
+    Store.dispatch(req);
+    const what = req.module ? req.kind + " " + req.module
+      : req.kind + (req.modules ? " " + req.modules.length + " modules" : "");
+    S.toast("Asked agent to " + what, "var(--accent)");
+    if (req.module) S.onModelMutated(req.module);
+  };
+
+  // #11 browser fallback: surface the agent prompt in a copyable, longer-lived toast.
+  S.grillFallback = function (prompt, resume) {
+    const first = String(prompt || "").split("\n")[0];
+    els.toast.innerHTML = `<div class="toast"><span class="tk" style="background:var(--accent)"></span>Paste into your agent: ${esc(first)}${resume ? " — " + esc(resume) : ""}</div>`;
+    clearTimeout(toastT); toastT = setTimeout(() => (els.toast.innerHTML = ""), 6000);
+    try { console.info("[arch-map dispatch]\n" + prompt + (resume ? "\n" + resume : "")); } catch (e) {}
+  };
+
+  /* ============ #10 agent narration: activity feed ============ */
+  // canonical verb map (1.5) — phrases a single diff entry into a human line.
+  function activityVerb(d) {
+    const id = `<b>${esc(d.id)}</b>`;
+    switch (d.field) {
+      case "depth":       return (d.to > d.from ? "deepened " : "reworked ") + id + ` ${d.from}→${d.to}`;
+      case "coverage":    return (d.to > d.from ? "covered " : "dropped coverage on ") + id + ` ${d.from}→${d.to}%`;
+      case "leaks":       return (d.to < d.from ? "sealed a leak in " : "opened a leak in ") + id;
+      case "dependsOn":   return (d.to > d.from ? "wired up " : "decoupled ") + id;
+      case "+module":     return "added " + id;
+      case "-module":     return "removed " + id;
+      case "suggestions": return (d.to > d.from ? "proposed on " : "resolved a proposal on ") + id;
+      case "lifecycle":   return (d.to === "built" ? "shipped " : "set " + esc(d.to) + " on ") + id;
+      case "plane":       return (d.to === "actual" ? "realized " : "planned ") + id;
+      case "health":      return "health " + d.from + "→" + d.to + " on " + id;
+      case "updated":     return (d.to ? "flagged " : "cleared ") + id;
+      default:            return esc(d.field) + " changed on " + id;
+    }
+  }
+  let activityRows = 0;
+  S.pushActivity = function (entry) {
+    const feed = els.activityFeed;
+    if (!feed || !entry) return;
+    const at = entry.at || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const row = document.createElement("div");
+    row.className = "activity-row agent is-new";
+    row.innerHTML = `<span class="at">${esc(at)}</span><span class="av">${entry.text || activityVerb(entry)}</span>`;
+    if (entry.module) {
+      row.onclick = () => { S.selectNode(entry.module); S.reveal(entry.module, { flash: true }); };
+    }
+    feed.insertBefore(row, feed.firstChild);
+    activityRows++;
+    // cap at ~30 rows
+    while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+    setTimeout(() => row.classList.remove("is-new"), 600);
+  };
+
+  /* ============ #18 cross-refs: the same module across all four surfaces ============ */
+  // map issue severities ↔ proposal strengths ↔ chip kinds, one vocabulary (doc'd).
+  const SURFACE_MAP = {
+    sev:      { bad: "critical", warn: "warn", info: "info" },
+    strength: { strong: "critical", worth: "warn", speculative: "info" },
+  };
+  S.crossRefs = function (id) {
+    const m = S.model.modules.find((x) => x.id === id);
+    if (!m) return { issues: [], proposal: null, chips: [], signals: [] };
+    const signals = computeSignals(m);
+    return {
+      issues: signals.map((s) => ({ sev: s.sev, label: s.label })),
+      proposal: m.suggestion || null,
+      chips: (S.chipConcerns ? S.chipConcerns(m) : []),
+      signals,
+    };
+  };
+  // render a row of cross-link chips for a module (used by inspector / proposal card).
+  function crossLinkRow(id, opts) {
+    opts = opts || {};
+    const x = S.crossRefs(id);
+    const chips = [];
+    if (x.issues.length && !opts.skipIssue) {
+      const worst = x.issues.some((i) => i.sev === "bad") ? "bad" : x.issues[0].sev;
+      chips.push(`<button class="xlink-chip" data-xkind="issue" data-xissue="${esc(id)}" title="See in the Issues panel">⚠ ${x.issues.length} issue${x.issues.length > 1 ? "s" : ""}</button>`);
+    }
+    if (x.proposal && !opts.skipProposal) {
+      chips.push(`<button class="xlink-chip" data-xkind="proposal" data-xprop="${esc(id)}" title="Open the agent proposal">proposal pending</button>`);
+    }
+    (x.chips || []).forEach((k) => {
+      if (k === "suggestions") return;   // already covered by the proposal chip
+      chips.push(`<button class="xlink-chip" data-xkind="chip" data-xchip="${k}" title="Filter the graph by ${k}">${k}</button>`);
+    });
+    if (!chips.length) return "";
+    return `<div class="xlink-row">${chips.join("")}</div>`;
+  }
+  // wire cross-link chips inside a root element.
+  function wireCrossLinks(root) {
+    root.querySelectorAll("[data-xissue]").forEach((b) => b.onclick = (e) => {
+      e.preventDefault();
+      const id = b.dataset.xissue;
+      S.selectNode(id);
+      if (S.toggleIssuesPanel) S.toggleIssuesPanel(true);
+    });
+    root.querySelectorAll("[data-xprop]").forEach((b) => b.onclick = (e) => {
+      e.preventDefault();
+      setTab("agent"); flashProp(b.dataset.xprop);
+    });
+    root.querySelectorAll("[data-xchip]").forEach((b) => b.onclick = (e) => {
+      e.preventDefault();
+      if (S.setFilter) S.setFilter(b.dataset.xchip);
+    });
+  }
 
   /* ============ counts in header ============ */
   function renderHeaderCounts() {
@@ -670,11 +889,28 @@ window.Studio = window.Studio || {};
 
   /* ============ external model updates (poll / other tab) ============ */
   function onExternal(s) {
+    // #10: diff the incoming model against the current one so we can narrate the
+    // agent's edits (this runs only for external updates — poll / other tab / agent).
+    let diffs = [];
+    try { diffs = (window.Arch.diffModels && S.model) ? window.Arch.diffModels(S.model, s) : []; }
+    catch (e) { diffs = []; }
+
     S.model = s;
     const sig = S.sigOf(s);
     if (sig !== S._structSig) { S.rebuildGraph(); S._structSig = sig; }
     else S.softUpdateGraph();
     S.renderRail(); renderHeaderCounts();
+
+    // narrate + flash the changed cards (builds on item 4's dataset.sig so only the
+    // cards that actually changed flash).
+    if (diffs.length) {
+      const touched = [];
+      diffs.forEach((d) => {
+        S.pushActivity({ id: d.id, field: d.field, from: d.from, to: d.to, module: (d.field === "-module" ? null : d.id) });
+        if (d.field !== "-module") touched.push(d.id);
+      });
+      if (S.flashNodes && touched.length) S.flashNodes(touched);
+    }
   }
 
   /* ============ boot ============ */
@@ -683,6 +919,7 @@ window.Studio = window.Studio || {};
     els.railBody = document.getElementById("railBody");
     els.agentSub = document.getElementById("agentSub");
     els.agentStats = document.getElementById("agentStats");
+    els.activityFeed = document.getElementById("activityFeed");
     els.agentPane = document.getElementById("agentPane");
     els.inspPane = document.getElementById("inspPane");
     els.modsPane = document.getElementById("modsPane");

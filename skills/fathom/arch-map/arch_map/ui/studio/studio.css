@@ -151,6 +151,8 @@
 .insp-id { font-family: var(--font-mono); font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 .insp-label { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
 .insp-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 11px; }
+/* #11: contextual dispatch surfaces (Re-scan / Ask agent to realize) in the inspector head */
+.insp-dispatch { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .insp-body { padding: 16px; }
 
 /* ---------- MODULES pane ---------- */
@@ -186,6 +188,10 @@
   transition: box-shadow .15s, border-color .15s;
 }
 .plan-card:hover { box-shadow: var(--shadow-md); }
+/* #15: flash target when a proposal's "↳ plan" link jumps here */
+.plan-card.hot { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-ring), var(--shadow-md); }
+/* #15: back-links from a plan to the proposal(s) it realizes */
+.plan-card .src-proposals { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
 .plan-hd { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
 .plan-hd .p-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
 .plan-hd .p-title { font-size: 13.5px; font-weight: 600; line-height: 1.3; flex: 1; min-width: 0; }

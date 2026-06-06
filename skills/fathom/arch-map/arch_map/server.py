@@ -900,6 +900,17 @@ def get_plan(map: str, plan_id: str) -> dict:
     return REGISTRY.store(map).get_plan(plan_id)
 
 
+@mcp.tool(**_APP)
+def update_plan(map: str, plan_id: str, fields: dict) -> dict:
+    """Patch a plan in `map` and re-render. Editable: title, domain, intent, status
+    (draft | active | done | abandoned), moduleIds, adrRefs. Use to advance a plan's
+    lifecycle once its steps are done — step status (set_step_status) does not roll up
+    to the plan automatically."""
+    store = REGISTRY.store(map)
+    store.update_plan(plan_id, **fields)
+    return _ack(store)
+
+
 # --- HTTP studio app (browser UI -> saved back to the server) ---------------
 # The studio (ui/studio/) is served from the same FastMCP app, so the page is
 # same-origin with /api/maps + /api/model + /api/act (no CORS). The studio picks a
@@ -917,6 +928,8 @@ def _apply_action(store: Store, action: str, body: dict) -> None:
         store.request_grilling(body["suggestion_id"])
     elif action == "set_step_status":
         store.set_step_status(body["plan_id"], body["step_id"], body["status"])
+    elif action == "update_plan":
+        store.update_plan(body["plan_id"], **body.get("fields", {}))
     elif action == "set_depth":
         store.set_depth(body["module"], float(body["score"]))
     elif action == "set_coverage":

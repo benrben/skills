@@ -316,11 +316,31 @@
       // ---- onboarding (first run) ----
       const onb = document.getElementById("onb");
       const ONB_KEY = "archmap.onboarded.v1";
+      const PULSE_KEY = "archmap.ipPulsed.v1";
       function openOnb() { onb.classList.add("open"); }
+      // #7 first-run pulse: nudge a new user toward the Issues panel exactly once.
+      // Only fires if there are issues to look at, is gated on prefers-reduced-motion
+      // (the CSS keyframe is also neutralized there), and clears on first interaction.
+      function maybePulseIssues() {
+        const ipTab = document.getElementById("ipTab");
+        if (!ipTab) return;
+        let pulsed = false; try { pulsed = !!localStorage.getItem(PULSE_KEY); } catch (e) {}
+        const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const hasIssues = ipTab.classList.contains("has-issues");
+        if (pulsed || reduce || !hasIssues) return;
+        ipTab.classList.add("pulse-once");
+        try { localStorage.setItem(PULSE_KEY, "1"); } catch (e) {}
+        const stop = () => { ipTab.classList.remove("pulse-once"); ipTab.removeEventListener("click", stop); };
+        ipTab.addEventListener("click", stop);
+        // also clear once the animation (1.6s × 2) has run, so it never lingers
+        setTimeout(() => ipTab.classList.remove("pulse-once"), 3600);
+      }
       function closeOnb(goProposals) {
         onb.classList.remove("open");
         try { localStorage.setItem(ONB_KEY, "1"); } catch (e) {}
         if (goProposals) { Studio.setTab("agent"); Studio.fit(true); }
+        // the issues count is live by now — pulse the tab to point the new user at it.
+        setTimeout(maybePulseIssues, 400);
       }
       document.getElementById("onbStart").onclick = () => closeOnb(true);
       document.getElementById("onbSkip").onclick = () => closeOnb(false);
@@ -328,6 +348,9 @@
       onb.addEventListener("click", (e) => { if (e.target === onb) closeOnb(false); });
       let seen = false; try { seen = !!localStorage.getItem(ONB_KEY); } catch (e) {}
       if (!seen) setTimeout(openOnb, 350);
+      // already-onboarded users (or those who skipped via persisted state) still get the
+      // one-time nudge the first time they load with issues present.
+      else setTimeout(maybePulseIssues, 900);
 
       window.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { helpPop.classList.remove("open"); if (onb.classList.contains("open")) closeOnb(false); }

@@ -39,6 +39,25 @@ window.Studio = window.Studio || {};
   let modeSwitching = false;
   let mmScale  = 1, mmOx = 0, mmOy = 0;
 
+  // #8 reduced-motion: gate JS-driven smooth pans + the flash so the canvas honours
+  // the OS "reduce motion" pref (the CSS animations are neutralized globally in ui.css).
+  const reduceMotion = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+  // #13/#14 view-preservation state: which modes we've already framed once, and the
+  // last view saved before an isolate / mode switch so we can restore instead of re-fit.
+  const seenModes = new Set();
+  let savedView = null;
+  // #12 breadcrumb scope mirror (rendered into #breadcrumb).
+  let scope = { mode: "overview" };
+  // #14 isolate state.
+  S.isolatedId = null;
+
+  // #19 minimap throttling: an offscreen scene canvas (structure-time) + a rAF-coalesced
+  // viewport redraw (per-frame). mmSceneDirty forces a scene rebuild on the next draw.
+  let mmSceneCanvas = null;
+  let mmSceneDirty  = true;
+  let mmRaf = 0;
+
   /* ================================================================ *
    *  INLINE SVGs (no emoji)
    * ================================================================ */
@@ -197,15 +216,28 @@ window.Studio = window.Studio || {};
     ctx.closePath();
   }
 
-  function drawMinimap() {
+  /* #19 minimap throttle — the hull/node/super fill is expensive and only changes
+   * when `layout` (structure) changes, so render it ONCE into an offscreen canvas and
+   * blit it each frame. Per-frame work is just clearRect + drawImage + the viewport
+   * rect, coalesced to one redraw per rAF (applyTransform/pan/zoom fire far faster). */
+
+  // invalidate the cached scene; the next requestMinimap rebuilds it before blitting.
+  function invalidateMinimapScene() { mmSceneDirty = true; }
+
+  function drawMinimapScene() {
     const cv = els.minimap;
-    if (!cv) return;
-    const ctx = cv.getContext("2d");
+    if (!cv || !layout) return;
     const DPR = 2, w = cv.width / DPR, h = cv.height / DPR;
+    if (!mmSceneCanvas) {
+      mmSceneCanvas = document.createElement("canvas");
+    }
+    mmSceneCanvas.width = cv.width; mmSceneCanvas.height = cv.height;
+    const ctx = mmSceneCanvas.getContext("2d");
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    if (!layout) return;
     const pad = 8;
+    // mmScale/mmOx/mmOy depend on `layout` (not `view`), so they live here — keeping
+    // drawViewportRect's coordinate mapping correct across pans/zooms.
     mmScale = Math.min((w - pad * 2) / layout.W, (h - pad * 2) / layout.H);
     mmOx = pad + (w - pad * 2 - layout.W * mmScale) / 2;
     mmOy = pad + (h - pad * 2 - layout.H * mmScale) / 2;
@@ -233,8 +265,31 @@ window.Studio = window.Studio || {};
       roundRect(ctx, X(s.x), Y(s.y), s.w * mmScale, s.h * mmScale, 2.5); ctx.fill();
     });
 
+    mmSceneDirty = false;
+  }
+
+  function drawMinimapViewport() {
+    const cv = els.minimap;
+    if (!cv) return;
+    const ctx = cv.getContext("2d");
+    const DPR = 2, w = cv.width / DPR, h = cv.height / DPR;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!layout) return;
+    if (mmSceneDirty || !mmSceneCanvas) drawMinimapScene();
+    if (mmSceneCanvas) ctx.drawImage(mmSceneCanvas, 0, 0);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     drawViewportRect();
   }
+
+  // rAF-coalesced: many applyTransform() calls per gesture collapse to one redraw/frame.
+  function requestMinimap() {
+    if (mmRaf) return;
+    mmRaf = requestAnimationFrame(() => { mmRaf = 0; drawMinimapViewport(); });
+  }
+
+  // structure changed: rebuild the scene cache and repaint.
+  function drawMinimap() { invalidateMinimapScene(); drawMinimapViewport(); }
 
   function drawViewportRect() {
     const cv = els.minimap;
@@ -400,13 +455,19 @@ window.Studio = window.Studio || {};
       (m.supersedes || []).forEach(d => addEdge("supersede", m, d));
     });
 
-    const seen = new Set();
+    // de-dup, but count collapsed duplicates as the edge weight (#17). For dep edges
+    // we also fold in the target's fan-in so a heavily-depended-on module reads heavier.
+    const seen = new Map();
     const edges = edgeDefs.filter(e => {
       const key = e.sources[0] + ">" + e.targets[0] + ":" + e._type;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      if (seen.has(key)) { seen.get(key)._weight += 1; return false; }
+      e._weight = 1;
+      seen.set(key, e);
       return true;
     });
+    const fanIn = {};
+    S.model.modules.forEach(m => (m.dependsOn || []).forEach(d => { fanIn[d] = (fanIn[d] || 0) + 1; }));
+    edges.forEach(e => { if (e._type === "dep") e._weight += Math.max(0, (fanIn[e._to] || 1) - 1); });
 
     const graph = {
       id: "root",
@@ -453,7 +514,7 @@ window.Studio = window.Studio || {};
       const sec = (e.sections || [])[0];
       if (!sec) return;
       const pts = [sec.startPoint, ...(sec.bendPoints || []), sec.endPoint];
-      out.edges.push({ type: e._type, from: e._fm, to: e._to, fromEp: e.sources[0], toEp: e.targets[0], pts });
+      out.edges.push({ type: e._type, from: e._fm, to: e._to, fromEp: e.sources[0], toEp: e.targets[0], weight: e._weight || 1, pts });
     });
 
     return out;
@@ -463,7 +524,16 @@ window.Studio = window.Studio || {};
    *  BUILD GRAPH (async)
    * ================================================================ */
   async function buildGraph() {
+    // #6 loading overlay: show while ELK lays out (the await below can take a beat on
+    // large maps). Removed once the cards/edges are painted at the end of this fn.
+    if (els.stageLoading) {
+      const lbl = els.stageLoading.querySelector(".sl-label");
+      if (lbl) lbl.textContent = `Laying out ${S.model.modules.length} modules…`;
+      els.stageLoading.classList.add("show");
+      els.stageLoading.setAttribute("aria-hidden", "false");
+    }
     layout = (mode === "overview") ? await computeOverview() : await computeDetail();
+    invalidateMinimapScene();   // #19: structure changed — rebuild the cached scene
     const W = layout.W, H = layout.H;
 
     // size the viewport + SVG
@@ -530,6 +600,15 @@ window.Studio = window.Studio || {};
         const w = 1.2 + Math.min(4.2, Math.log2((e.weight || 1) + 1) * 1.25);
         path.style.strokeWidth = w.toFixed(2) + "px";
         path.style.opacity     = Math.min(0.72, 0.34 + (e.weight || 1) * 0.03).toFixed(2);
+      } else if (!isOv && e.type === "dep") {
+        // #17: in detail, scale dep-edge WIDTH by weight (duplicate-count + target
+        // fan-in) so heavily-depended-on seams read as thicker lines. Width-only —
+        // opacity stays under the .fade/.hot/.show cascade so hover/filter still work
+        // (inline opacity would shadow those CSS rules).
+        const wt = e.weight || 1;
+        const sw = 1.0 + Math.min(1.4, Math.log2(wt + 1) * 0.55);
+        path.style.strokeWidth = sw.toFixed(2) + "px";
+        path.dataset.weight = wt;
       }
 
       path.setAttribute("d", roundedPath(e.pts, isOv ? 10 : 6));
@@ -591,6 +670,12 @@ window.Studio = window.Studio || {};
     // sync overview button
     const ovBtn = document.getElementById("overviewBtn");
     if (ovBtn) ovBtn.setAttribute("aria-pressed", mode === "overview" ? "true" : "false");
+
+    // #6: layout painted — hide the loading overlay.
+    if (els.stageLoading) {
+      els.stageLoading.classList.remove("show");
+      els.stageLoading.setAttribute("aria-hidden", "true");
+    }
   }
 
   /* ================================================================ *
@@ -605,11 +690,21 @@ window.Studio = window.Studio || {};
       (m.lifecycle === "building" ? " building" : "") +
       (isGrilling(m)        ? " grilling" : "");
     el.dataset.id = m.id;
+    el.dataset.sig = nodeSig(m);   // #4: seed the diff signature so the first poll diffs cleanly
     el.innerHTML  = nodeInner(m);
     el.title = `${m.label} — ${m.domain}`;
+    // #3 focusable + keyboard-activable card
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-label", `${m.id} — ${m.label}, ${m.domain}`);
     el.addEventListener("mouseenter", () => { S.hoverId = m.id; refreshVisualState(); });
     el.addEventListener("mouseleave", () => { S.hoverId = null; refreshVisualState(); });
     el.addEventListener("click", e => { e.stopPropagation(); S.selectNode && S.selectNode(m.id); });
+    el.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault(); S.selectNode && S.selectNode(m.id);
+      }
+    });
     return el;
   }
 
@@ -648,28 +743,56 @@ window.Studio = window.Studio || {};
       <div class="node-foot">
         <div class="cov-bar" title="coverage ${cov}%"><i style="width:${cov}%;background:${covColor(cov)}"></i></div>
         <span class="cov-pct">${(m.plane === "intended" && cov === 0) ? "—" : cov + "%"}</span>
-        ${h !== null ? `<span class="health-dot health-${h >= 70 ? "good" : h >= 40 ? "warn" : "bad"}" title="health score ${h}/100"></span>` : ""}
+        ${(h !== null && h < 40) ? `<span class="health-dot health-bad" title="health score ${h}/100 — at risk"></span>` : ""}
       </div>${cap}`;
   }
 
   /* ================================================================ *
    *  SOFT UPDATE (in-place, no layout recompute)
    * ================================================================ */
+  // #4: a compact signature of every field nodeInner()/className depend on. softUpdate
+  // skips repainting a card whose signature is unchanged — turning a ~16-card full
+  // re-render into a targeted one, and (item 10) letting the rail detect what changed.
+  function nodeSig(m) {
+    const sug = m.suggestion || openSug(m);
+    return [
+      localTierOf(m.depth), m.updated, m.plane, m.lifecycle, isGrilling(m),
+      (m.leaks || []).length, m.coverage, m.metrics && m.metrics.health,
+      m.metrics && m.metrics.inCycle, !!sug, (sug || {}).strength
+    ].join("|");
+  }
+
   function softUpdate() {
     Object.keys(nodeEl).forEach(id => {
       if (id.startsWith("super:")) return;
       const m  = S.model.modules.find(x => x.id === id);
       const el = nodeEl[id];
       if (!m || !el) return;
+      const sig = nodeSig(m);
+      if (el.dataset.sig === sig) return;   // #4: unchanged — skip the repaint
       el.className = `node tier-${localTierOf(m.depth)}` +
         (m.updated              ? " updated"  : "") +
         (m.plane === "intended" ? " planned"  : "") +
         (m.lifecycle === "building" ? " building" : "") +
         (isGrilling(m)          ? " grilling" : "");
       el.innerHTML = nodeInner(m);
+      el.dataset.sig = sig;
     });
     refreshVisualState();
   }
+
+  // #10/#15: flash a set of node cards (reused by agent-narration + nav). Respects
+  // reduced-motion (the nodeflash animation is also neutralized globally in ui.css).
+  S.flashNodes = function (ids) {
+    if (reduceMotion || !ids) return;
+    ids.forEach(id => {
+      const el = nodeEl[id];
+      if (!el) return;
+      el.classList.remove("flash");
+      void el.offsetWidth;
+      el.classList.add("flash");
+    });
+  };
 
   /* ================================================================ *
    *  DOMAIN SUPER-NODE (overview)
@@ -714,9 +837,16 @@ window.Studio = window.Studio || {};
       </div>`;
 
     el.title = `${dom} · ${members.length} modules — click to expand`;
+    // #3 focusable + keyboard-activable supernode
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-label", `${dom} domain — ${members.length} modules, open`);
     el.addEventListener("mouseenter", () => { S.hoverId = "super:" + dom; refreshVisualState(); });
     el.addEventListener("mouseleave", () => { S.hoverId = null; refreshVisualState(); });
     el.addEventListener("click", e => { e.stopPropagation(); enterDomain(dom); });
+    el.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); enterDomain(dom); }
+    });
     return el;
   }
 
@@ -729,20 +859,60 @@ window.Studio = window.Studio || {};
       els.stage.classList.remove("lod-far", "lod-mid", "lod-near");
       els.stage.classList.add("lod-" + lod);
       lastLod = lod;
-      const tag = document.getElementById("lodTag");
-      if (tag) tag.textContent = mode === "overview" ? "domains" : lod;
+      scope.lod = lod;
+      renderBreadcrumb();   // #11/#12: the breadcrumb (revives the dead #lodTag) reflects zoom
     }
   }
+
+  /* ================================================================ *
+   *  #11/#12 BREADCRUMB — mode + scope readout, the "way back" home
+   * ================================================================ */
+  function renderBreadcrumb() {
+    const el = els.breadcrumb;
+    if (!el) return;
+    const sel = S.selectedId && S.model.modules.find(x => x.id === S.selectedId);
+    let html = "";
+    if (mode === "overview") {
+      const n = domainsOf().size;
+      html = `<span class="bc-cur">Overview · ${n} domain${n === 1 ? "" : "s"}</span>`;
+    } else {
+      // detail: "Overview › {scope}" with Overview clickable as the way home
+      html = `<button class="bc-seg" data-bc="overview" title="Back to overview">Overview</button>`;
+      if (scope.domain) {
+        html += `<span class="bc-sep">›</span><button class="bc-seg" data-bc="domain" title="Refit ${esc(scope.domain)}">${esc(scope.domain)}${scope.count != null ? "·" + scope.count : ""}</button>`;
+      } else {
+        const n = Object.keys((layout && layout.nodes) || {}).length;
+        html += `<span class="bc-sep">›</span><span class="bc-cur">detail · ${n} module${n === 1 ? "" : "s"}</span>`;
+      }
+      if (sel) html += `<span class="bc-sep">›</span><span class="bc-cur">${esc(sel.id)}</span>`;
+    }
+    el.innerHTML = html;
+    const home = el.querySelector('[data-bc="overview"]');
+    if (home) home.onclick = () => enterOverview();
+    const dseg = el.querySelector('[data-bc="domain"]');
+    if (dseg && scope.domain) dseg.onclick = () => enterDetail(scope.domain, { keepView: false });
+  }
+
+  // public so the rail can refresh the breadcrumb on select/deselect (item 12).
+  S.setBreadcrumb = function (s) {
+    if (s) {
+      if (s.mode) scope.mode = s.mode;
+      if ("domain" in s) scope.domain = s.domain;
+      if ("count" in s) scope.count = s.count;
+    }
+    renderBreadcrumb();
+  };
 
   function applyTransform() {
     els.viewport.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
     if (els.zoomInd) els.zoomInd.textContent = Math.round(view.k * 100) + "%";
     applyLOD();
-    drawMinimap();  // full clear + redraw — prevents ghost trails on pan/zoom
+    requestMinimap();  // #19: rAF-coalesced viewport redraw (scene cache blitted, no ghost trails)
   }
 
   function setSmooth(on) {
-    els.viewport.style.transition = on ? "transform .32s cubic-bezier(.4,0,.2,1)" : "none";
+    // #8: never enable the smooth-pan transition when the user prefers reduced motion.
+    els.viewport.style.transition = (on && !reduceMotion) ? "transform .32s cubic-bezier(.4,0,.2,1)" : "none";
   }
 
   function maybeSwitchMode() {
@@ -822,7 +992,7 @@ window.Studio = window.Studio || {};
     view.y = r.height / 2 - (n.y + n.h / 2) * view.k;
     applyTransform();
     setTimeout(() => setSmooth(false), 340);
-    if (flash && nodeEl[id]) {
+    if (flash && !reduceMotion && nodeEl[id]) {   // #8: skip the flash under reduced-motion
       nodeEl[id].classList.remove("flash");
       void nodeEl[id].offsetWidth;
       nodeEl[id].classList.add("flash");
@@ -862,6 +1032,59 @@ window.Studio = window.Studio || {};
   }
 
   /* ================================================================ *
+   *  #14 ISOLATE — show only one module's neighbourhood, fade the rest
+   * ================================================================ */
+  // strip the .isolating state + markers without restoring the view (used when a
+  // mode switch or rebuild supersedes the isolation).
+  function clearIsolateState() {
+    S.isolatedId = null;
+    if (els.stage) els.stage.classList.remove("isolating");
+    Object.values(nodeEl).forEach(el => el.classList.remove("iso-in"));
+    els.edges.querySelectorAll(".iso-in").forEach(p => p.classList.remove("iso-in"));
+    syncIsolateBtn();
+  }
+
+  S.isolate = function (id) {
+    if (!id || !layout || !nodeEl[id]) return;
+    const hood = neighbourhood(id);          // the module + everything it touches
+    savedView = { ...view };                 // so clearIsolate can restore the framing
+    S.isolatedId = id;
+    // mark the kept cards + the edges fully inside the hood
+    Object.entries(nodeEl).forEach(([k, el]) => el.classList.toggle("iso-in", hood.has(k)));
+    els.edges.querySelectorAll(".edge, .leak-x").forEach(p => {
+      p.classList.toggle("iso-in", hood.has(p.dataset.from) && hood.has(p.dataset.to));
+    });
+    els.stage.classList.add("isolating");    // CSS hides everything without .iso-in
+    // frame the neighbourhood
+    const rects = [...hood].map(k => layout.nodes[k]).filter(Boolean);
+    if (rects.length) framePadded(boundsOf(rects), 1.1, true);
+    syncIsolateBtn();
+    renderBreadcrumb();
+  };
+
+  S.clearIsolate = function () {
+    if (!S.isolatedId) return;
+    clearIsolateState();
+    if (savedView) {                          // #14: restore the pre-isolate framing
+      setSmooth(true);
+      view.x = savedView.x; view.y = savedView.y; view.k = clampK(savedView.k);
+      applyTransform();
+      setTimeout(() => setSmooth(false), 340);
+      savedView = null;
+    }
+    renderBreadcrumb();
+  };
+
+  function syncIsolateBtn() {
+    const btn = document.getElementById("isolateBtn");
+    if (!btn) return;
+    const on = !!S.isolatedId;
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.disabled = !S.selectedId && !on;     // enabled when something is selected (or active)
+  }
+  S.syncIsolateBtn = syncIsolateBtn;
+
+  /* ================================================================ *
    *  FILTER / SEARCH
    * ================================================================ */
   function matchFilter(m) {
@@ -892,12 +1115,35 @@ window.Studio = window.Studio || {};
     return members.some(matchFilter);
   }
 
+  // #18: which toolbar chips a module belongs to — the rail's crossRefs() reuses this
+  // so the same identity (module id) lights up the same surfaces everywhere.
+  S.chipConcerns = function (m) {
+    if (!m) return [];
+    const out = [];
+    if (m.suggestion) out.push("suggestions");
+    if (m.updated) out.push("updated");
+    if ((m.leaks || []).length) out.push("leaks");
+    if (m.coverage < 40) out.push("low");
+    if (isOrphan(S.model, m)) out.push("orphan");
+    if (m.plane === "intended") out.push("planned");
+    if ((m.suggestions || []).some(s => s.status === "grilling" || s.status === "requested")) out.push("grilling");
+    return out;
+  };
+  // #18: let the rail drive the toolbar chip filter (so a cross-link chip can switch it).
+  S.setFilter = function (k) {
+    S.filter = (S.filter === k && k !== "all") ? "all" : k;
+    renderChips();
+    refreshVisualState();
+  };
+
   /* ================================================================ *
    *  VISUAL STATE REFRESH
    * ================================================================ */
   function refreshVisualState() {
     if (!layout) return;
-    const focusId = S.hoverId || S.railHotId;
+    // #1 sticky selection: a selected node keeps its neighbourhood spotlighted even
+    // when the pointer leaves it (hover/railHot still win while active).
+    const focusId = S.hoverId || S.railHotId || S.selectedId;
     const isOv    = mode === "overview";
     const hot     = focusId
       ? (isOv && focusId.startsWith("super:") ? domainNeighbourhood(focusId.slice(6)) : neighbourhood(focusId))
@@ -934,6 +1180,17 @@ window.Studio = window.Studio || {};
       el.classList.toggle("hot", !!(hot && inHot));
     });
 
+    // #5: with a filter or search active, an edge whose endpoint module is filtered/
+    // searched out should fade (its cards are dimmed; the connector shouldn't shout).
+    const filtering = S.filter !== "all" || !!S.search;
+    const visibleId = id => {
+      if (!id || id.startsWith("super:")) return true;   // supers handled by domain dim
+      const m = S.model.modules.find(x => x.id === id);
+      return m ? (matchFilter(m) && matchSearch(m)) : true;
+    };
+    const edgeFilteredOut = p =>
+      filtering && (!visibleId(p.dataset.from) || !visibleId(p.dataset.to));
+
     // edges — in overview/detail with hot: show hot=full, fade rest
     els.edges.querySelectorAll(".edge").forEach(p => {
       if (!hot) {
@@ -941,24 +1198,29 @@ window.Studio = window.Studio || {};
         if (p.classList.contains("edge-dep") || p.classList.contains("edge-intended")) {
           p.classList.toggle("show", S.allEdges);
         }
-        p.classList.remove("hot", "fade");
+        p.classList.remove("hot");
+        p.classList.toggle("fade", edgeFilteredOut(p));   // #5
         return;
       }
       const inHot = hot.has(p.dataset.from) && hot.has(p.dataset.to) &&
                     (p.dataset.from === focusId || p.dataset.to === focusId);
       p.classList.toggle("hot",  inHot);
-      p.classList.toggle("fade", !inHot);
+      p.classList.toggle("fade", !inHot || edgeFilteredOut(p));
       if (p.classList.contains("edge-dep") || p.classList.contains("edge-intended")) {
         p.classList.toggle("show", inHot);
       }
     });
 
     els.edges.querySelectorAll(".leak-x").forEach(t => {
-      if (!hot) { t.classList.remove("fade"); return; }
+      const out = filtering && (!visibleId(t.dataset.from) || !visibleId(t.dataset.to));
+      if (!hot) { t.classList.toggle("fade", out); return; }
       const inHot = hot.has(t.dataset.from) && hot.has(t.dataset.to) &&
                     (t.dataset.from === focusId || t.dataset.to === focusId);
-      t.classList.toggle("fade", !inHot);
+      t.classList.toggle("fade", !inHot || out);
     });
+
+    // #14: keep the isolate button's enabled/pressed state in sync with selection.
+    syncIsolateBtn();
   }
   S.refreshVisualState = refreshVisualState;
   S.setRailHot = function (id) { S.railHotId = id; refreshVisualState(); };
@@ -1053,38 +1315,66 @@ window.Studio = window.Studio || {};
   async function enterOverview(focusDom) {
     if (mode === "overview" && layout && !focusDom) return;
     modeSwitching = true;
+    if (S.isolatedId) clearIsolateState();   // #14: isolate is mode-scoped
+    const wasSeen = seenModes.has("overview");
+    const prevView = { ...view };
     mode = "overview";
     collapsed.clear();
     S.selectedId = null;
     if (S.deselect) S.deselect();
+    scope = { mode: "overview", lod: scope.lod };
     await buildGraph();
     if (focusDom && layout.supers[focusDom]) {
       framePadded(boundsOf([layout.supers[focusDom]]), 0.9, true);
+    } else if (wasSeen) {
+      // #13: returning to a mode we've framed before — keep the user's pan/zoom.
+      view.x = prevView.x; view.y = prevView.y; view.k = clampK(prevView.k);
+      setSmooth(true); applyTransform(); setTimeout(() => setSmooth(false), 340);
     } else {
       S.fit(true);
     }
+    seenModes.add("overview");
     const ovBtn = document.getElementById("overviewBtn");
     if (ovBtn) ovBtn.setAttribute("aria-pressed", "true");
+    renderBreadcrumb();
     setTimeout(() => { modeSwitching = false; }, 360);
   }
 
-  async function enterDetail(focusDom) {
+  async function enterDetail(focusDom, opts) {
+    opts = opts || {};
     if (mode === "detail" && layout && !focusDom) return;
     modeSwitching = true;
+    if (S.isolatedId) clearIsolateState();   // #14: isolate is mode-scoped
+    const wasSeen = seenModes.has("detail");
+    const prevView = { ...view };
     mode = "detail";
     collapsed.clear();
+    if (focusDom) {
+      const dm = domainsOf().get(focusDom);
+      scope = { mode: "detail", domain: focusDom, count: dm ? dm.length : null, lod: scope.lod };
+    } else {
+      scope = { mode: "detail", lod: scope.lod };
+    }
     await buildGraph();
     if (focusDom) {
       const h = layout.hulls.find(x => x.dom === focusDom);
       if (h) framePadded({ x: h.x, y: h.y, w: h.w, h: h.h }, 0.86, true);
       else S.fit(true);
+    } else if (wasSeen && opts.keepView !== false) {
+      // #13: button-driven Overview→Detail toggle keeps the previous detail view.
+      view.x = prevView.x; view.y = prevView.y; view.k = clampK(prevView.k);
+      setSmooth(true); applyTransform(); setTimeout(() => setSmooth(false), 340);
     } else {
       S.fit(true);
     }
+    seenModes.add("detail");
     const ovBtn = document.getElementById("overviewBtn");
     if (ovBtn) ovBtn.setAttribute("aria-pressed", "false");
+    renderBreadcrumb();
     setTimeout(() => { modeSwitching = false; }, 360);
   }
+
+  function clampK(k) { return Math.max(MIN_K, Math.min(MAX_K, k)); }
 
   async function enterDomain(dom) { await enterDetail(dom); }
 
@@ -1092,18 +1382,28 @@ window.Studio = window.Studio || {};
    *  PUBLIC REBUILD / SOFT UPDATE
    * ================================================================ */
   S.rebuildGraph = async function () {
+    if (S.isolatedId) clearIsolateState();   // #14: isolation doesn't survive a structural rebuild
     buildDomainPalette();
     await buildGraph();
     renderOrphans();
     renderChips();
   };
 
-  // expose so the issues panel (and any other caller) can force detail mode
-  // before navigating to a specific node that only exists in detail view
-  S.showNodeInGraph = async function (id) {
-    if (mode !== "detail") await enterDetail();
-    S.centerOn(id, true);
+  // #9 reveal — the single "find→focus→act" primitive. Every rail handler routes
+  // navigation through this so overview→detail→center is implemented once. Optionally
+  // closes the issues panel in the same motion (the canonical issues-row locate).
+  S.reveal = async function (id, opts) {
+    opts = opts || {};
+    const flash = opts.flash !== false;
+    if (mode !== "detail") await enterDetail(undefined, { keepView: true });
+    S.centerOn(id, flash);
+    if (opts.close && S.toggleIssuesPanel) S.toggleIssuesPanel(false);
   };
+
+  // expose so the issues panel (and any other caller) can force detail mode
+  // before navigating to a specific node that only exists in detail view.
+  // (delegates to the reveal primitive — item 9.)
+  S.showNodeInGraph = function (id) { return S.reveal(id, {}); };
 
   S.softUpdateGraph = function () {
     softUpdate();
@@ -1118,7 +1418,8 @@ window.Studio = window.Studio || {};
     S.model = Store.get();
 
     // acquire DOM elements
-    ["stage", "viewport", "edges", "nodeLayer", "zoomInd", "orphanItems", "chips"].forEach(
+    ["stage", "viewport", "edges", "nodeLayer", "zoomInd", "orphanItems", "chips",
+     "stageLoading", "breadcrumb"].forEach(
       id => { const el = document.getElementById(id); if (el) els[id] = el; }
     );
     // hulls container (inject if missing)
@@ -1162,8 +1463,18 @@ window.Studio = window.Studio || {};
       refreshVisualState();
     };
     if (overviewBtn) overviewBtn.onclick = () => {
-      if (mode === "overview") enterDetail(); else enterOverview();
+      // button-driven toggle preserves the user's pan/zoom (#13) once a mode is seen.
+      if (mode === "overview") enterDetail(undefined, { keepView: true }); else enterOverview();
     };
+
+    // #14 isolate toggle: isolate the selected module's neighbourhood, or clear it.
+    const isolateBtn = document.getElementById("isolateBtn");
+    if (isolateBtn) isolateBtn.onclick = () => {
+      if (S.isolatedId) S.clearIsolate();
+      else if (S.selectedId) S.isolate(S.selectedId);
+      syncIsolateBtn();
+    };
+    syncIsolateBtn();
 
     const sb = document.getElementById("searchInput");
     if (sb) {
