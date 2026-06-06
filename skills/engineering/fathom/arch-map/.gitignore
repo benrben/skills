@@ -5,3 +5,4 @@ __pycache__/
 
 arch_state.json*
 maps/*.lock
+maps/*.json
