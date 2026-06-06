@@ -143,6 +143,132 @@ window.Studio = window.Studio || {};
   }
 
   /* ============ inspector ============ */
+  const SIGNALS = [
+    {
+      id: "danger-zone",
+      sev: "bad",
+      label: "Danger zone",
+      icon: "⚠",
+      check: (m, mx) => mx.churn >= 40 && m.coverage < 40,
+      why: "Changes constantly but has almost no tests.",
+      how: "Freeze new features. Write tests for the interface first, then refactor internals. This is your highest-risk module.",
+    },
+    {
+      id: "critical-path-untested",
+      sev: "bad",
+      label: "Critical path untested",
+      icon: "⚠",
+      check: (m, mx) => mx.blastRadius >= 10 && m.coverage < 60,
+      why: "Many modules depend on this one but it lacks test coverage — a bug here breaks a lot.",
+      how: "Add interface-level tests before touching anything else. Even 60% coverage dramatically reduces blast risk.",
+    },
+    {
+      id: "circular",
+      sev: "bad",
+      label: "Circular dependency",
+      icon: "↺",
+      check: (m, mx) => mx.inCycle,
+      why: "This module is part of a dependency cycle. Cycles make code impossible to test in isolation and cause unpredictable load-order bugs.",
+      how: "Extract the shared logic into a third module that neither depends on the other. Or invert the dependency with an interface.",
+    },
+    {
+      id: "needs-refactor",
+      sev: "warn",
+      label: "Needs refactor",
+      icon: "↻",
+      check: (m, mx) => mx.fanOut >= 6 && m.depth < 50,
+      why: "Depends on too many things while hiding very little — it's doing too much and too visibly.",
+      how: "Identify which responsibilities can move down into a deeper helper. Aim to cut fan-out by half and raise depth above 60.",
+    },
+    {
+      id: "god-module",
+      sev: "warn",
+      label: "God module",
+      icon: "✦",
+      check: (m, mx) => mx.fanIn >= 8 && mx.fanOut >= 6,
+      why: "Everything depends on it AND it depends on everything. The hardest kind of module to change safely.",
+      how: "Split along responsibility lines. One cluster of callers usually wants a narrower interface — extract that first.",
+    },
+    {
+      id: "bottleneck",
+      sev: "warn",
+      label: "Bottleneck",
+      icon: "⬡",
+      check: (m, mx) => mx.fanIn >= 8 && m.depth < 40,
+      why: "Lots of modules depend on this but it's shallow — it's a wide, fragile load-bearing surface.",
+      how: "Deepen it: push implementation details in and shrink the interface. Each caller should need to know less.",
+    },
+    {
+      id: "test-first",
+      sev: "warn",
+      label: "Test this first",
+      icon: "⬟",
+      check: (m, mx) => mx.blastRadius >= 5 && m.coverage < 30,
+      why: "Changes here affect at least " + "N" + " other modules, but it's barely tested.",
+      how: "Before refactoring anything in this module, get coverage above 60% at the interface. Tests act as a safety net for the downstream blast.",
+      dynamic: (m, mx) => `Changes here affect at least ${mx.blastRadius} other modules, but it's barely tested.`,
+    },
+    {
+      id: "unstable-api",
+      sev: "warn",
+      label: "Unstable API",
+      icon: "≋",
+      check: (m, mx) => mx.instability > 0.7 && mx.fanIn >= 3,
+      why: "High instability (depends on many things) but other modules depend on it — any change inside ripples out.",
+      how: "Introduce a stable interface layer. The volatile implementation should hide behind a thin, unchanging contract.",
+    },
+    {
+      id: "split-me",
+      sev: "info",
+      label: "Split candidate",
+      icon: "⊕",
+      check: (m, mx) => mx.fanOut >= 5 && mx.coupling >= 3,
+      why: "Reaches into too many different domains — a sign it's doing multiple jobs.",
+      how: "Group the dependencies by domain. Each group is probably a separate responsibility that deserves its own module.",
+    },
+    {
+      id: "leaky-seam",
+      sev: "info",
+      label: "Leaky seam",
+      icon: "⤼",
+      check: (m, mx) => (m.leaks || []).length > 0,
+      why: `Imports ${(m && m.leaks || []).length} module(s) it shouldn't — a seam violation that creates hidden coupling.`,
+      how: "Invert the dependency or route through an interface. The module being leaked into should not be aware of its caller.",
+      dynamic: (m) => `Imports ${(m.leaks || []).length} module(s) it shouldn't — a seam violation that creates hidden coupling.`,
+    },
+  ];
+
+  function computeSignals(m) {
+    if (!m || !m.metrics) return [];
+    const mx = m.metrics;
+    return SIGNALS.filter(s => s.check(m, mx)).map(s => ({
+      ...s,
+      why: s.dynamic ? s.dynamic(m, mx) : s.why,
+    }));
+  }
+
+  function signalsSection(m) {
+    const sigs = computeSignals(m);
+    if (!sigs.length) return `<div class="dr-sec"><h5>Recommendations</h5><div class="sig-clean">✓ No structural issues detected</div></div>`;
+    return `<div class="dr-sec">
+      <h5>Recommendations</h5>
+      <div class="sig-list">
+        ${sigs.map(s => `
+          <div class="sig-card sig-${s.sev}">
+            <div class="sig-hd">
+              <span class="sig-icon">${s.icon}</span>
+              <span class="sig-label">${s.label}</span>
+            </div>
+            <div class="sig-why">${s.why}</div>
+            <details class="sig-how-wrap">
+              <summary>How to fix</summary>
+              <div class="sig-how">${s.how}</div>
+            </details>
+          </div>`).join("")}
+      </div>
+    </div>`;
+  }
+
   function healthClass(h) { return h >= 70 ? "good" : h >= 40 ? "warn" : "bad"; }
   function instClass(i)   { return i <= 0.33 ? "good" : i <= 0.66 ? "warn" : "bad"; }
   function metricBadge(label, value, cls, title) {
@@ -241,6 +367,7 @@ window.Studio = window.Studio || {};
             <div class="metric depth"><div class="ml"><span>depth</span>${stepper("depth")}</div><div class="mv">${m.depth}<span class="u">/100</span></div><div class="track"><i style="width:${m.depth}%"></i></div></div>
             <div class="metric cov"><div class="ml"><span>coverage</span>${stepper("cov")}</div><div class="mv">${m.coverage}<span class="u">%</span></div><div class="track"><i style="width:${m.coverage}%"></i></div></div>
           </div></div>
+        ${signalsSection(m)}
         ${metricsSection(m)}
         <div class="dr-sec"><h5>Depends on</h5>${depPills}</div>
         ${intendsSec}

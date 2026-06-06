@@ -738,7 +738,7 @@ window.Studio = window.Studio || {};
     els.viewport.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
     if (els.zoomInd) els.zoomInd.textContent = Math.round(view.k * 100) + "%";
     applyLOD();
-    drawViewportRect();
+    drawMinimap();  // full clear + redraw — prevents ghost trails on pan/zoom
   }
 
   function setSmooth(on) {
