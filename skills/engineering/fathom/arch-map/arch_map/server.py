@@ -598,6 +598,89 @@ def get_metrics(map: str, module: str | None = None) -> dict:
     return {"map": map, "metrics": all_metrics}
 
 
+def _compute_signals(m, mx: dict) -> list[str]:
+    """Return the list of signal ids that fire for a module + its metrics dict."""
+    signals = []
+    cov = m.coverage         # 0..1
+    churn = mx["churn"]      # 0..1
+    if churn >= 0.4 and cov < 0.4:
+        signals.append("danger-zone")
+    if mx["blastRadius"] >= 10 and cov < 0.6:
+        signals.append("critical-path-untested")
+    if mx["inCycle"]:
+        signals.append("circular-dep")
+    if mx["fanOut"] >= 6 and m.depth < 0.5:
+        signals.append("needs-refactor")
+    if mx["fanIn"] >= 8 and mx["fanOut"] >= 6:
+        signals.append("god-module")
+    if mx["fanIn"] >= 8 and m.depth < 0.4:
+        signals.append("bottleneck")
+    if mx["blastRadius"] >= 5 and cov < 0.3:
+        signals.append("test-first")
+    if mx["instability"] > 0.7 and mx["fanIn"] >= 3:
+        signals.append("unstable-api")
+    if mx["fanOut"] >= 5 and mx["coupling"] >= 3:
+        signals.append("split-candidate")
+    if m.leaksTo:
+        signals.append("leaky-seam")
+    return signals
+
+
+@mcp.tool
+def scan_signals(map: str, signal: str | None = None) -> dict:
+    """Scan a map for structural signals (rules-based architectural issues).
+
+    Returns every module that has at least one signal, with the signals it
+    carries and a health score, sorted worst-first. Optionally filter by a
+    specific signal id.
+
+    Signal ids:
+      danger-zone             high churn + low coverage (highest risk)
+      critical-path-untested  high blast radius + low coverage
+      circular-dep            part of a dependency cycle
+      needs-refactor          high fan-out + low depth
+      god-module              high fan-in AND fan-out
+      bottleneck              high fan-in + low depth
+      test-first              high blast radius + very low coverage
+      unstable-api            high instability + depended-upon
+      split-candidate         high fan-out crossing many domains
+      leaky-seam              has seam violations (leaksTo)
+
+    Use `signal=<id>` to focus on one issue type, e.g. scan_signals(map, "test-first")
+    returns the modules you should write tests for first, in priority order."""
+    model = REGISTRY.store(map)._load()
+    all_metrics = model.compute_metrics()
+    results = []
+    for m in model.modules.values():
+        mx = all_metrics[m.id]
+        sigs = _compute_signals(m, mx)
+        if signal and signal not in sigs:
+            continue
+        if not sigs and not signal:
+            continue
+        results.append({
+            "id": m.id, "label": m.label, "domain": m.domain,
+            "signals": sigs,
+            "health": mx["health"],
+            "depth": round(m.depth * 100),
+            "coverage": round(m.coverage * 100),
+            "fanIn": mx["fanIn"], "fanOut": mx["fanOut"],
+            "blastRadius": mx["blastRadius"],
+        })
+    results.sort(key=lambda r: (r["health"], r["id"]))  # worst health first
+    summary = {}
+    for r in results:
+        for s in r["signals"]:
+            summary[s] = summary.get(s, 0) + 1
+    return {
+        "map": map,
+        "filter": signal,
+        "total": len(results),
+        "signalCounts": summary,
+        "modules": results,
+    }
+
+
 @mcp.tool(**_APP)
 def resolve(map: str, suggestion_id: str) -> dict:
     """Dismiss a suggestion in `map` (e.g. after grilling rejects it) and re-render."""
