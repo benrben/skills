@@ -2,10 +2,10 @@
 window.Studio = window.Studio || {};
 (function (S) {
   "use strict";
-  const { Store, subscribe, tierOf, isOrphan, openSuggestions, STRENGTHS } = window.Arch;
+  const { Store, subscribe, tierOf, isOrphan, openSuggestions, isOpen, STRENGTHS } = window.Arch;
 
   const els = {};
-  let activeTab = "agent";   // agent | inspector | modules
+  let activeTab = "agent";   // agent | inspector | modules | plans
   let modSearch = "";
 
   const VERDICT = {
@@ -39,15 +39,20 @@ window.Studio = window.Studio || {};
       <div class="astat"><div class="n">${decided}</div><div class="l">decided</div></div>`;
   }
 
-  /* ============ agent: proposal queue ============ */
-  function candidates() { return S.model.modules.filter((m) => m.suggestion); }
+  /* ============ agent: proposal queue (per-suggestion) ============ */
+  function decidedSuggestions() {
+    const out = [];
+    S.model.modules.forEach((m) => (m.suggestions || []).forEach((s) => {
+      if (S.model.decisions[s.sid] || s.decision) out.push(s);
+    }));
+    return out;
+  }
 
   function renderAgentPane() {
-    const cands = candidates();
-    const open = cands.filter((m) => !S.model.decisions[m.id]);
-    const decided = cands.filter((m) => S.model.decisions[m.id]);
+    const open = openSuggestions(S.model).slice();
+    const decided = decidedSuggestions();
     const order = { strong: 0, worth: 1, speculative: 2 };
-    open.sort((a, b) => order[a.suggestion.strength] - order[b.suggestion.strength]);
+    open.sort((a, b) => order[a.strength] - order[b.strength]);
 
     let html = `<p class="queue-intro">These are the agent's <b>deepening proposals</b> — modules it thinks should be hardened or split. Hover one to spotlight it in the graph.</p>`;
 
@@ -64,38 +69,45 @@ window.Studio = window.Studio || {};
     wireProps(els.agentPane);
   }
 
-  function propCard(m) {
-    const s = m.suggestion, st = STRENGTHS[s.strength], dec = S.model.decisions[m.id];
+  function propCard(s) {
+    const st = STRENGTHS[s.strength], dec = S.model.decisions[s.sid];
+    const statusPill = s.status && s.status !== "open" ? `<span class="cand-status ${s.status}">${s.status}</span>` : "";
+    const catTag = s.category ? `<span class="cat-tag">${esc(s.category)}</span>` : "";
+    const adr = s.adrRef ? `<a class="adr-link" href="#">${esc(s.adrRef)}</a>` : "";
     const verdict = dec && VERDICT[dec.verdict] ? `
       <div class="aprop-verdict ${VERDICT[dec.verdict].cls}">
         <span class="vlabel">${VERDICT[dec.verdict].verb}</span>
         ${dec.reason ? `<span class="vreason">— ${esc(dec.reason)}</span>` : ""}
-        <span class="spacer"></span><button class="undo" data-undo="${m.id}">undo</button>
+        ${adr}
+        <span class="spacer"></span><button class="undo" data-undo="${s.sid}">undo</button>
       </div>` : "";
     const actions = dec ? "" : `
-      <textarea class="reason-in" data-reason="${m.id}" rows="1" placeholder="reason (saved with the decision)"></textarea>
+      <textarea class="reason-in" data-reason="${s.sid}" rows="1" placeholder="reason (saved with the decision)"></textarea>
       <div class="actions">
-        <button class="act accept" data-act="accept" data-id="${m.id}">Accept</button>
-        <button class="act defer" data-act="defer" data-id="${m.id}">Defer</button>
-        <button class="act reject" data-act="reject" data-id="${m.id}">Reject</button>
-        <button class="act dismiss" data-act="dismiss" data-id="${m.id}">Dismiss</button>
+        <button class="act accept" data-act="accept" data-id="${s.sid}" data-module="${s.module}">Accept</button>
+        <button class="act defer" data-act="defer" data-id="${s.sid}" data-module="${s.module}">Defer</button>
+        <button class="act reject" data-act="reject" data-id="${s.sid}" data-module="${s.module}">Reject</button>
+        <button class="act dismiss" data-act="dismiss" data-id="${s.sid}" data-module="${s.module}">Dismiss</button>
+        <button class="act grill" data-act="grill" data-id="${s.sid}" data-module="${s.module}">Grill</button>
       </div>`;
     return `
-      <article class="aprop ${dec ? "decided" : ""}" data-prop="${m.id}">
+      <article class="aprop ${dec ? "decided" : ""}" data-prop="${s.module}">
         <div class="aprop-bar ${s.strength}"></div>
         <div class="aprop-main">
           <div class="aprop-top">
             <span class="strength-tag ${s.strength}">${st.label}</span>
-            <a class="aprop-id" data-open="${m.id}" href="#">${m.id}</a>
+            ${catTag}
+            <a class="aprop-id" data-open="${s.module}" data-locate="${s.module}" href="#">${s.module}</a>
+            ${statusPill}
             <span class="spacer"></span>
-            <button class="aprop-locate" data-locate="${m.id}" title="Find in graph">⌖</button>
+            <button class="aprop-locate" data-locate="${s.module}" title="Find in graph">⌖</button>
           </div>
           <h4>${s.title}</h4>
           <div class="body">
             <p><b>Problem.</b> ${s.problem}</p>
             <p><b>Solution.</b> ${s.solution}</p>
           </div>
-          <ul class="wins">${s.wins.map((w) => `<li>${w}</li>`).join("")}</ul>
+          <ul class="wins">${(s.wins || []).map((w) => `<li>${w}</li>`).join("")}</ul>
           ${actions}
         </div>
         ${verdict}
@@ -111,16 +123,17 @@ window.Studio = window.Studio || {};
     root.querySelectorAll("[data-locate]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.centerOn(b.dataset.locate, true); });
     root.querySelectorAll("[data-open]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.selectNode(b.dataset.open); S.centerOn(b.dataset.open, true); });
     root.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => {
-      const id = b.dataset.id, act = b.dataset.act;
-      const r = root.querySelector(`[data-reason="${id}"]`), reason = r ? r.value.trim() : "";
-      if (act === "dismiss") { S.model = Store.dismiss(id); S.toast("Dismissed " + id, "var(--text-faint)"); }
-      else { S.model = Store.decide(id, act, reason); S.toast("Saved: " + VERDICT[act].badge, vcolor(act)); }
-      S.onModelMutated(id);
+      const sid = b.dataset.id, mod = b.dataset.module, act = b.dataset.act;
+      if (act === "grill") { Store.grill(mod); S.toast("Grilling " + mod, "var(--accent)"); S.onModelMutated(mod); return; }
+      const r = root.querySelector(`[data-reason="${sid}"]`), reason = r ? r.value.trim() : "";
+      if (act === "dismiss") { S.model = Store.dismiss(sid); S.toast("Dismissed " + sid, "var(--text-faint)"); }
+      else { S.model = Store.decide(sid, act, reason); S.toast("Saved: " + VERDICT[act].badge, vcolor(act)); }
+      S.onModelMutated(mod);
     });
     root.querySelectorAll("[data-undo]").forEach((b) => b.onclick = () => {
       // undo = re-open the proposal (clears its server-side decision)
-      const id = b.dataset.undo;
-      S.model = Store.reopen(id); S.toast("Reopened " + id, "var(--accent)"); S.onModelMutated(id);
+      const sid = b.dataset.undo;
+      S.model = Store.reopen(sid); S.toast("Reopened " + sid, "var(--accent)"); S.onModelMutated(sid);
     });
     root.querySelectorAll(".reason-in").forEach(autosize);
   }
@@ -140,10 +153,12 @@ window.Studio = window.Studio || {};
       </div>`;
       return;
     }
-    const tier = tierOf(m.depth), orphan = isOrphan(S.model, m), open = m.suggestion && !S.model.decisions[m.id];
+    const tier = tierOf(m.depth), orphan = isOrphan(S.model, m), open = !!m.suggestion;
     const usedBy = S.model.modules.filter((x) => (x.dependsOn || []).includes(m.id));
     const tags = [`<span class="tag ${tier}"><span class="dot"></span>${tier}</span>`];
     if (open) tags.push(`<span class="tag seam">seam candidate</span>`);
+    if (m.plane === "intended") tags.push(`<span class="planned-tag">planned</span>`);
+    if (m.lifecycle) tags.push(`<span class="tag lifecycle ${m.lifecycle}">${m.lifecycle}</span>`);
     if (m.updated) tags.push(`<span class="tag updated">updated</span>`);
     if ((m.leaks || []).length) tags.push(`<span class="tag leak">${m.leaks.length} leak${m.leaks.length > 1 ? "s" : ""}</span>`);
     if (orphan) tags.push(`<span class="tag orphan">not connected</span>`);
@@ -154,24 +169,41 @@ window.Studio = window.Studio || {};
     const usedPills = usedBy.length
       ? `<div class="pill-list">${usedBy.map((u) => `<button class="pill" data-nav="${u.id}">${u.id}</button>`).join("")}</div>`
       : `<div class="no-sug" style="padding:9px">nothing depends on this</div>`;
+    const navPills = (ids) => `<div class="pill-list">${ids.map((d) => `<button class="pill" data-nav="${d}">${d}</button>`).join("")}</div>`;
 
+    const queue = m.suggestions || [];
     let sug;
-    if (open) {
-      const st = STRENGTHS[m.suggestion.strength];
-      sug = `<div class="sug-block ${m.suggestion.strength}">
-          <div class="sug-hd"><span class="strength-tag ${m.suggestion.strength}">${st.label}</span>${m.suggestion.status && m.suggestion.status !== "open" ? `<span class="cand-status ${m.suggestion.status}">${m.suggestion.status}</span>` : ""}</div>
+    if (queue.length) {
+      sug = queue.map((s) => {
+        const st = STRENGTHS[s.strength] || { label: s.strength };
+        const dec = S.model.decisions[s.sid];
+        const catTag = s.category ? `<span class="cat-tag">${esc(s.category)}</span>` : "";
+        const statusPill = s.status && s.status !== "open" ? `<span class="cand-status ${s.status}">${s.status}</span>` : "";
+        if (dec) {
+          const adr = s.adrRef ? `<a class="adr-link" href="#">${esc(s.adrRef)}</a>` : "";
+          return `<div class="sug-block decided ${s.strength}">
+            <div class="sug-hd"><span class="strength-tag ${s.strength}">${st.label}</span>${catTag}${statusPill}</div>
+            <div class="sug-bd"><p class="sug-title">${s.title}</p>
+              <p class="no-sug" style="padding:0">Decided: <b style="color:var(--text)">${dec.verdict}</b>${dec.reason ? " — " + esc(dec.reason) : ""} ${adr}</p>
+            </div></div>`;
+        }
+        return `<div class="sug-block ${s.strength}">
+          <div class="sug-hd"><span class="strength-tag ${s.strength}">${st.label}</span>${catTag}${statusPill}</div>
           <div class="sug-bd">
-            <p class="sug-title">${m.suggestion.title}</p>
-            <p><b>Problem.</b> ${m.suggestion.problem}</p>
-            <p><b>Solution.</b> ${m.suggestion.solution}</p>
-            <ul>${m.suggestion.wins.map((w) => `<li>${w}</li>`).join("")}</ul>
+            <p class="sug-title">${s.title}</p>
+            <p><b>Problem.</b> ${s.problem}</p>
+            <p><b>Solution.</b> ${s.solution}</p>
+            <ul>${(s.wins || []).map((w) => `<li>${w}</li>`).join("")}</ul>
             <button class="btn primary grill" data-grill="${m.id}">Grill this candidate →</button>
           </div></div>`;
+      }).join("");
     } else {
-      const d = S.model.decisions[m.id];
-      sug = d ? `<div class="no-sug">Decided: <b style="color:var(--text)">${d.verdict}</b>${d.reason ? " — " + esc(d.reason) : ""}</div>`
-              : `<div class="no-sug">No open proposal for this module.</div>`;
+      sug = `<div class="no-sug">No proposals for this module.</div>`;
     }
+
+    const supersedesSec = (m.supersedes || []).length ? `<div class="dr-sec"><h5>Supersedes</h5>${navPills(m.supersedes)}</div>` : "";
+    const supersededBySec = (m.supersededBy || []).length ? `<div class="dr-sec"><h5>Superseded by</h5>${navPills(m.supersededBy)}</div>` : "";
+    const intendsSec = (m.intendsToDependOn || []).length ? `<div class="dr-sec"><h5>Intends to depend on</h5>${navPills(m.intendsToDependOn)}</div>` : "";
 
     els.inspPane.innerHTML = `
       <div class="insp-head">
@@ -186,10 +218,12 @@ window.Studio = window.Studio || {};
             <div class="metric cov"><div class="ml"><span>coverage</span>${stepper("cov")}</div><div class="mv">${m.coverage}<span class="u">%</span></div><div class="track"><i style="width:${m.coverage}%"></i></div></div>
           </div></div>
         <div class="dr-sec"><h5>Depends on</h5>${depPills}</div>
+        ${intendsSec}
         <div class="dr-sec"><h5>Used by</h5>${usedPills}</div>
+        ${supersedesSec}${supersededBySec}
         <div class="dr-sec"><h5>Files</h5><div class="file-list">${(m.files || []).map((f) => `<code>${f}</code>`).join("") || "<span class='no-sug' style='padding:9px'>none</span>"}</div></div>
         <div class="dr-sec"><h5>Tests</h5><div class="test-list">${(m.tests || []).map((t) => `<code>${t}</code>`).join("") || "<span class='no-sug' style='padding:9px'>no tests</span>"}</div></div>
-        <div class="dr-sec"><h5>Agent proposal</h5>${sug}${(m.suggestions && m.suggestions.length > 1) ? `<div class="cand-more">+${m.suggestions.length - 1} more candidate(s) on this module (history kept)</div>` : ""}</div>
+        <div class="dr-sec"><h5>Agent proposals</h5>${sug}</div>
         <div class="danger-zone" id="dz"></div>
       </div>`;
 
@@ -199,8 +233,7 @@ window.Studio = window.Studio || {};
       S.model = kind === "depth" ? Store.setDepth(m.id, delta) : Store.setCoverage(m.id, delta);
       S.onModelMutated(m.id);
     });
-    const grill = els.inspPane.querySelector("[data-grill]");
-    if (grill) grill.onclick = () => { Store.grill(m.id); setTab("agent"); flashProp(m.id); };
+    els.inspPane.querySelectorAll("[data-grill]").forEach((grill) => grill.onclick = () => { Store.grill(m.id); setTab("agent"); flashProp(m.id); });
     renderDanger(m.id);
   }
   function stepper(kind) {
@@ -280,6 +313,42 @@ window.Studio = window.Studio || {};
     };
   }
 
+  /* ============ plans pane ============ */
+  const PSTEP_STATUSES = ["todo", "in-progress", "done", "blocked"];
+  function renderPlans() {
+    const plans = S.model.plans || [];
+    if (!plans.length) {
+      els.plansPane.innerHTML = `<div class="no-sug" style="padding:18px;border:0">No plans yet — fathom:plan creates intended structure here.</div>`;
+      return;
+    }
+    els.plansPane.innerHTML = plans.map((p) => {
+      const mods = (p.moduleIds || []).length
+        ? `<div class="plan-modules">${p.moduleIds.map((id) => `<button class="pill" data-nav="${id}">${id}</button>`).join("")}</div>` : "";
+      const adrs = (p.adrRefs || []).length
+        ? `<div class="plan-adrs">${p.adrRefs.map((a) => `<a class="adr-link" href="#">${esc(a)}</a>`).join("")}</div>` : "";
+      const steps = (p.steps || []).map((st) => `
+        <div class="pstep">
+          <div class="ps-top"><span class="ps-title">${esc(st.title)}</span><span class="ps-status ${st.status}">${st.status}</span></div>
+          ${st.interface ? `<div class="ps-iface"><code>${esc(st.interface)}</code></div>` : ""}
+          ${st.note ? `<div class="ps-note">${esc(st.note)}</div>` : ""}
+          <div class="ps-controls">${PSTEP_STATUSES.map((s) => `<button class="ps-set ${s === st.status ? "on" : ""}" data-plan="${p.id}" data-step="${st.id}" data-pstatus="${s}">${s}</button>`).join("")}</div>
+        </div>`).join("");
+      return `<article class="plan-card" data-plan="${p.id}">
+        <div class="plan-hd"><span class="plan-title">${esc(p.title)}</span><span class="plan-status ${p.status}">${p.status}</span></div>
+        <div class="plan-intent">${esc(p.intent || "")}</div>
+        ${mods}${adrs}
+        <div class="plan-steps">${steps || `<div class="no-sug" style="padding:9px;border:0">no steps</div>`}</div>
+      </article>`;
+    }).join("");
+
+    els.plansPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.nav); S.centerOn(b.dataset.nav, true); });
+    els.plansPane.querySelectorAll(".ps-set").forEach((b) => b.onclick = () => {
+      S.model = Store.setStepStatus(b.dataset.plan, b.dataset.step, b.dataset.pstatus);
+      S.toast("Step → " + b.dataset.pstatus, "var(--accent)");
+      S.onModelMutated(b.dataset.plan);
+    });
+  }
+
   /* ============ tab counts ============ */
   function renderTabCounts() {
     const open = openSuggestions(S.model).length;
@@ -287,6 +356,8 @@ window.Studio = window.Studio || {};
     agentTab.querySelector(".tcount").textContent = open;
     agentTab.classList.toggle("has-open", open > 0);
     els.tabs.querySelector('[data-tab="modules"] .tcount').textContent = S.model.modules.length;
+    const plansTab = els.tabs.querySelector('[data-tab="plans"] .tcount');
+    if (plansTab) plansTab.textContent = (S.model.plans || []).length;
   }
 
   /* ============ full rail render ============ */
@@ -295,6 +366,7 @@ window.Studio = window.Studio || {};
     renderAgentPane();
     renderInspector();
     renderModules();
+    renderPlans();
     renderTabCounts();
   };
 
@@ -356,6 +428,7 @@ window.Studio = window.Studio || {};
     els.agentPane = document.getElementById("agentPane");
     els.inspPane = document.getElementById("inspPane");
     els.modsPane = document.getElementById("modsPane");
+    els.plansPane = document.getElementById("plansPane");
     els.rail = document.getElementById("rail");
     els.railToggle = document.getElementById("railToggle");
     els.toast = document.getElementById("toast");
@@ -379,6 +452,7 @@ window.Studio = window.Studio || {};
       if (e.key === "1") setTab("agent");
       if (e.key === "2") setTab("inspector");
       if (e.key === "3") setTab("modules");
+      if (e.key === "4") setTab("plans");
     });
 
     subscribe(onExternal);

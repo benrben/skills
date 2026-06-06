@@ -1,0 +1,428 @@
+{
+  "repo": "Fathom Demo",
+  "modules": [
+    {
+      "id": "http-gateway",
+      "label": "http \u00b7 gateway",
+      "domain": "edge",
+      "depth": 0.82,
+      "size": 2.1,
+      "seam": "the single front door every request enters; auth + routing live behind one small handler interface",
+      "iface": "handle(request) \u2192 Response; validates auth token, routes to a domain service, never touches the store directly",
+      "coverage": 0.91,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "src/edge/gateway.py",
+        "src/edge/router.py"
+      ],
+      "dependsOn": [
+        "auth-service",
+        "order-service"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_gateway.py, test_router.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "auth-service",
+      "label": "auth \u00b7 service",
+      "domain": "identity",
+      "depth": 0.74,
+      "size": 1.6,
+      "seam": "token verification is the whole contract; callers never see the signing keys or session table",
+      "iface": "verify(token) \u2192 Principal | None; issue(credentials) \u2192 Token; key rotation is internal",
+      "coverage": 0.83,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "src/identity/auth.py",
+        "src/identity/keys.py"
+      ],
+      "dependsOn": [
+        "store-postgres"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_auth.py",
+      "suggestions": [
+        {
+          "id": "auth-sug-rotate",
+          "title": "Hide key rotation behind a KeyProvider port",
+          "strength": "Strong",
+          "category": "ports-and-adapters",
+          "problem": "Key rotation logic is interleaved with verification, so a rotation bug can silently break auth for every caller.",
+          "solution": "Extract a KeyProvider port with a rotating in-memory adapter; auth-service depends on the port, not the rotation schedule.",
+          "wins": [
+            "rotation testable in isolation",
+            "verify() stays a pure function of (token, keyset)",
+            "swap to an HSM adapter without touching auth"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        },
+        {
+          "id": "auth-sug-sessions",
+          "title": "Move session lookup off the hot verify() path",
+          "strength": "Worth exploring",
+          "category": "in-process",
+          "problem": "Every verify() hits the session table even for stateless tokens, coupling latency to store-postgres load.",
+          "solution": "Cache the principal for the token TTL behind the existing verify() interface; the store becomes a cold-path fallback.",
+          "wins": [
+            "p99 verify latency drops",
+            "store load no longer scales with request rate"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        },
+        {
+          "id": "auth-sug-grill",
+          "title": "Collapse issue() and refresh() into one mint path",
+          "strength": "Worth exploring",
+          "category": "in-process",
+          "problem": "issue() and refresh() duplicate claim-assembly logic that has already drifted once.",
+          "solution": "Route both through a single mint(claims) helper; the two public entry points just build claims.",
+          "wins": [
+            "one place to change token shape",
+            "drift between issue and refresh becomes impossible"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "grilling",
+          "adrRef": "",
+          "planId": ""
+        },
+        {
+          "id": "auth-sug-pwhash",
+          "title": "Pin password hashing to argon2id at the seam",
+          "strength": "Strong",
+          "category": "ports-and-adapters",
+          "problem": "The hashing scheme was implicit in issue(), making an upgrade a cross-cutting change.",
+          "solution": "Introduce a Hasher port with an argon2id adapter; credentials are verified through the port.",
+          "wins": [
+            "scheme is a one-line adapter swap",
+            "explicit, audited crypto boundary"
+          ],
+          "decision": "accepted",
+          "note": "Adopted argon2id behind a Hasher port; legacy bcrypt verified for one release then dropped.",
+          "status": "grilled",
+          "adrRef": "docs/adr/0001-example.md",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": {
+        "id": "auth-sug-rotate",
+        "title": "Hide key rotation behind a KeyProvider port",
+        "strength": "Strong",
+        "category": "ports-and-adapters",
+        "problem": "Key rotation logic is interleaved with verification, so a rotation bug can silently break auth for every caller.",
+        "solution": "Extract a KeyProvider port with a rotating in-memory adapter; auth-service depends on the port, not the rotation schedule.",
+        "wins": [
+          "rotation testable in isolation",
+          "verify() stays a pure function of (token, keyset)",
+          "swap to an HSM adapter without touching auth"
+        ],
+        "decision": "",
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
+    },
+    {
+      "id": "order-service",
+      "label": "order \u00b7 service",
+      "domain": "commerce",
+      "depth": 0.68,
+      "size": 2.4,
+      "seam": "owns the order aggregate; the only writer of order rows, so invariants are enforced in one place",
+      "iface": "place(cart) \u2192 Order; cancel(orderId) \u2192 void; reads go through query views, writes through the aggregate",
+      "coverage": 0.7,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "src/commerce/order_service.py",
+        "src/commerce/aggregate.py"
+      ],
+      "dependsOn": [
+        "store-postgres",
+        "pricing-engine"
+      ],
+      "leaksTo": [
+        "store-postgres"
+      ],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_order_service.py",
+      "suggestions": [
+        {
+          "id": "order-sug-events",
+          "title": "Emit domain events instead of leaking SQL into the service",
+          "strength": "Strong",
+          "category": "ports-and-adapters",
+          "problem": "order-service writes directly to store-postgres in two cancel paths, leaking the schema across the seam.",
+          "solution": "Have the aggregate emit OrderPlaced / OrderCancelled events; a projection owns the SQL.",
+          "wins": [
+            "the leak edge to store-postgres disappears",
+            "audit log falls out for free",
+            "schema changes stop rippling into the service"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [
+        "ledger-service"
+      ],
+      "suggestion": {
+        "id": "order-sug-events",
+        "title": "Emit domain events instead of leaking SQL into the service",
+        "strength": "Strong",
+        "category": "ports-and-adapters",
+        "problem": "order-service writes directly to store-postgres in two cancel paths, leaking the schema across the seam.",
+        "solution": "Have the aggregate emit OrderPlaced / OrderCancelled events; a projection owns the SQL.",
+        "wins": [
+          "the leak edge to store-postgres disappears",
+          "audit log falls out for free",
+          "schema changes stop rippling into the service"
+        ],
+        "decision": "",
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
+    },
+    {
+      "id": "pricing-engine",
+      "label": "pricing \u00b7 engine",
+      "domain": "commerce",
+      "depth": 0.6,
+      "size": 1.3,
+      "seam": "pure calculation; given a cart and a rule set it returns a price and never reads the world",
+      "iface": "price(cart, rules) \u2192 Money; deterministic, no I/O, no clock",
+      "coverage": 0.95,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "src/commerce/pricing.py"
+      ],
+      "dependsOn": [],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_pricing.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "store-postgres",
+      "label": "store \u00b7 postgres",
+      "domain": "infra",
+      "depth": 0.35,
+      "size": 1.8,
+      "seam": "the persistence boundary; everything above it speaks rows, nothing above it speaks connections",
+      "iface": "query(sql, params) \u2192 Rows; tx(fn) \u2192 result; pool + retry handled internally",
+      "coverage": 0.55,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "src/infra/postgres.py"
+      ],
+      "dependsOn": [],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_postgres.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "search-indexer",
+      "label": "search \u00b7 indexer",
+      "domain": "search",
+      "depth": 0.48,
+      "size": 1.5,
+      "seam": "consumes order events and maintains a read-optimized index; write path is one-directional",
+      "iface": "index(event) \u2192 void; search(query) \u2192 Hits; the index is rebuildable from the event log",
+      "coverage": 0.4,
+      "updated": true,
+      "plane": "actual",
+      "lifecycle": "building",
+      "files": [
+        "src/search/indexer.py"
+      ],
+      "dependsOn": [
+        "store-postgres"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_indexer.py",
+      "suggestions": [
+        {
+          "id": "search-sug-port",
+          "title": "Read from an event stream port rather than polling the store",
+          "strength": "Speculative",
+          "category": "ports-and-adapters",
+          "problem": "The indexer polls store-postgres on a timer, so it is both laggy and coupled to the store schema.",
+          "solution": "Subscribe to an EventStream port fed by the order aggregate's events.",
+          "wins": [
+            "near-real-time index updates",
+            "no schema coupling to the store"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": {
+        "id": "search-sug-port",
+        "title": "Read from an event stream port rather than polling the store",
+        "strength": "Speculative",
+        "category": "ports-and-adapters",
+        "problem": "The indexer polls store-postgres on a timer, so it is both laggy and coupled to the store schema.",
+        "solution": "Subscribe to an EventStream port fed by the order aggregate's events.",
+        "wins": [
+          "near-real-time index updates",
+          "no schema coupling to the store"
+        ],
+        "decision": "",
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
+    },
+    {
+      "id": "ledger-service",
+      "label": "ledger \u00b7 service",
+      "domain": "commerce",
+      "depth": 0.88,
+      "size": 1.9,
+      "seam": "an append-only double-entry ledger; the intended replacement for the order-service's ad-hoc money tracking",
+      "iface": "post(entry) \u2192 EntryId; balance(account) \u2192 Money; entries are immutable once posted",
+      "coverage": 0.0,
+      "updated": true,
+      "plane": "intended",
+      "lifecycle": "planned",
+      "files": [],
+      "dependsOn": [],
+      "leaksTo": [],
+      "intendsToDependOn": [
+        "store-postgres",
+        "pricing-engine"
+      ],
+      "supersedes": [
+        "order-service"
+      ],
+      "tests": "",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    }
+  ],
+  "plans": [
+    {
+      "id": "plan-ledger",
+      "title": "Introduce the double-entry ledger",
+      "domain": "commerce",
+      "intent": "Replace the order-service's ad-hoc money handling with an append-only double-entry ledger so every balance is reconstructable from immutable entries. The ledger becomes the system of record for money while order-service keeps owning the order lifecycle.",
+      "status": "active",
+      "moduleIds": [
+        "ledger-service"
+      ],
+      "adrRefs": [
+        "docs/adr/0002-plan.md"
+      ],
+      "steps": [
+        {
+          "id": "step-ledger-iface",
+          "title": "Pin the ledger interface and entry invariants",
+          "status": "done",
+          "targets": [
+            "ledger-service"
+          ],
+          "interface": "post(entry) \u2192 EntryId; balance(account) \u2192 Money; reject any entry whose debits \u2260 credits",
+          "dependsOnSteps": [],
+          "adapters": [],
+          "note": "Interface frozen and reviewed; entry immutability is the load-bearing invariant."
+        },
+        {
+          "id": "step-ledger-store",
+          "title": "Build the postgres-backed entry store behind the ledger port",
+          "status": "in-progress",
+          "targets": [
+            "ledger-service",
+            "store-postgres"
+          ],
+          "interface": "append(entry) \u2192 EntryId on an entries table; balance() folds entries through a materialized account view",
+          "dependsOnSteps": [
+            "step-ledger-iface"
+          ],
+          "adapters": [
+            "ports-and-adapters: PostgresEntryStore adapter"
+          ],
+          "note": "Append path landed; the materialized balance view is still being benchmarked."
+        },
+        {
+          "id": "step-ledger-cutover",
+          "title": "Route order-service money through the ledger and retire the old path",
+          "status": "todo",
+          "targets": [
+            "ledger-service",
+            "order-service"
+          ],
+          "interface": "order-service posts a balanced entry per placement/cancel; legacy money columns become read-only then drop",
+          "dependsOnSteps": [
+            "step-ledger-store"
+          ],
+          "adapters": [
+            "in-process: OrderToLedger adapter"
+          ],
+          "note": "Cutover is the supersedes edge from ledger-service to order-service becoming real."
+        }
+      ]
+    }
+  ],
+  "orphans": [],
+  "openSuggestions": [
+    "auth-sug-grill",
+    "auth-sug-rotate",
+    "auth-sug-sessions",
+    "order-sug-events",
+    "search-sug-port"
+  ]
+}

@@ -11,6 +11,8 @@
       "iface": "init_workspace(root, force) \u2192 InitResult; idempotent (skip-not-overwrite), two content sources (hardcoded templates floor + bundle-copy ceiling), registers workspace in app.db",
       "coverage": 0.87,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/init/scaffolder/orchestrate.py",
         "core/init/scaffolder/seed.py",
@@ -28,9 +30,13 @@
         "seed-teams"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_init_workspace.py, test_init_validator.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "init-templates",
@@ -42,14 +48,20 @@
       "iface": "pure YAML/MD/Python string blobs + template_files() write list; channel rosters live here, not the bundle",
       "coverage": 1.0,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/init/templates.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_init_templates.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "init-paths",
@@ -61,6 +73,8 @@
       "iface": "resolve_workspace_root() + workspace_layout(); thin wrapper over core.config constants",
       "coverage": 0.76,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/init/paths.py"
       ],
@@ -68,9 +82,13 @@
         "config-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-dispatcher",
@@ -82,6 +100,8 @@
       "iface": "Dispatcher.stream(user_text, thread_id, channel_id) over a LangGraph StateGraph; every agent node feeds back to the router; invariant: all turns route through route_decide. Now also accepts a per-channel session_store (typed Any) and injects it into configurable['session_store'] so deep-provider adapters read it off the InvocationContext seam instead of importing core.orchestrator.channels.",
       "coverage": 0.96,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/dispatcher.py"
       ],
@@ -93,9 +113,13 @@
         "orch-team-middleware"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_dispatcher.py (init only). 0.96 LINE coverage is incidental via integration; graph topology/routing feedback never asserted at the Dispatcher.stream interface in a unit test.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-agent-turn",
@@ -107,6 +131,8 @@
       "iface": "async run_agent_turn(state, config, name, spec, peers, role, middleware): scope transcript \u2192 invoke agent \u2192 parse @mentions \u2192 send_message tool \u2192 stream events \u2192 next RoutingPlan",
       "coverage": 0.95,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/_dispatcher_agent_turn.py",
         "core/orchestrator/_dispatcher_turn_plan.py",
@@ -119,9 +145,13 @@
         "orch-team-middleware"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_dispatcher_agent_turn.py (13 tests via a FakeAgent crossing the run_agent_turn seam: transcript scoping, @mention->RoutingPlan, fan-out self-mention isolation, error path) + integration. DONE.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-router-ops",
@@ -133,6 +163,8 @@
       "iface": "route_decide(state, agents, peer_graph) \u2192 Command; cascade: pending route \u2192 user-just-spoke \u2192 bounce-back stack \u2192 hop cap \u2192 missing agent \u2192 END; resolve_peer_names()",
       "coverage": 0.75,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/_dispatcher_router_ops.py",
         "core/orchestrator/_dispatcher_routing.py"
@@ -142,9 +174,13 @@
         "orch-team-middleware"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_orchestrator_routing.py (select_next only)",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-routing",
@@ -156,6 +192,8 @@
       "iface": "parse_first/all_mentions, find_dropped_mentions, find_prose_delegation (quoted/case/space-insensitive); RoutingPlan dataclass + last-writer-wins reducer; select_next_agent",
       "coverage": 0.94,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/routing/mentions.py",
         "core/orchestrator/routing/plan.py",
@@ -163,9 +201,13 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_orchestrator_routing.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-team-middleware",
@@ -177,6 +219,8 @@
       "iface": "TeamMiddleware wraps PURE module-level functions (VERIFIED: push/pop_caller, should_bounce_back, is_escape_upward, next_callers_after_turn -- explicit args over RoutingPlan, no I/O, no hidden state). Encodes caller stacks, push-self, bounce-back, escape-upward vs hallucination.",
       "coverage": 1.0,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/team_middleware.py"
       ],
@@ -184,9 +228,13 @@
         "orch-routing"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_team_middleware.py (20 unit tests at the pure-function interface; mutation-verified). DONE.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-node-helpers",
@@ -198,6 +246,8 @@
       "iface": "channel_to_context (scope transcript to one agent, last 50), parse_mentions, tag_with_speaker, _scope_to_self_mention (isolate per-worker task in fan-out)",
       "coverage": 0.89,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/agent_node_helpers.py"
       ],
@@ -205,9 +255,13 @@
         "orch-routing"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "integration only",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-messaging",
@@ -219,15 +273,21 @@
       "iface": "make_send_message_tool(sender, recipients) \u2192 @tool that appends tagged AIMessage + routes Command; per-turn outbound budget (default 8)",
       "coverage": 0.84,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/messaging.py",
         "core/orchestrator/parallel_context.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_orchestrator_messaging.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-channel-manager",
@@ -238,7 +298,9 @@
       "seam": "the assembly point for a multi-agent dispatcher; builder/cache/checkpoint as mixins, planner+peer_graph as helpers",
       "iface": "ChannelManager.get_dispatcher(channel_id) builds+caches a Dispatcher; build pipeline: channel yaml -> resolve teams -> load agents -> compute peer_graph -> AgentSpecs; hot-swap checkpointer invalidates cache. The builder resolves the per-channel CLI session store (get_session_store(channel_id, config_dir)) and hands it to the Dispatcher, which forwards it to provider adapters through the invocation seam (closes the old provider->orch-channels leak).",
       "coverage": 0.94,
-      "updated": true,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/channel_manager/builder.py",
         "core/orchestrator/channel_manager/_planner.py",
@@ -249,13 +311,16 @@
         "orch-dispatcher",
         "orch-channels",
         "orch-teams",
-        "agents-factory",
         "agents-validate"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_builder.py, test_planner.py, test_cache.py, test_core.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-channels",
@@ -267,6 +332,8 @@
       "iface": "load/save/delete/list_channels + resolve_roster (flatten roster+teams \u2192 AgentConfigs); ChannelConfig/RosterEntry pydantic; ChannelSessionStore (per-channel CLI session ids in sessions.json)",
       "coverage": 0.86,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/channels/persistence.py",
         "core/orchestrator/channels/model.py"
@@ -275,9 +342,13 @@
         "config-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_orchestrator_channels.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-teams",
@@ -289,6 +360,8 @@
       "iface": "TeamConfig (leader + workers) + load/save/resolve_teams; member_slugs/team_ids derived post-load",
       "coverage": 0.9,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/teams.py"
       ],
@@ -296,9 +369,13 @@
         "seed-teams"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "indirect (channel-manager tests). 0.90 LINE coverage is incidental; teams.py I/O is never asserted through its own load/save/resolve interface.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "orch-threads",
@@ -310,6 +387,8 @@
       "iface": "ThreadManager.open(db_path) async ctx \u2192 .checkpointer + thread metadata; thread_db owns SQLite schema, WAL, serialized writer (avoids 'database is locked'); encode_thread_id namespaces by channel",
       "coverage": 0.8,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/orchestrator/threads.py",
         "core/orchestrator/thread_db.py",
@@ -317,9 +396,13 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_thread_db.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-app",
@@ -331,6 +414,8 @@
       "iface": "FastAPI lifespan owns ThreadManager+ChannelManager singletons, loads secrets once, boots service supervisor + scheduler; ordering is load-bearing",
       "coverage": 0.9,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/app.py",
         "core/api/app_routers.py"
@@ -344,9 +429,13 @@
         "api-scheduler"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "integration (TestClient)",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-state",
@@ -357,19 +446,26 @@
       "seam": "the import anchor that breaks the app\u2192routers\u2192services\u2192app cycle; routers/services MUST import managers here, not from app",
       "iface": "get_channel_manager/get_thread_manager process singletons; get_thread_manager re-resolves active workspace's threads DB each call + repoints on hot-swap (double-checked locking)",
       "coverage": 0.92,
-      "updated": true,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/state.py",
         "core/api/workspace_resolver.py"
       ],
       "dependsOn": [
         "orch-channel-manager",
-        "orch-threads"
+        "orch-threads",
+        "api-workspace-resolver"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_api_state_hotswap.py (8 tests: swap branch via patched resolve_threads_db, double-checked lock, CM repoint for moved + same workspace). DONE.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-repositories",
@@ -381,6 +477,8 @@
       "iface": "app DB core: _connection owns get_conn/new_id/init_schema/migrations; runs_repo + workspace_repo + settings_repo are thin CRUD; sqlite.py facade. The actions / build_runs / build_specs tables now have their OWN repo nodes (api-repo-actions / api-repo-build-runs / api-repo-build-specs).",
       "coverage": 0.9,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/repositories/_connection.py",
         "core/api/repositories/runs_repo.py",
@@ -390,9 +488,13 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_connection.py, test_runs_repo.py, test_workspace_repo.py, test_settings_repo.py. PR4: the last two router layer-skips (runs delete + activity) now go through run_service -- nothing bypasses the seam.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-schemas",
@@ -404,15 +506,21 @@
       "iface": "pydantic request/response models per domain (chat, agents, runs, ...); pure contract, no imports from routers/services/repos",
       "coverage": 1.0,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/schemas/__init__.py",
         "core/api/schemas/chat_payloads.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "openapi.snapshot.json",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-chat",
@@ -424,6 +532,8 @@
       "iface": "WebSocket turn loop: canonical thread-id validation, dual drain (langgraph stream + event-bus) racing on ONE shared _SeqAllocator, speaker extraction, per-turn auto-title. VERIFIED: seq allocation stays sync on the event loop (only the DB write is offloaded) so the two drains can't double-allocate.",
       "coverage": 0.93,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/chat/router.py",
         "core/api/routers/chat/_session.py",
@@ -436,9 +546,13 @@
         "api-chat-seq-allocator"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_chat_protocol.py, test_event_replay.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-runs",
@@ -450,6 +564,8 @@
       "iface": "run CRUD + WS stream + cancel; _helpers owns the mission worker coroutine, event sink, single in-flight slot via its OWN asyncio.Lock (PR6). delete_run now routes through run_service (PR4); the in-flight _active guard stays in the router.",
       "coverage": 0.97,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/runs/router.py",
         "core/api/routers/runs/_helpers.py"
@@ -460,9 +576,13 @@
         "api-svc-run"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_runs.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-build-runs",
@@ -474,6 +594,8 @@
       "iface": "build-run CRUD + WS stream; every endpoint delegates to get_build_run_service(). _helpers shrank to two pure wire helpers (_event_to_payload, _wait_for_client_close); typed errors map to HTTP via the global handler.",
       "coverage": 0.61,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/build_runs/router.py",
         "core/api/routers/build_runs/_helpers.py"
@@ -482,9 +604,13 @@
         "api-svc-build-run"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_build_runs_router.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-agents",
@@ -496,6 +622,8 @@
       "iface": "agent CRUD: create/save delegate to agent_write_service (typed errors, 403-protected system agents); read/health via agent_service; _stats aggregation (percentiles, token buckets)",
       "coverage": 0.92,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/agents/router.py",
         "core/api/routers/agents/_helpers.py",
@@ -507,9 +635,13 @@
         "config-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_agents_router.py, test_agents_stats.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-actions",
@@ -521,6 +653,8 @@
       "iface": "action CRUD + cron schedule-preview; delegates all logic to action_service \u2192 actions_repo; record\u2192ActionRow via _to_action_row. No SQL in the router",
       "coverage": 0.76,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/actions/router.py",
         "core/api/routers/actions/_helpers.py"
@@ -529,9 +663,13 @@
         "api-svc-action"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_actions.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-workspaces",
@@ -543,6 +681,8 @@
       "iface": "workspace CRUD + filesystem tree + file read/write/run (subprocess w/ timeout) + init; path-traversal validation + secret-scan on edits",
       "coverage": 0.65,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/workspaces/router.py",
         "core/api/routers/workspaces/_helpers.py"
@@ -553,9 +693,13 @@
         "secrets"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "integration",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-threads",
@@ -567,6 +711,8 @@
       "iface": "thread CRUD + per-channel thread router; canonical thread-id encode/decode; orphan-filtering invariant lives in thread_service",
       "coverage": 0.45,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/threads/router.py",
         "core/api/routers/threads/_helpers.py"
@@ -576,9 +722,13 @@
         "orch-threads"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_threads.py, test_thread_ids.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-settings",
@@ -590,6 +740,8 @@
       "iface": "settings KV + secret mgmt + per-setting validators + schema endpoint; defaults.py curates the settings catalog",
       "coverage": 0.94,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/settings/router.py",
         "core/api/routers/settings/defaults.py",
@@ -600,9 +752,13 @@
         "config-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_settings_router.py, test_settings_invariants.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-channels",
@@ -614,6 +770,8 @@
       "iface": "channel CRUD + health rollup (per-agent CLI build status); invalidates ChannelManager cache on edit",
       "coverage": 0.93,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/channels.py"
       ],
@@ -622,9 +780,13 @@
         "orch-channels"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_channels.py, test_channels_health.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-marketplace",
@@ -636,6 +798,8 @@
       "iface": "read-only aggregation of installed MCPs (across agent yamls + shared files, deduped) + skills (five known SKILL.md locations)",
       "coverage": 0.69,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/marketplace/router.py",
         "core/api/routers/marketplace/_helpers.py"
@@ -644,9 +808,13 @@
         "config-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_marketplace.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-services",
@@ -656,8 +824,10 @@
       "size": 1,
       "seam": "services admin; delegates to supervisor",
       "iface": "supervised-process CRUD + restart + logs; thin wrapper over ServiceSupervisor",
-      "coverage": 0.32,
-      "updated": true,
+      "coverage": 0.8,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/services.py"
       ],
@@ -665,9 +835,13 @@
         "services-supervisor"
       ],
       "leaksTo": [],
-      "tests": "test_services_router.py",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_services_router.py + test_services_router_coverage.py (~486L, 30+ tests, commit fb74e01): supervisor lifecycle, MCP relay, channel-service aggregation, JSON serialization. Re-baselined from 0.32.",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-router-metadata",
@@ -679,6 +853,8 @@
       "iface": "read-only metadata: backends, providers, teams CRUD, health, activity feed. activity now routes through run_service.recent_activity (PR4) -- no longer reaches runs_repo directly.",
       "coverage": 0.81,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/backends.py",
         "core/api/routers/providers.py",
@@ -692,9 +868,13 @@
         "api-svc-run"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_backends.py, test_providers.py, test_activity.py, test_teams.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-build-engine",
@@ -703,9 +883,11 @@
       "depth": 0.8,
       "size": 1.4,
       "seam": "the deterministic build state machine; the heart of the Stateful Builder redesign",
-      "iface": "BuildEngine(spec, sink, cancel).run() drives confirm\u2192provision\u2192scaffold\u2192verify\u2192finalize; LLM-driven steps borrow the process-global MISSION_LOCK; emits builder_ui events",
+      "iface": "BuildEngine(spec, sink, cancel).run() drives confirm\u2192provision\u2192scaffold\u2192verify\u2192finalize; LLM-driven steps borrow the process-global MISSION_LOCK; emits builder_ui events. Subagent discovery uses discover_agents_cached (warm-cache variant).",
       "coverage": 0.83,
-      "updated": true,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/build_engine.py"
       ],
@@ -715,9 +897,13 @@
         "mission-runner"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_build_engine.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-build-provisioners",
@@ -729,6 +915,8 @@
       "iface": "create/update_agent_item + create/update_team_item for BuildEngine; calls agent_write_service / team_service (no router import); owns spec\u2192config mapping + PATCH-not-replace + (state,note) normalization via to_http_status()",
       "coverage": 0.67,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/build_provisioners.py"
       ],
@@ -737,9 +925,13 @@
         "api-svc-team"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "via test_build_engine.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-build-spec",
@@ -751,6 +943,8 @@
       "iface": "build-spec CRUD + dry-run validate (name/slug uniqueness, agent existence, team lead+workers, secret scan, mirrors frontend rules); build_spec_chat does LLM-driven goal/spec generation",
       "coverage": 0.84,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/build_spec_service.py",
         "core/api/services/build_spec_chat.py"
@@ -762,7 +956,31 @@
         "mission-runner"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_build_specs_router.py, test_build_spec_chat.py",
+      "suggestions": [
+        {
+          "id": "api-svc-build-spec-speculative",
+          "title": "Split BuildSpecService's five concerns (defer \u2014 premature)",
+          "strength": "Speculative",
+          "category": "in-process",
+          "problem": "Verified premature: build_spec_service.py is 292 lines (<350 ceiling), the five concerns (CRUD / validate / draft / importable / chat) share only the _workspace_id helper, and the chat concern is ALREADY extracted to build_spec_chat.py. Active build-engine WIP is editing both files now \u2014 splitting today risks merge conflicts.",
+          "solution": "Defer. Revisit once the WIP lands AND the file nears ~320 lines or grows a 6th concern; then extract a BuildSpecValidator (validate-before-write is the natural seam) and keep CRUD on the service. No independent seams today.",
+          "wins": [
+            "concerns become independently testable (later)",
+            "validate-before-write is the real seam when split",
+            "file stays under the ceiling"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [],
       "suggestion": {
         "id": "api-svc-build-spec-speculative",
         "title": "Split BuildSpecService's five concerns (defer \u2014 premature)",
@@ -776,9 +994,11 @@
           "file stays under the ceiling"
         ],
         "decision": "",
-        "note": ""
-      },
-      "orphan": false
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
     },
     {
       "id": "api-svc-agent",
@@ -790,6 +1010,8 @@
       "iface": "read-side: agent_dir_for_name, prompt_meta (file/inline/default resolution chain), enabled_mcp_servers, compute_health (secrets + MCP files + CLI binary, ordered checks). No mutations",
       "coverage": 0.85,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/agent_service.py"
       ],
@@ -799,9 +1021,13 @@
         "mcp-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_agent_service.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-thread",
@@ -813,6 +1039,8 @@
       "iface": "async facade over ThreadManager; list/new/rename/delete/export; invariant: legacy raw thr_* ids filtered from lists (can never grow checkpoints)",
       "coverage": 0.85,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/thread_service.py"
       ],
@@ -821,9 +1049,13 @@
         "orch-threads"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_thread_service.py. 0.85 LINE coverage, but the legacy thr_* orphan-filter invariant is not asserted at the interface.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-run",
@@ -835,6 +1067,8 @@
       "iface": "error-aware CRUD facade over runs_repo + RunNotFoundError; now also owns delete_run + recent_activity (PR4) so routers/scheduler never touch the runs tables directly.",
       "coverage": 0.91,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/run_service.py"
       ],
@@ -842,9 +1076,53 @@
         "api-repositories"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_run_service.py (incl. delete_run + recent_activity delegation) + via runs router.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [
+        {
+          "id": "api-svc-run-strong",
+          "title": "Lift run-dispatch behind the RunService seam",
+          "strength": "Strong",
+          "category": "in-process",
+          "problem": "start_run_internal \u2014 which owns the per-run dispatcher lock (_run_lock), the worker task, and the single in-flight slot \u2014 lives as a *router-package-private* helper in routers/runs/_helpers.py. It has three callers, two of which reach UP into the router from outside: the cron scheduler (core/api/scheduler.py, a service-tier background loop) and the actions router both lazily `import start_run_internal` inside function bodies specifically to dodge a circular import. So the deepest, most coordination-heavy piece of run handling sits behind an HTTP-router seam, violating the api/CLAUDE.md rule that services must not import routers \u2014 and RunService itself stays shallow (depth 0.2): a read-only facade whose docstring admits the live-mission machinery 'still lives in routers.runs for now'. The 'advance schedule, then dispatch' orchestration is duplicated between scheduler._dispatch_due and the actions router. CONTRADICTS ADR-0001 + the run_service docstring, which deliberately kept the worker in the router because lifting it 'requires lifting the dispatcher lock and the per-run queue, a separate concern' \u2014 but that decision's stated premise was a single router-local caller, and there are now three across two non-router modules, which is exactly the reconciliation ADR-0001 invited.",
+          "solution": "Move the run-dispatch entry point (start_run_internal + the _run_lock, worker, and in-flight slot it owns) into a stateful RunService.start_run(), mirroring the BuildRunService shape ADR-0001 already accepted for build runs. The runs router, the actions router, and the scheduler all call RunService.start_run() \u2014 no deferred imports, no service\u2192router edge. Grilling must establish whether the dispatcher-lock / per-run-queue entanglement that ADR-0001 cited as the blocker is still real, or whether (as for build runs) one run can own its dispatch with no shared queue.",
+          "wins": [
+            "Locality: 'start a run' lives in one module instead of a router helper three other modules reach into via lazy imports",
+            "Removes the lone service->router dependency inversion in the map (api-scheduler -> api-router-runs) and the two circular-import workarounds it forces",
+            "Testability: RunService.start_run() becomes the test surface \u2014 the scheduler's dispatch path can be unit-tested with a fake service instead of only through integration tests (coverage 0.53)",
+            "Deletion test holds: delete the seam and the lock+worker+slot reappear duplicated across runs router, actions router, and scheduler \u2014 it earns its keep",
+            "Reconciles the asymmetry ADR-0001 explicitly flagged: RunService gains the same end-to-end ownership BuildRunService already has"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": {
+        "id": "api-svc-run-strong",
+        "title": "Lift run-dispatch behind the RunService seam",
+        "strength": "Strong",
+        "category": "in-process",
+        "problem": "start_run_internal \u2014 which owns the per-run dispatcher lock (_run_lock), the worker task, and the single in-flight slot \u2014 lives as a *router-package-private* helper in routers/runs/_helpers.py. It has three callers, two of which reach UP into the router from outside: the cron scheduler (core/api/scheduler.py, a service-tier background loop) and the actions router both lazily `import start_run_internal` inside function bodies specifically to dodge a circular import. So the deepest, most coordination-heavy piece of run handling sits behind an HTTP-router seam, violating the api/CLAUDE.md rule that services must not import routers \u2014 and RunService itself stays shallow (depth 0.2): a read-only facade whose docstring admits the live-mission machinery 'still lives in routers.runs for now'. The 'advance schedule, then dispatch' orchestration is duplicated between scheduler._dispatch_due and the actions router. CONTRADICTS ADR-0001 + the run_service docstring, which deliberately kept the worker in the router because lifting it 'requires lifting the dispatcher lock and the per-run queue, a separate concern' \u2014 but that decision's stated premise was a single router-local caller, and there are now three across two non-router modules, which is exactly the reconciliation ADR-0001 invited.",
+        "solution": "Move the run-dispatch entry point (start_run_internal + the _run_lock, worker, and in-flight slot it owns) into a stateful RunService.start_run(), mirroring the BuildRunService shape ADR-0001 already accepted for build runs. The runs router, the actions router, and the scheduler all call RunService.start_run() \u2014 no deferred imports, no service\u2192router edge. Grilling must establish whether the dispatcher-lock / per-run-queue entanglement that ADR-0001 cited as the blocker is still real, or whether (as for build runs) one run can own its dispatch with no shared queue.",
+        "wins": [
+          "Locality: 'start a run' lives in one module instead of a router helper three other modules reach into via lazy imports",
+          "Removes the lone service->router dependency inversion in the map (api-scheduler -> api-router-runs) and the two circular-import workarounds it forces",
+          "Testability: RunService.start_run() becomes the test surface \u2014 the scheduler's dispatch path can be unit-tested with a fake service instead of only through integration tests (coverage 0.53)",
+          "Deletion test holds: delete the seam and the lock+worker+slot reappear duplicated across runs router, actions router, and scheduler \u2014 it earns its keep",
+          "Reconciles the asymmetry ADR-0001 explicitly flagged: RunService gains the same end-to-end ownership BuildRunService already has"
+        ],
+        "decision": "",
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
     },
     {
       "id": "api-svc-workspace",
@@ -856,6 +1134,8 @@
       "iface": "typed CRUD facade over workspace_repo + WorkspaceNotFound/Conflict/PathError; thin",
       "coverage": 0.43,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/workspace_service.py"
       ],
@@ -863,9 +1143,51 @@
         "api-repositories"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "via workspaces router",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [
+        {
+          "id": "api-svc-workspace-worth-exploring",
+          "title": "Concentrate active-workspace lifecycle behind the WorkspaceService seam",
+          "strength": "Worth exploring",
+          "category": "in-process",
+          "problem": "'The active workspace, and what happens when it changes' has no single owner \u2014 it is smeared across three modules. WorkspaceService (depth 0.2, 'thin facade') flips the active *flag* in the DB via set_active(); workspace_resolver.py owns active_workspace_path() and the storage/threads-DB path math; and state.py owns the switch *effect* \u2014 get_thread_manager() re-resolves the active path on every call and, if it changed, closes the old ThreadManager, opens a new one, and repoints the ChannelManager + config_dir. So set_active() (flip flag) and the consequence of switching (repoint TM/CM) live in different modules and are coupled only implicitly: callers flip the flag and rely on the next get_thread_manager() to notice. Three set_active callers (runner x2, workspaces router) all just flip and hope. Coverage 0.43, tested only through the router. The depth that *should* sit behind the workspace seam was effectively stolen by the hot-swap logic buried in a thread-manager getter.",
+          "solution": "Give 'active workspace identity + path resolution + switch effect' one owner. Fold workspace_resolver's active_workspace_path() into WorkspaceService and have set_active() coordinate (or explicitly publish) the swap, so state.py's get_thread_manager consumes a workspace seam instead of re-deriving the active path inline. CAVEAT to grill: the lazy re-resolve-on-getter is deliberate (it picks up cross-process CLI workspace switches), and there is a real cycle risk (state.py <-> workspace_service) the api/CLAUDE.md warns about \u2014 the deepening must not re-introduce the app->routers->services->app edge Phase 6 removed. Hence Worth exploring, not Strong.",
+          "wins": [
+            "Locality: one module answers 'what is the active workspace and what must happen when it switches', instead of registry/flag here + path math in workspace_resolver + swap effect in state.py",
+            "Testability: the swap becomes observable through the WorkspaceService interface rather than only as a side effect of calling get_thread_manager()",
+            "Tightens a depth-0.2 facade that today only flips a flag while the real behaviour lives elsewhere",
+            "Makes the set_active -> swap causal link explicit instead of an implicit reliance on the next getter call"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": {
+        "id": "api-svc-workspace-worth-exploring",
+        "title": "Concentrate active-workspace lifecycle behind the WorkspaceService seam",
+        "strength": "Worth exploring",
+        "category": "in-process",
+        "problem": "'The active workspace, and what happens when it changes' has no single owner \u2014 it is smeared across three modules. WorkspaceService (depth 0.2, 'thin facade') flips the active *flag* in the DB via set_active(); workspace_resolver.py owns active_workspace_path() and the storage/threads-DB path math; and state.py owns the switch *effect* \u2014 get_thread_manager() re-resolves the active path on every call and, if it changed, closes the old ThreadManager, opens a new one, and repoints the ChannelManager + config_dir. So set_active() (flip flag) and the consequence of switching (repoint TM/CM) live in different modules and are coupled only implicitly: callers flip the flag and rely on the next get_thread_manager() to notice. Three set_active callers (runner x2, workspaces router) all just flip and hope. Coverage 0.43, tested only through the router. The depth that *should* sit behind the workspace seam was effectively stolen by the hot-swap logic buried in a thread-manager getter.",
+        "solution": "Give 'active workspace identity + path resolution + switch effect' one owner. Fold workspace_resolver's active_workspace_path() into WorkspaceService and have set_active() coordinate (or explicitly publish) the swap, so state.py's get_thread_manager consumes a workspace seam instead of re-deriving the active path inline. CAVEAT to grill: the lazy re-resolve-on-getter is deliberate (it picks up cross-process CLI workspace switches), and there is a real cycle risk (state.py <-> workspace_service) the api/CLAUDE.md warns about \u2014 the deepening must not re-introduce the app->routers->services->app edge Phase 6 removed. Hence Worth exploring, not Strong.",
+        "wins": [
+          "Locality: one module answers 'what is the active workspace and what must happen when it switches', instead of registry/flag here + path math in workspace_resolver + swap effect in state.py",
+          "Testability: the swap becomes observable through the WorkspaceService interface rather than only as a side effect of calling get_thread_manager()",
+          "Tightens a depth-0.2 facade that today only flips a flag while the real behaviour lives elsewhere",
+          "Makes the set_active -> swap causal link explicit instead of an implicit reliance on the next getter call"
+        ],
+        "decision": "",
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
     },
     {
       "id": "api-scheduler",
@@ -873,10 +1195,12 @@
       "domain": "api",
       "depth": 0.4,
       "size": 0.8,
-      "seam": "the cron poll loop; SQL lives behind the repo/service seam",
-      "iface": "polls actions_repo.list_due(now); runs_repo.has_active_run guards in-flight; action_service advances schedule + renders goal; dispatches via runs.start_run_internal (deferred). No raw SQL",
+      "seam": "the cron poll loop; SQL behind the repo/service seam \u2014 but run-dispatch leaks UP into the runs router (start_run_internal), forcing a lazy import to dodge a cycle",
+      "iface": "polls actions_repo.list_due(now); runs_repo.has_active_run guards in-flight; action_service advances schedule + renders goal; dispatches via runs.start_run_internal (deferred lazy import). No raw SQL. The compute_next_tick re-export was removed \u2014 schedule math now lives entirely behind action_service / core.api.utils.cron.",
       "coverage": 0.53,
-      "updated": true,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/scheduler.py"
       ],
@@ -885,10 +1209,16 @@
         "api-svc-action",
         "api-router-runs"
       ],
-      "leaksTo": [],
+      "leaksTo": [
+        "api-router-runs"
+      ],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "integration",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "agents-factory",
@@ -900,6 +1230,8 @@
       "iface": "build_agent(config, mode, runtime_context) \u2192 BuiltAgent; resolves system prompt ONCE at build time with live context, checks secrets, lazy-builds deep provider",
       "coverage": 0.74,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/agents/factory.py",
         "core/agents/workspace.py"
@@ -912,9 +1244,13 @@
         "types-schemas"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_agent_factory.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "agents-validate",
@@ -926,6 +1262,8 @@
       "iface": "validate_agent_config(config, invocation_mode): single home for role taxonomy (ROLE_ORDER), conflict matrix, invocation-mode role synthesis; derive_agent_roles() for the channel planner; raises structured AgentValidationError",
       "coverage": 0.98,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/agents/validate.py"
       ],
@@ -933,9 +1271,13 @@
         "types-schemas"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_agent_validate.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "config-loader",
@@ -947,6 +1289,8 @@
       "iface": "AgentConfigLoader(workspace).load(slug)/.load_path(dir) owns shared-defaults + shared_dir resolution (was repeated at 4 call sites); load_agent_config stays the low-level primitive for discover_agents + init + schema-only tests",
       "coverage": 0.9,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/config/__init__.py",
         "core/config/io.py",
@@ -958,9 +1302,13 @@
         "seed-provider-catalog"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_config_loader.py (+ loader merge/provider + load/load_path agree)",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "types-schemas",
@@ -972,6 +1320,8 @@
       "iface": "central pydantic registry: AgentConfig, LLMConfig, RuntimeConfig, MCPConfig (transport validation), WorkspaceConfig; provider:model string format",
       "coverage": 0.93,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/types/__init__.py",
         "core/types/runtime.py",
@@ -980,9 +1330,13 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_types.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "prompts-composer",
@@ -994,6 +1348,8 @@
       "iface": "resolve_system_prompt(config, runtime_context) is the single resolution point; build_system_prompt now REQUIRES base_prompt (no context-dropping fallback). The shared-dir resolver is INJECTED (set_shared_dir_resolver) -- core/prompts no longer imports core.api (leak closed, PR5).",
       "coverage": 0.87,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/prompts/__init__.py",
         "core/prompts/composer.py"
@@ -1004,9 +1360,13 @@
         "seed-prompts"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_prompt_composer.py, test_prompt_resolution.py; check_deps green (no core->api edge). DONE.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "secrets",
@@ -1018,6 +1378,8 @@
       "iface": "ensure_secrets(agent, required) raises MissingSecretsError; loads .env once; has_secret/collect_missing_required; secrets_scan flags hardcoded keys in yaml/files",
       "coverage": 0.91,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/secrets.py",
         "core/secrets_scan.py"
@@ -1026,9 +1388,13 @@
         "types-schemas"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_secrets.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "providers-base",
@@ -1040,6 +1406,8 @@
       "iface": "DeepProviderRunner Protocol + build_deep_provider factory + InvocationContext/SessionRef typed seam (now carries a SessionStore port the orchestrator injects, so adapters never reach up for session persistence) + verdict/text/prompt helpers",
       "coverage": 0.61,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/deep_providers/base.py"
       ],
@@ -1049,9 +1417,13 @@
         "providers-common"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_deep_providers.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "providers-claude-code",
@@ -1063,6 +1435,8 @@
       "iface": "ClaudeCodeRunner.ainvoke: per-thread subprocess client pool keyed by session-id+slug, session resume, stream dedup (whitespace/chunk-repeat), MCPConfig\u2192SDK options, thinking budget, anti-loop tool guard, cancellation",
       "coverage": 0.52,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/deep_providers/claude_code/provider.py",
         "core/deep_providers/claude_code/session.py",
@@ -1076,9 +1450,13 @@
         "providers-dashboard-mcp"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_deep_provider_claude_code.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "providers-codex",
@@ -1090,6 +1468,8 @@
       "iface": "CodexRunner.ainvoke: shells out to codex CLI; build_argv serializes config to TOML (workspace/model/reasoning/MCP), session resume, JSONL event parse, error extraction",
       "coverage": 0.77,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/deep_providers/codex/provider.py",
         "core/deep_providers/codex/session.py",
@@ -1099,9 +1479,13 @@
         "providers-base"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_deep_provider_codex.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "providers-dashboard-mcp",
@@ -1113,6 +1497,8 @@
       "iface": "in-process MCP servers (builder_ui, draft_ui) callable from CLI subprocesses. VERIFIED: each handler is a pure async def(args: dict)->dict funneling through _publish, which reads the BUILDER_UI_THREAD_ID contextvar and calls event_bus.publish(tid, kind, {sub,...}); server.py only wraps them with the SDK @tool decorator. Testable with no subprocess.",
       "coverage": 0.96,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/deep_providers/dashboard_mcp/server.py",
         "core/deep_providers/dashboard_mcp/handlers.py",
@@ -1123,9 +1509,13 @@
         "builder-ui"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_deep_provider_dashboard_mcp.py (14 tests driving each handler -> event_bus directly, no subprocess) + test_dashboard_mcp_handlers.py (mocked). DONE.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "providers-event-bus",
@@ -1137,14 +1527,20 @@
       "iface": "per-thread pub/sub bus; dispatcher/providers/builder_ui publish streaming + status events, the chat WS drains them; kept separate to avoid dispatcher\u2194provider cycles",
       "coverage": 0.84,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/deep_providers/event_bus.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "indirect (chat protocol)",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "mcp-loader",
@@ -1156,6 +1552,8 @@
       "iface": "collect_enabled_mcp_servers(mcps, agent_dir): agent.yaml servers + service auto-injection (sse) + shared files; env resolution; stdio path resolution; wraps tools via safety",
       "coverage": 0.79,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/mcp/loader.py"
       ],
@@ -1165,9 +1563,13 @@
         "services-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_mcp_loader.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "mcp-safety",
@@ -1179,14 +1581,20 @@
       "iface": "_wrap_tool_for_safety: any tool exception \u2192 readable string; anti-loop guard (same tool+args >5\u00d7 \u2192 stop); handles content_and_artifact tuples",
       "coverage": 0.91,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/mcp/safety.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_mcp_tool_safety.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "cli-commands",
@@ -1198,6 +1606,8 @@
       "iface": "Typer app (runner.py) + subcommand bodies: chat-once (menu), channel chat/create/list. Heavy imports deferred to keep --help fast. Delegates the interactive loop to cli-repl and terminal input to cli-input.",
       "coverage": 0.99,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/cli/runner.py",
         "core/cli/menu.py",
@@ -1213,9 +1623,13 @@
         "agents-factory"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_cli_menu.py, test_cli_channels.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "cli-events",
@@ -1227,6 +1641,8 @@
       "iface": "AgentEventStream(agent).run(messages) decodes LangGraph chunks \u2192 typed events (Token/ToolStart/ToolEnd/TurnEnd/Subagent/Thinking); but requires an agent ref even when only decoding",
       "coverage": 0.72,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/cli/events/stream.py",
         "core/cli/events/format.py",
@@ -1234,7 +1650,32 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_cli_events.py",
+      "suggestions": [
+        {
+          "id": "cli-events-worth-exploring",
+          "title": "Unify the CLI and API event vocabularies",
+          "strength": "Worth exploring",
+          "category": "local-substitutable",
+          "problem": "Verified two vocabularies: core/cli/events/format.py dataclasses (Token/Thinking/ToolStart/ToolEnd/Subagent*/TurnEnd/TurnError \u2014 all carry agent_path) vs core/streaming/events.py StreamEmitter JSONL (same kinds, NO agent_path), so mission JSONL drops subagent lanes. The chat WS payloads already carry agent_path, so the gap is only on the mission/JSONL path.",
+          "solution": "One TurnEvent vocabulary + an EventCodec (serialize/deserialize) feeding StreamEmitter, the chat WS, and the CLI renderer. Version the JSONL so stored runs still parse. Deletion test: moderate yes. Effort M, medium risk (JSONL versioning + back-compat for old runs).",
+          "wins": [
+            "one vocabulary, three sinks",
+            "agent_path lands in mission JSONL too",
+            "round-trip codec is testable; test surface shrinks",
+            "mission-replay-in-CLI becomes possible"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [],
       "suggestion": {
         "id": "cli-events-worth-exploring",
         "title": "Unify the CLI and API event vocabularies",
@@ -1249,9 +1690,11 @@
           "mission-replay-in-CLI becomes possible"
         ],
         "decision": "",
-        "note": ""
-      },
-      "orphan": false
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
     },
     {
       "id": "cli-renderer",
@@ -1263,6 +1706,8 @@
       "iface": "ChatRenderer live per-turn display (tool rows, footer, refresh throttle); must dedupe tool starts (_announced_tool_ids) because the stream yields growing tool_calls lists",
       "coverage": 0.77,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/cli/renderer/core.py",
         "core/cli/renderer/_format.py"
@@ -1271,9 +1716,13 @@
         "cli-events"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_cli_renderer.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "services-supervisor",
@@ -1285,6 +1734,8 @@
       "iface": "ServiceSupervisor singleton: start_all spawns autostart services, watches service.yaml mtimes, probes health (HTTP/TCP/cmd), restarts on crash, SIGTERM\u2192grace\u2192SIGKILL shutdown",
       "coverage": 0.85,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/services/supervisor/core.py",
         "core/services/supervisor/lifecycle.py",
@@ -1295,9 +1746,13 @@
         "services-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_services_supervisor/*",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "services-loader",
@@ -1309,6 +1764,8 @@
       "iface": "discover specs at services/<name>/service.yaml \u2192 ServiceConfig; services_for_agent resolves attachments; registry + proxy URL calc; ServiceConfig pydantic is the load-bearing contract",
       "coverage": 0.73,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/services/loader.py",
         "core/services/types.py",
@@ -1321,9 +1778,13 @@
         "seed-services"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "indirect",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "mission-runner",
@@ -1335,6 +1796,8 @@
       "iface": "run_mission(built, goal, on_event) \u2192 MissionResult; loops agent.astream until complete_mission tool fires or a budget trips (max_iterations/seconds/tool_calls); collects workspace files",
       "coverage": 0.96,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/mission/runner.py",
         "core/mission/usage.py"
@@ -1345,9 +1808,13 @@
         "pricing"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_mission_runner.py, test_mission_usage.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "mission-core",
@@ -1359,12 +1826,38 @@
       "iface": "complete_mission / CLI record_verdict MUTATE the _VerdictBox bound to the current context (never rebind). run_mission sets a fresh box per run (token + reset in finally); a _GLOBAL_BOX default keeps direct callers working. MISSION_LOCK is GONE; the runs router owns its own single-in-flight lock.",
       "coverage": 1.0,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/mission/core.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_mission.py (global-box compat) + test_mission_verdict_scope.py (concurrent isolation, nested no-leak; mutation-verified non-vacuous). DONE.",
+      "suggestions": [
+        {
+          "id": "mission-core-speculative",
+          "title": "Encapsulate the verdict box in a VerdictScope (defer \u2014 polish)",
+          "strength": "Speculative",
+          "category": "in-process",
+          "problem": "Verified: correctness is done + tested (concurrent isolation, nested no-leak). The 'mutate-in-place, never reassign' rule is only a comment, spread across mission.core + mission.runner + deep_providers.base. A wrapper that leaves the free functions in place is cosmetic \u2014 it only enforces the invariant by construction if the free functions are deleted and the scope is injected (L effort across 3 modules). No bug is removed.",
+          "solution": "Defer unless already editing mission.*. If done, do it fully: delete _capture_verdict/take_pending_verdict/reset_verdict, make VerdictScope the only surface, thread it via InvocationContext. Pure locality refinement on already-correct, well-tested behaviour.",
+          "wins": [
+            "invariant enforced by construction (only if free funcs deleted)",
+            "lifecycle in one object",
+            "no correctness gain \u2014 polish only; risk is regressing working isolation"
+          ],
+          "decision": "",
+          "note": "",
+          "status": "open",
+          "adrRef": "",
+          "planId": ""
+        }
+      ],
+      "orphan": false,
+      "supersededBy": [],
       "suggestion": {
         "id": "mission-core-speculative",
         "title": "Encapsulate the verdict box in a VerdictScope (defer \u2014 polish)",
@@ -1378,9 +1871,11 @@
           "no correctness gain \u2014 polish only; risk is regressing working isolation"
         ],
         "decision": "",
-        "note": ""
-      },
-      "orphan": false
+        "note": "",
+        "status": "open",
+        "adrRef": "",
+        "planId": ""
+      }
     },
     {
       "id": "builder-ui",
@@ -1392,6 +1887,8 @@
       "iface": "draft protocol (draft_open/status/field/commit \u2192 live cards) + builder tools (submit/undo/redo/search_mcps); thread routed via BUILDER_UI_THREAD_ID contextvar; CardKind Literal must match frontend card registry",
       "coverage": 0.79,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/builder_ui/draft.py",
         "core/builder_ui/tools.py"
@@ -1400,9 +1897,13 @@
         "providers-event-bus"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "integration only. 0.79 LINE coverage via dispatcher/provider runs; the draft-card protocol is never driven through its own tool interface in a unit test.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "streaming-events",
@@ -1414,6 +1915,8 @@
       "iface": "emit_turn_status(bus, phase, ...) publishes typed turn-status events (routing/thinking/streaming/tool_running/terminated/heartbeat); phases validated against a frozenset that also lives in the schema",
       "coverage": 0.82,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/streaming/events.py",
         "core/streaming/format.py"
@@ -1422,9 +1925,13 @@
         "providers-event-bus"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "no dedicated test. 0.82 LINE coverage is incidental via chat-protocol integration; emit_turn_status phases never asserted at the interface.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "skills",
@@ -1436,6 +1943,8 @@
       "iface": "discover_skill_files (scan dirs, skip plain README) + resolve_skill_paths (cross-backend catalog: ~/.claude/skills, ~/.codex/skills, workspace shared); hardcoded source list, no plugin point",
       "coverage": 0.81,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/skills/loader.py",
         "core/skills/catalog.py"
@@ -1444,9 +1953,13 @@
         "seed-skills"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_skills_loader.py, test_skills_catalog.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "pricing",
@@ -1458,15 +1971,21 @@
       "iface": "lookup_price(provider, model) + compute_cost(tokens...) from a YAML price index ((provider,*) wildcard); returns None for unknown/CLI providers; _normalise_model strips provider prefix",
       "coverage": 0.89,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/pricing/compute.py",
         "core/pricing/loader.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_pricing_compute.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-repo-actions",
@@ -1478,14 +1997,20 @@
       "iface": "pure SQL for the actions table: insert/get/list/list_upcoming/list_due(now)/update(allowlisted cols)/delete/advance_schedule \u2192 ActionRecord; imports _connection only",
       "coverage": 0.94,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/repositories/actions_repo.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_actions_repo.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-action",
@@ -1494,9 +2019,11 @@
       "depth": 0.6,
       "size": 1.1,
       "seam": "the actions domain-logic seam; router parses, scheduler polls, both delegate here",
-      "iface": "ActionService: schedule validation + next-run recompute + create/update field-diff + goal rendering + advance-for-dispatch; typed ActionNotFoundError (404) like run_service",
+      "iface": "ActionService: schedule validation + next-run recompute + create/update field-diff + goal rendering + advance-for-dispatch; typed ActionNotFoundError (404) like run_service. Schedule math calls core.api.utils.cron.compute_next_tick directly (the local _compute_next_run wrapper was removed).",
       "coverage": 0.82,
-      "updated": true,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/action_service.py"
       ],
@@ -1504,9 +2031,13 @@
         "api-repo-actions"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_action_service.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-agent-write",
@@ -1518,6 +2049,8 @@
       "iface": "create_agent/save_agent + validators (reject_secrets, validate_agent_yaml_text, slug_exists); raises typed MeeseeksError (409/403/422/400) the global handler maps; returns the agent name, not AgentDetail",
       "coverage": 0.87,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/agent_write_service.py"
       ],
@@ -1527,9 +2060,13 @@
         "secrets"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_agent_write_service.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-team",
@@ -1541,6 +2078,8 @@
       "iface": "create_team/update_team/delete_team + validate payload + channel-invalidation + TeamCreate/UpdateRequest + typed 409 errors; moved out of the teams router",
       "coverage": 0.88,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/team_service.py"
       ],
@@ -1549,9 +2088,13 @@
         "orch-channels"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_team_service.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-api-types",
@@ -1560,9 +2103,11 @@
       "depth": 0.3,
       "size": 2,
       "seam": "the wire contract; the single seam a backend schema change ripples through",
-      "iface": "openapi.generated.ts (codegen from FastAPI app.openapi()) + types.ts (ergonomic re-exports). CRITICAL: the WebSocket envelope unions (ServerEvent / ClientEvent / BuilderUIEvent / DraftUIEvent / CardKind) are HAND-WRITTEN in types.ts, NOT generated \u2014 they mirror backend emitters with no codegen safety net.",
+      "iface": "openapi.generated.ts (codegen from FastAPI app.openapi()) + types.ts (ergonomic re-exports). CRITICAL: the WebSocket envelope unions (ServerEvent / ClientEvent / BuilderUIEvent / DraftUIEvent / CardKind) are HAND-WRITTEN in types.ts, NOT generated \u2014 they mirror backend emitters with no codegen safety net. As of 2026-06 the marketplace catalog/discovery types (CatalogMCP / CatalogResponse / SearchResult / SearchResponse) are now codegen-backed aliases here (previously hand-written in queries/marketplace.ts), so hand-written surface is down to just the WS envelope unions.",
       "coverage": 0.95,
-      "updated": true,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/api/openapi.generated.ts",
         "frontend/src/api/types.ts"
@@ -1571,9 +2116,13 @@
         "api-schemas"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_ws_contract_drift.py (3 pytest: backend get_args(CardKind) / ServerEvent kinds / draft subs == frontend types.ts unions, aligned 10/19/6) + chatStore & draftUiStore assertNever exhaustiveness (a new backend kind is now a TS compile error + a failing test). DONE.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-api-client",
@@ -1585,6 +2134,8 @@
       "iface": "apiClient {get/post/put/patch/delete} (throws ApiError on non-2xx) + wsUrl() builds the chat/build-run WS URLs. payloads.ts holds the ServerEvent type-guards (isAiText/isTurnStatus/...) + artifact extraction.",
       "coverage": 0.9,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/api/client.ts",
         "frontend/src/api/payloads.ts"
@@ -1593,9 +2144,13 @@
         "fe-api-types"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "client.test.ts, payloads.test.ts",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-queries",
@@ -1604,9 +2159,11 @@
       "depth": 0.3,
       "size": 1.4,
       "seam": "the Tanstack-Query data layer; one file per backend domain",
-      "iface": "per-domain useQuery/useMutation hooks (agents/channels/teams/buildSpecs/buildRuns/marketplace/workspaces/settings/...); query-key registry + invalidate-on-success. Components never call apiClient directly.",
-      "coverage": 0.02,
-      "updated": true,
+      "iface": "per-domain useQuery/useMutation hooks (agents/channels/teams/buildSpecs/buildRuns/marketplace/workspaces/settings/...); query-key registry + invalidate-on-success. Components never call apiClient directly. As of 2026-06 the wire-contract types are no longer hand-defined here \u2014 marketplace.ts re-exports the generated catalog/discovery aliases from fe-api-types (closed a minor seam violation where the query layer defined wire shapes).",
+      "coverage": 0.65,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/queries/agents.ts",
         "frontend/src/queries/channels.ts",
@@ -1622,9 +2179,13 @@
         "fe-api-types"
       ],
       "leaksTo": [],
-      "tests": "~1.7% line coverage \u2014 effectively UNTESTED; exercised only incidentally.",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "queries/__tests__/ \u2014 8 dedicated test files (~1455L): agents, channels, teams, buildSpecs, marketplace, workspaces, settings, services hooks. Gap: runs.ts. Re-baselined from 0.02 (stale).",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-ws-client",
@@ -1636,6 +2197,8 @@
       "iface": "ChatClient.connect/send/cancel/ping for one (channel,thread); stamps every send with last_seq watermark for replay; treats close 1008 + fatal frames as terminal (no retry); exponential backoff (max 30s) otherwise. Fires onEvent/onFatal/onStatusChange.",
       "coverage": 0.74,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/realtime/chatClient.ts"
       ],
@@ -1643,9 +2206,13 @@
         "fe-api-types"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "chatClient.test.ts",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-chat-store",
@@ -1655,8 +2222,10 @@
       "size": 1.6,
       "seam": "the pure ServerEvent\u2192ChatState reducer; the deep, well-tested core of the chat UI",
       "iface": "reduceChat(state, ServerEvent)\u2192ChatState: dedup by seq, route assistant events into bubbles / parallel groups, extract artifacts + activity, hydrate from ThreadHistory. useTurnStatus tracks phase + 15s stale flag. Mirrors the backend ServerEvent protocol (hand-kept in sync).",
-      "coverage": 0.72,
-      "updated": true,
+      "coverage": 0.88,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/realtime/chatStore.ts",
         "frontend/src/realtime/chatStore.bubble.ts",
@@ -1667,9 +2236,13 @@
         "fe-api-types"
       ],
       "leaksTo": [],
-      "tests": "chatStore.test.ts, useTurnStatus.test.ts",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "chatStore.test.ts (441L) + chatStore.bubble.test.ts (515L) \u2014 full reducer + bubble-routing helper coverage via event-type matrix.",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-chat-view",
@@ -1679,8 +2252,10 @@
       "size": 2,
       "seam": "the channel chat surface; owns the ChatClient + reducer lifecycle",
       "iface": "ChannelChat instantiates ChatClient + useReducer per thread, feeds events to reducer + useTurnStatus, renders ChannelMessages (bubbles/parallel/artifact cards) + ChannelWorkbench (topology + activity) + composer with @mention autocomplete.",
-      "coverage": 0.1,
-      "updated": true,
+      "coverage": 0.75,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/channel/ChannelChat.tsx",
         "frontend/src/channel/ChannelMessages.tsx",
@@ -1695,9 +2270,13 @@
         "fe-queries"
       ],
       "leaksTo": [],
-      "tests": "presentational; mostly 0% \u2014 logic lives in the reducer",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "Re-baselined 2026-06: 5 of 6 files have dedicated behavioral tests (ChannelChat 483L, ChannelMessages 455L, ChannelWorkbench 209L, ArtifactCard 331L, MentionAutocomplete 335L \u2014 several test files larger than their sources). Only agentIdentity.tsx is untested. Prior coverage 0.10 + 'mostly 0%, logic lives in the reducer' was stale/under-counted.",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-builder-spec",
@@ -1707,8 +2286,10 @@
       "size": 1.4,
       "seam": "the pure BuildSpec model + form; the spec-validation seam mirrored against the backend",
       "iface": "SpecItem union (Agent|Mcp|Team) + constructors + validateSpec() + YAML (de)serialize, no React/fetch. PlanEditor/AskPanel bind the form. INVARIANT: SpecItemKind must equal backend item_kind; accents in ACCENTS.",
-      "coverage": 0.7,
-      "updated": true,
+      "coverage": 0.82,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/views/builder/buildSpecModel.ts",
         "frontend/src/views/builder/buildSpecYaml.ts",
@@ -1722,9 +2303,13 @@
         "fe-queries"
       ],
       "leaksTo": [],
-      "tests": "buildSpecModel.test.ts, specReducer.test.ts",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "views/builder/__tests__ buildSpecModel tests (~408L): addItem/updateItem/deleteItem/dedupe/import-export.",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-builder-run",
@@ -1734,8 +2319,10 @@
       "size": 1,
       "seam": "the live build-run WS reducer; frontend counterpart of svc\u00b7build_engine event emission",
       "iface": "buildRunClient consumes /api/build-runs/{id}/stream; builderUiReducer folds BuilderUIEvent sub-events (phase/plan/update_item/confirm/artifact/complete) into BuilderUIState. INVARIANT: must handle every sub-variant the backend emits or it silently drops it.",
-      "coverage": 0.7,
-      "updated": true,
+      "coverage": 0.77,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/realtime/builderUiStore.ts",
         "frontend/src/realtime/buildRunClient.ts",
@@ -1746,9 +2333,13 @@
         "fe-queries"
       ],
       "leaksTo": [],
-      "tests": "builderUiStore.test.ts (reducer well-covered; client/hook low)",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "realtime/__tests__ buildRunClient.test.ts (288L) + builderUiStore.test.ts (248L).",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-builder-view",
@@ -1758,8 +2349,10 @@
       "size": 1.4,
       "seam": "the Builder tab shell + live card rendering",
       "iface": "BuilderView orchestrates useBuildSpec + useBuildRun; renders PlanEditor or ProgressList+ArtifactsSection by phase. Builder ArtifactCard switches on ItemKind (agent|team|mcp|skill) + Health dot \u2014 must match backend enums.",
-      "coverage": 0.3,
-      "updated": true,
+      "coverage": 0.65,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/views/BuilderView.tsx",
         "frontend/src/views/builder/progress.tsx",
@@ -1774,9 +2367,13 @@
         "fe-builder-run"
       ],
       "leaksTo": [],
-      "tests": "BuilderView moderate; card components mostly <20%",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "BuilderView.test.tsx + views/builder/__tests__ AskPanel/PlanEditor/progress (~919L). Re-baselined from 0.3.",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-draft-store",
@@ -1786,8 +2383,10 @@
       "size": 1.3,
       "seam": "the in-chat draft-card protocol; consumes builder_ui/draft_ui events",
       "iface": "draftUiReducer folds DraftUIEvent (open/field/status/link/error/cta) into DraftUIState; DraftCard switches on card_kind. INVARIANT: CardKind Literal must match backend builder_ui CardKind exactly or cards fall through to a generic renderer.",
-      "coverage": 0.05,
-      "updated": true,
+      "coverage": 0.68,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/realtime/draftUiStore.ts",
         "frontend/src/components/draft/DraftCard.tsx",
@@ -1799,9 +2398,13 @@
         "fe-chat-store"
       ],
       "leaksTo": [],
-      "tests": "NONE \u2014 1-14% line coverage; the deepest untested frontend slice",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "components/draft/__tests__ DraftCard(448L)/DraftPane(220L)/CapabilityCards(151L)/HoverCard(238L) + draftActions.test.ts. Re-baselined from 0.05 (stale).",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-app-shell",
@@ -1811,8 +2414,10 @@
       "size": 0.6,
       "seam": "the tab/hash router; embeds fixed channel ids",
       "iface": "App reads tab from URL hash (#/builder, #/marketplace, #/chat, ...); 6 tabs. INVARIANT: Builder + Marketplace tabs embed FIXED channel ids ('agent-builder', 'marketplace') seeded by the backend; ChannelsView hides them. Rename the seeds \u2192 tabs break.",
-      "coverage": 0.0,
-      "updated": true,
+      "coverage": 0.4,
+      "updated": false,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/app/App.tsx"
       ],
@@ -1822,9 +2427,13 @@
         "fe-views"
       ],
       "leaksTo": [],
-      "tests": "0% \u2014 untested",
-      "suggestion": null,
-      "orphan": false
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "app/__tests__/App.test.tsx (173L): hash-tab routing, workspace pill, StrictMode remount stability. Re-baselined from 0.0.",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "fe-views",
@@ -1836,6 +2445,8 @@
       "iface": "ChannelsView (channel/thread picker + hides fixed ids), MarketplaceView (embeds 'marketplace' channel + installed MCP/skill grid), AgentsView (topology), TeamsView, SettingsView (schema-driven form).",
       "coverage": 0.4,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "frontend/src/views/ChannelsView.tsx",
         "frontend/src/views/MarketplaceView.tsx",
@@ -1847,9 +2458,13 @@
         "fe-chat-view"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "integration; ChannelsView/Marketplace ~55-68%",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-repo-build-runs",
@@ -1861,14 +2476,20 @@
       "iface": "pure SQL for the build_runs table: insert/get/list/update_status/append_event/get_events \u2192 BuildRunRow; imports _connection only. Consumed by the build_runs router worker.",
       "coverage": 0.9,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/repositories/build_runs_repo.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "via test_build_runs_router.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-repo-build-specs",
@@ -1880,14 +2501,20 @@
       "iface": "pure SQL for the build_specs table: insert/get/list/update/delete \u2192 BuildSpecRow; imports _connection only. Consumed by build_spec_service.",
       "coverage": 0.91,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/repositories/build_specs_repo.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "via test_build_specs_router.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "seed-system-agents",
@@ -1899,6 +2526,8 @@
       "iface": "core/_seeds/agents/{manager,agent-builder,web-researcher,author,installer}/ (agent.yaml + system_prompt.md.j2). Bundle-copied verbatim by init (_BUNDLED_SEED_AGENTS); small yaml interface, load-bearing behaviour (every default channel's roster).",
       "coverage": 0.45,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/_seeds/agents/manager/",
         "core/_seeds/agents/agent-builder/",
@@ -1908,9 +2537,13 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "data-on-disk; copy+load exercised by test_init_workspace + config-loader, CONTENT not asserted",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "seed-provider-catalog",
@@ -1922,15 +2555,21 @@
       "iface": "core/_seeds/shared/providers/{claude-code,codex}.yaml \u2014 backend + init_model_string + extra_kwargs. config-loader resolves agent.llm.provider against this catalog. A hardcoded claude-code FLOOR in templates.py covers the wheel-without-bundle case.",
       "coverage": 0.5,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/_seeds/shared/providers/claude-code.yaml",
         "core/_seeds/shared/providers/codex.yaml"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "loaded by config-loader provider-resolution tests",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "seed-prompts",
@@ -1942,6 +2581,8 @@
       "iface": "core/_seeds/shared/prompts/: base.md.j2 + roles/ (team_lead, worker, orchestrator, builder, installer, mission_agent, ...) + styles/ (speech, memory, shared_workspace, iron_man_speech). The behavioural contracts injected into every system prompt.",
       "coverage": 0.5,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/_seeds/shared/prompts/base.md.j2",
         "core/_seeds/shared/prompts/roles/",
@@ -1949,9 +2590,13 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "rendered by test_prompt_composer / test_prompt_resolution",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "seed-skills",
@@ -1963,6 +2608,8 @@
       "iface": "core/_seeds/shared/skills/system/{auto-ui,scaffold-any,search-catalog}/SKILL.md. Discovered by the skills loader + injected into agent skill rosters at init.",
       "coverage": 0.45,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/_seeds/shared/skills/system/auto-ui/",
         "core/_seeds/shared/skills/system/scaffold-any/",
@@ -1970,9 +2617,13 @@
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "discovered by test_skills_loader",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "seed-services",
@@ -1984,14 +2635,20 @@
       "iface": "core/_seeds/services/kanban/service.yaml \u2014 a ServiceConfig spec the supervisor mounts. Defines the one service that ships with every workspace.",
       "coverage": 0.4,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/_seeds/services/kanban/"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "discovered by services-loader (indirect)",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "seed-teams",
@@ -2003,14 +2660,20 @@
       "iface": "core/_seeds/teams/builder-team/team.yaml \u2014 leader=agent-builder, workers=[web-researcher, author, installer]. Bundle-copied by init (_BUNDLED_SEED_TEAMS). The deliberate team-vs-direct-roster split is in templates.py channel yaml.",
       "coverage": 0.4,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/_seeds/teams/builder-team/"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "loaded by orch-teams resolve (indirect)",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "cli-repl",
@@ -2022,6 +2685,8 @@
       "iface": "repl.py runs the read\u2192stream\u2192render loop (mission mode shows complete_mission verdict); chat.py the channel-chat variant. Ctrl-C cancels the in-flight turn rather than killing the process.",
       "coverage": 0.99,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/cli/repl.py",
         "core/cli/chat.py"
@@ -2034,9 +2699,13 @@
         "mission-runner"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_cli_repl.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "cli-input",
@@ -2048,14 +2717,20 @@
       "iface": "InputController.read()\u2192str: multi-line composer, Enter-sends keybinding inversion, /-slash completion (DEFAULT_COMMANDS), persisted history, empty-resubmit loop; raises EOFError on Ctrl-D, KeyboardInterrupt on Ctrl-C (the caller's contract).",
       "coverage": 1.0,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/cli/input.py"
       ],
       "dependsOn": [],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "no dedicated test; the read()/keybinding/slash contract is unit-testable",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-chat-seq-allocator",
@@ -2067,6 +2742,8 @@
       "iface": "_SeqAllocator.for_thread(thread_id) returns ONE process-wide instance per thread (concurrent WS sessions MUST share it); .next() lock-guarded monotonic counter; .assign_and_persist keeps persisted seq == envelope seq (the reconnect-replay invariant). _replay_missed_events streams rows with seq>last_seq.",
       "coverage": 0.96,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/routers/chat/reconnect.py"
       ],
@@ -2074,9 +2751,13 @@
         "orch-threads"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_chat_seq_allocator.py (9 tests: for_thread shared-instance, monotonic next() under a threadpool, persisted seq == envelope seq) + test_event_replay.py. DONE.",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "providers-common",
@@ -2088,6 +2769,8 @@
       "iface": "ProviderBuildContext.build(cfg, resolved_prompt, mission_mode) -> frozen {workspace, model, mcp_servers, system_prompt}; composed once. model_id kept as a public leaf for the event stream. The collect_mcp_servers pass-through was inlined + deleted.",
       "coverage": 0.85,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/deep_providers/_common.py"
       ],
@@ -2096,9 +2779,13 @@
         "mcp-loader"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_deep_providers.py (context fields: workspace/model/mcp/system_prompt + model_id leaf); both adapters stub the one seam (claude patches ProviderBuildContext.build; codex rebinds session.ProviderBuildContext)",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     },
     {
       "id": "api-svc-build-run",
@@ -2110,6 +2797,8 @@
       "iface": "BuildRunService.{list_runs,get_run,get_events,active,is_active,start,cancel,delete}; get_build_run_service() is the singleton holding the in-flight slot (_active dict + _lock). Raises typed BuildRunNotFoundError(404)/BuildConflictError(409). NOT re-exported from core.api.services package \u2014 imported via submodule to avoid the services\u2194build_engine import cycle.",
       "coverage": 0.9,
       "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
       "files": [
         "core/api/services/build_run_service.py"
       ],
@@ -2119,14 +2808,188 @@
         "api-svc-build-spec"
       ],
       "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
       "tests": "test_build_runs_router.py, test_build_runs_router_stream.py",
-      "suggestion": null,
-      "orphan": false
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "api-workspace-resolver",
+      "label": "api \u00b7 workspace_resolver",
+      "domain": "api",
+      "depth": 0.5,
+      "size": 0.5,
+      "seam": "the active-workspace path seam; the leaf every router/service asks 'where is the active workspace and its storage/agents/shared dirs'",
+      "iface": "active_workspace_path / active_storage_dir / active_agents_dir / active_shared_dir / agent_dir_for_name / safe_join / workspace_relative \u2014 reads the active workspace row from the app DB, derives per-workspace paths, and blocks path-escape in safe_join. NOTE: this is the third leg of the api-svc-workspace deepening smear (registry+flag in workspace_service, path math HERE, hot-swap effect in api-state).",
+      "coverage": 0.6,
+      "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "core/api/workspace_resolver.py"
+      ],
+      "dependsOn": [
+        "api-repositories",
+        "config-loader"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_workspace_resolver.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "api-router-teams",
+      "label": "router \u00b7 teams",
+      "domain": "api",
+      "depth": 0.5,
+      "size": 0.5,
+      "seam": "team CRUD + member grant/revoke; delegates to team_service with a channel-cache invalidate hook",
+      "iface": "list/get/create/update/delete teams + grant/revoke members; invalidates ChannelManager cache on mutation",
+      "coverage": 0.85,
+      "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "core/api/routers/teams.py"
+      ],
+      "dependsOn": [
+        "api-svc-team",
+        "orch-teams",
+        "api-workspace-resolver"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_teams_router.py + team_service tests",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "api-router-backends",
+      "label": "router \u00b7 backends",
+      "domain": "api",
+      "depth": 0.4,
+      "size": 0.4,
+      "seam": "lists configured backend providers (read-only)",
+      "iface": "GET backends \u2014 backend/provider catalog resolved from core.config",
+      "coverage": 0.7,
+      "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "core/api/routers/backends.py"
+      ],
+      "dependsOn": [
+        "config-loader"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_backends.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "api-router-providers",
+      "label": "router \u00b7 providers",
+      "domain": "api",
+      "depth": 0.4,
+      "size": 0.5,
+      "seam": "lists provider model catalogs (read-only)",
+      "iface": "GET providers/models \u2014 describes provider model catalogs from the shared dir + core.config",
+      "coverage": 0.7,
+      "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "core/api/routers/providers.py"
+      ],
+      "dependsOn": [
+        "config-loader",
+        "api-workspace-resolver"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_providers.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "api-router-activity",
+      "label": "router \u00b7 activity",
+      "domain": "api",
+      "depth": 0.4,
+      "size": 0.4,
+      "seam": "thread/run activity feed",
+      "iface": "GET activity \u2014 recent replies/mentions via run_service.recent_activity",
+      "coverage": 0.7,
+      "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "core/api/routers/activity.py"
+      ],
+      "dependsOn": [
+        "api-svc-run"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_activity.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
+    },
+    {
+      "id": "api-router-build-specs",
+      "label": "router \u00b7 build_specs",
+      "domain": "api",
+      "depth": 0.4,
+      "size": 0.5,
+      "seam": "build-spec CRUD; thin over build_spec_service (parse \u2192 delegate \u2192 schema)",
+      "iface": "list/get/create/update/validate build specs \u2014 parse request \u2192 get_build_spec_service() \u2192 typed schema",
+      "coverage": 0.8,
+      "updated": true,
+      "plane": "actual",
+      "lifecycle": "built",
+      "files": [
+        "core/api/routers/build_specs/router.py",
+        "core/api/routers/build_specs/_helpers.py"
+      ],
+      "dependsOn": [
+        "api-svc-build-spec"
+      ],
+      "leaksTo": [],
+      "intendsToDependOn": [],
+      "supersedes": [],
+      "tests": "test_build_specs_router.py",
+      "suggestions": [],
+      "orphan": false,
+      "supersededBy": [],
+      "suggestion": null
     }
   ],
+  "plans": [],
   "orphans": [],
   "openSuggestions": [
     "api-svc-build-spec-speculative",
+    "api-svc-run-strong",
+    "api-svc-workspace-worth-exploring",
     "cli-events-worth-exploring",
     "mission-core-speculative"
   ]

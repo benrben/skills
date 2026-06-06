@@ -6,59 +6,189 @@
 .stage-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--bg); }
 .stage {
   position: absolute; inset: 0; overflow: hidden; cursor: grab;
+  background-color: var(--bg);
   background-image:
-    radial-gradient(var(--bg-grid) 1px, transparent 1px);
-  background-size: 26px 26px;
-  background-position: -13px -13px;
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 19px 19px;
 }
 .stage.panning { cursor: grabbing; }
 .viewport { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
-.edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+/* layer order: hulls behind edges, edges behind cards */
+.hulls    { position: absolute; top: 0; left: 0; pointer-events: none; }
+.edges    { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+.nodeLayer { position: absolute; top: 0; left: 0; }
 .edges path { fill: none; transition: opacity .18s, stroke .18s; }
-.edge-dep { stroke: var(--border-strong); stroke-width: 1.5; opacity: 0; }
-.edge-dep.show { opacity: .9; }
-.edge-dep.hot { stroke: var(--accent); stroke-width: 2; opacity: 1; }
-.edge-leak { stroke: var(--leak); stroke-width: 1.75; stroke-dasharray: 5 4; opacity: .85; }
-.edge-leak.hot { opacity: 1; stroke-width: 2.25; }
 
-/* node card */
+/* edge types — dep/intended are visible by default (not hidden) */
+.edge-dep      { stroke: var(--edge, oklch(0.70 0.01 270)); stroke-width: 1.5; opacity: .72; }
+.edge-dep.show { opacity: .9; }
+.edge-dep.hot  { stroke: var(--accent); stroke-width: 2; opacity: 1; }
+.edge-dep.fade { opacity: .06; }
+.edge-dep.agg  { opacity: .52; }                    /* overview aggregated edge */
+
+.edge-leak      { stroke: var(--leak); stroke-width: 1.75; stroke-dasharray: 5 4; opacity: .85; }
+.edge-leak.hot  { opacity: 1; stroke-width: 2.25; }
+.edge-leak.fade { opacity: .06; }
+.edge-leak.agg  { stroke-width: 2; }
+
+.edge-intended      { stroke: var(--intended, oklch(0.55 0.20 300)); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: .68; }
+.edge-intended.show { opacity: .85; }
+.edge-intended.hot  { stroke: var(--intended, oklch(0.55 0.20 300)); stroke-width: 2.25; opacity: 1; }
+.edge-intended.fade { opacity: .06; }
+
+.edge-supersede      { stroke: var(--text-faint); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: .4; }
+.edge-supersede.hot  { opacity: .8; stroke-width: 2; }
+.edge-supersede.fade { opacity: .06; }
+/* legacy alias kept for any old edge-supersedes references */
+.edge-supersedes      { stroke: var(--text-faint); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: .4; }
+.edge-supersedes.hot  { opacity: .8; stroke-width: 2; }
+.edge-supersedes.fade { opacity: .06; }
+
+/* leak midpoint mark */
+.leak-x { fill: var(--leak); font-size: 9px; font-weight: 700; opacity: .9; }
+.leak-x.fade { opacity: .06; }
+
+/* ---- domain hull rect + name chip ---- */
+.hull {
+  position: absolute; border-radius: 14px;
+  border: 1px solid var(--border);
+  transition: opacity .18s, box-shadow .18s, border-color .18s;
+}
+.hull.hot { border-color: var(--accent-ring); box-shadow: 0 0 0 1px var(--accent-ring); }
+.hull.dim { opacity: .45; }
+.hull-chip {
+  position: absolute; top: 8px; left: 10px;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  color: var(--text-dim); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px 3px 8px;
+  box-shadow: var(--shadow-sm); cursor: pointer; pointer-events: auto;
+  transition: .12s; white-space: nowrap;
+}
+.hull-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.hull-chip .swatch { width: 9px; height: 9px; border-radius: 3px; border: 1px solid var(--border-strong); }
+.hull-chip .ct    { color: var(--text-faint); }
+.hull-chip .caret { color: var(--text-faint); font-size: 9px; margin-left: 1px; }
+
+/* node card — 150×82 three-zone instrument */
 .node {
   position: absolute; box-sizing: border-box;
   border-radius: var(--radius); background: var(--panel);
   border: 1px solid var(--border); box-shadow: var(--shadow-sm);
-  padding: 11px 13px 0; overflow: hidden;
+  padding: 9px 11px 9px 15px; /* extra left pad clears the 4px depth rail */
+  overflow: hidden; cursor: pointer;
   transition: box-shadow .15s, border-color .15s, opacity .18s, transform .12s, outline-color .15s;
   outline: 2px solid transparent; outline-offset: 2px;
   display: flex; flex-direction: column;
 }
-.node:hover { box-shadow: var(--shadow-md); }
-.node.tier-deep { background: var(--tier-deep-bg); border-color: var(--tier-deep-bd); }
-.node.tier-mid { background: var(--tier-mid-bg); border-color: var(--tier-mid-bd); }
-.node.tier-shallow { background: var(--tier-shallow-bg); border-color: var(--tier-shallow-bd); }
-.node.updated { outline-color: var(--updated); }
-.node.dim { opacity: .26; filter: saturate(.5); }
-.node.sel { box-shadow: var(--shadow-md), 0 0 0 2px var(--accent); border-color: transparent; }
-.node.spot { box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-ring); border-color: var(--accent); z-index: 2; }
+.node:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+
+/* LEFT DEPTH RAIL — the 4px colored strip that makes depth immediately legible */
+.node::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--rail, var(--tier-mid));
+  border-radius: var(--radius) 0 0 var(--radius);
+  z-index: 1;
+}
+.node.tier-deep    { --rail: var(--tier-deep);    }
+.node.tier-mid     { --rail: var(--tier-mid);     }
+.node.tier-shallow { --rail: var(--tier-shallow); }
+
+/* tier classes: only the ::before rail changes color; border stays var(--border) */
+
+.node.updated    { outline-color: var(--updated); }
+.node.dim        { opacity: .22; filter: saturate(.45); }
+.node.sel        { box-shadow: var(--shadow-md), 0 0 0 2px var(--accent); border-color: transparent; z-index: 3; }
+.node.spot       { box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-ring); border-color: var(--accent); z-index: 2; }
 .node.match-hit .node-label { box-shadow: -3px 0 0 var(--accent); padding-left: 5px; }
 
 .node-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.node-id { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
-.node-label { font-size: 11px; color: var(--text-dim); margin-top: 1px; line-height: 1.2; transition: padding .15s; }
+.node-id { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-label { font-size: 11px; color: var(--text-dim); margin-top: 1px; line-height: 1.2; transition: padding .15s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* .node-dom intentionally minimal — hull chip names the domain */
 .node-dom { font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); margin-top: 3px; }
 .node-flags { display: flex; gap: 4px; align-items: center; flex: 0 0 auto; }
 
+/* suggestion ring (keeps existing sug-ring name for compat) */
 .sug-ring {
-  width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
-  font-size: 9px; color: var(--on-accent); flex: 0 0 auto;
+  width: 15px; height: 15px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; line-height: 1; color: var(--on-accent, oklch(0.99 0.01 278));
+  box-shadow: var(--shadow-sm); flex: 0 0 auto;
 }
 .sug-ring.strong { background: var(--strong); }
-.sug-ring.worth { background: var(--worth); color: oklch(0.25 0.05 78); }
+.sug-ring.worth  { background: var(--worth); color: oklch(0.25 0.05 78); }
 .sug-ring.speculative { background: var(--spec); }
 
+/* flag-leak: red X chip */
+.flag-leak {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: var(--leak);
+  background: oklch(0.96 0.05 27); border: 1px solid var(--leak); border-radius: 999px; padding: 0 4px; line-height: 1.4;
+}
+[data-theme="dark"] .flag-leak { background: oklch(0.30 0.08 27); }
+/* legacy leak-flag alias */
 .leak-flag { color: var(--leak); font-size: 11px; line-height: 1; }
 
-.node .cov-bar { margin: 9px -13px 0; height: 4px; background: var(--cov-track); }
-.node .cov-bar > i { display: block; height: 100%; background: var(--cov); }
+/* node footer: coverage bar (color-ramped) + mono % */
+.node-foot { margin-top: auto; display: flex; align-items: center; gap: 7px; }
+.cov-bar { flex: 1 1 auto; height: 5px; border-radius: 3px; background: var(--cov-track); overflow: hidden; }
+.cov-bar > i { display: block; height: 100%; border-radius: 3px; }
+.cov-pct { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--text-dim); flex: 0 0 auto; width: 30px; text-align: right; }
+/* legacy cov-bar compat (old dagre layout had a direct child cov-bar) */
+.node > .cov-bar:not(.node-foot .cov-bar) { margin: 9px -11px 0; height: 4px; border-radius: 0; }
+.node > .cov-bar:not(.node-foot .cov-bar) > i { background: var(--cov); border-radius: 0; }
+
+/* card-fill-tint + planned-cap (from nodeInner) */
+.card-fill-tint { position: absolute; inset: 0; background: var(--intended, oklch(0.55 0.20 300)); opacity: .045; pointer-events: none; }
+.planned-cap { position: absolute; bottom: 7px; right: 10px; font-family: var(--font-mono); font-size: 8.5px; font-weight: 600; letter-spacing: .08em; color: var(--intended, oklch(0.55 0.20 300)); text-transform: uppercase; }
+
+/* ---- domain super-node (overview collapsed) ---- */
+.supernode {
+  position: absolute; border-radius: 13px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-md); padding: 13px 16px 13px 20px;
+  display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+  overflow: hidden;
+  transition: opacity .16s, box-shadow .16s, transform .12s, border-color .16s;
+}
+.supernode::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  background: var(--rail, var(--tier-mid));
+  border-radius: 13px 0 0 13px;
+}
+.supernode.tier-deep    { --rail: var(--tier-deep); }
+.supernode.tier-mid     { --rail: var(--tier-mid); }
+.supernode.tier-shallow { --rail: var(--tier-shallow); }
+.supernode:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); border-color: var(--accent-ring); }
+.supernode.dim  { opacity: .22; filter: saturate(.5); }
+.supernode.spot { box-shadow: var(--shadow-lg), 0 0 0 2px var(--accent-ring); border-color: var(--accent); }
+.supernode .sn-top  { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.supernode .sn-name { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 17px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
+.supernode .sn-swatch { width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--border-strong); flex: 0 0 auto; }
+.supernode .sn-badge { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; min-width: 26px; text-align: center; }
+.supernode .sn-sub  { font-size: 11px; color: var(--text-faint); margin-top: -1px; }
+.supernode .sn-foot { display: flex; align-items: center; gap: 11px; margin-top: 3px; }
+.sn-ring     { width: 38px; height: 38px; flex: 0 0 auto; }
+.sn-ring-pct { font-family: var(--font-mono); font-size: 11px; font-weight: 700; fill: var(--text-dim); }
+.supernode .sn-cov { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text-dim); line-height: 1.05; }
+.supernode .sn-cov i { font-style: normal; font-size: 9px; font-weight: 500; color: var(--text-faint); letter-spacing: .02em; }
+.supernode .sn-flags { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.supernode .sn-flag { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 7px; }
+.supernode .sn-flag.leak { color: var(--leak); background: oklch(0.96 0.05 27); border: 1px solid var(--leak); }
+[data-theme="dark"] .supernode .sn-flag.leak { background: oklch(0.30 0.08 27); }
+.supernode .sn-flag.sug  { color: oklch(0.99 0 0); background: var(--worth); }
+.supernode .sn-flag.leak svg { width: 8px; height: 8px; }
+
+/* ---- minimap ---- */
+.minimap {
+  position: absolute; bottom: 14px; right: 14px; z-index: 8;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-md);
+  overflow: hidden; width: 188px; height: 128px;
+}
+.minimap canvas { display: block; width: 188px; height: 128px; cursor: pointer; }
+.minimap .mm-cap { position: absolute; top: 5px; left: 8px; font-family: var(--font-mono); font-size: 9px; color: var(--text-faint); pointer-events: none; }
 
 /* fit / zoom controls */
 .stage-tools { position: absolute; right: 14px; top: 14px; display: flex; flex-direction: column; gap: 6px; z-index: 5; }
@@ -310,7 +440,14 @@
 .help-enc .sw.cov { background: linear-gradient(90deg, var(--cov) 55%, var(--cov-track) 55%); }
 .help-enc .sw.ring { border: 2px solid var(--strong); border-radius: 50%; width: 12px; height: 12px; margin-top: 1px; }
 .help-enc .sw.upd { background: transparent; outline: 2px solid var(--updated); outline-offset: -1px; }
+.help-enc .sw.planned { background: var(--panel-2); border: 1px dashed var(--accent-ring, var(--border-strong)); opacity: .82; }
+.help-enc .sw.building { background: repeating-linear-gradient(-45deg, var(--intended, oklch(0.62 0.14 285)) 0 3px, var(--panel-2) 3px 6px); border: 1px solid var(--intended, oklch(0.62 0.14 285)); }
 .help-enc .ln { width: 16px; border-top: 2px dashed var(--leak); flex: 0 0 auto; margin-top: 7px; }
+.help-enc .line { width: 16px; border-top: 2px solid var(--border-strong); flex: 0 0 auto; margin-top: 7px; }
+.help-enc .line.intended { border-top: 2px dashed var(--intended, oklch(0.62 0.14 285)); }
+.sw.planned { background: var(--panel-2); border: 1px dashed var(--accent-ring, var(--border-strong)); opacity: .82; }
+.sw.building { background: repeating-linear-gradient(-45deg, var(--intended, oklch(0.62 0.14 285)) 0 3px, var(--panel-2) 3px 6px); border: 1px solid var(--intended, oklch(0.62 0.14 285)); }
+.line.intended { width: 16px; border-top: 2px dashed var(--intended, oklch(0.62 0.14 285)); }
 .help-enc b { color: var(--text); font-weight: 600; }
 .help-enc .et { flex: 1; }
 .kbd-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-dim); margin-bottom: 7px; }
@@ -339,11 +476,34 @@
 /* --- Fathom: planned (intended-plane) nodes, grilling status, plan tags --- */
 .node.planned {
   border-style: dashed;
-  border-color: var(--accent-ring, var(--border-strong));
-  background: var(--panel-2, var(--panel));
-  opacity: .82;
+  border-color: var(--intended, oklch(0.55 0.20 300));
+  filter: saturate(.9);
 }
-.node.planned .node-id::before { content: "◇ "; color: var(--text-faint); }
+.node.planned .card-fill-tint { position: absolute; inset: 0; background: var(--intended, oklch(0.55 0.20 300)); opacity: .045; pointer-events: none; }
+
+/* under-construction node: solid accent frame + slim TOP shimmer */
+.node.building {
+  border-style: solid;
+  border-color: var(--build, oklch(0.62 0.15 230));
+}
+.node.building::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--build, oklch(0.62 0.15 230)), transparent);
+  background-size: 200% 100%; animation: build-shimmer 1.8s linear infinite;
+}
+@keyframes build-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* grilling flag: inline-SVG flask (NO emoji) */
+.grill-flag {
+  width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent); flex: 0 0 auto;
+}
+.grill-flag svg { width: 13px; height: 13px; }
+.node.grilling { animation: grill-pulse 1.8s ease-in-out infinite; }
+@keyframes grill-pulse {
+  0%,100% { box-shadow: var(--shadow-sm), 0 0 0 0 oklch(0.52 0.13 248 / 0); }
+  50%     { box-shadow: var(--shadow-sm), 0 0 0 3px oklch(0.52 0.13 248 / 0.22); }
+}
 
 .cand-status {
   margin-left: 6px; padding: 1px 7px; border-radius: 999px;
@@ -362,3 +522,18 @@
 }
 
 .cand-more { margin-top: 8px; font-size: 11px; color: var(--text-faint); font-style: italic; }
+
+/* category chip on a suggestion (neutral) */
+.cat-tag {
+  font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: .05em; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--text-dim);
+  background: var(--panel-2, var(--panel)); white-space: nowrap;
+}
+
+/* inline ADR reference link */
+.adr-link {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--accent-text);
+  text-decoration: none; border-bottom: 1px solid transparent; transition: border-color .12s;
+}
+.adr-link:hover { border-bottom-color: var(--accent); }

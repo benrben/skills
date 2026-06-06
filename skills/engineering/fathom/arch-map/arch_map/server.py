@@ -283,7 +283,7 @@ _UI_CSP = (
     ResourceCSP(
         resourceDomains=[
             "https://cdn.jsdelivr.net",       # @modelcontextprotocol/ext-apps (host bridge)
-            "https://cdnjs.cloudflare.com",   # dagre (graph layout)
+            "https://cdnjs.cloudflare.com",   # elkjs (graph layout)
             "https://fonts.googleapis.com",   # studio fonts (stylesheet)
             "https://fonts.gstatic.com",      # studio fonts (font files)
         ],
@@ -312,7 +312,7 @@ def _inline_app(index_path: Path) -> str:
     server, so we inline its `/assets/*` CSS/JS (read fresh, so edits propagate)
     and set window.__ARCH_APP__ before any script runs. That flag flips the page's
     data layer into **host mode** — it connects via @modelcontextprotocol/ext-apps
-    and drives everything through tools instead of /api. The dagre + ext-apps CDN
+    and drives everything through tools instead of /api. The elkjs + ext-apps CDN
     tags stay (whitelisted by _UI_CSP). Same files the browser serves, so the inline
     render mirrors the browser exactly."""
     html = index_path.read_text(encoding="utf-8")
@@ -807,6 +807,8 @@ def _apply_action(store: Store, action: str, body: dict) -> None:
         store.resolve(body["suggestion_id"])
     elif action == "request_grilling":
         store.request_grilling(body["suggestion_id"])
+    elif action == "set_step_status":
+        store.set_step_status(body["plan_id"], body["step_id"], body["status"])
     elif action == "set_depth":
         store.set_depth(body["module"], float(body["score"]))
     elif action == "set_coverage":
