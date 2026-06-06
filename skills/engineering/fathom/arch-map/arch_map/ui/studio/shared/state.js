@@ -174,6 +174,16 @@
         supersededBy: Array.isArray(m.supersededBy) ? m.supersededBy : [],
         suggestion,
         suggestions,
+        metrics: m.metrics ? {
+          fanIn:       m.metrics.fanIn       || 0,
+          fanOut:      m.metrics.fanOut      || 0,
+          instability: m.metrics.instability ?? 0.5,
+          blastRadius: m.metrics.blastRadius || 0,
+          coupling:    m.metrics.coupling    || 0,
+          inCycle:     !!m.metrics.inCycle,
+          health:      m.metrics.health      ?? 50,
+          churn:       Math.round((m.metrics.churn || 0) * 100),
+        } : { fanIn:0, fanOut:0, instability:0.5, blastRadius:0, coupling:0, inCycle:false, health:50, churn:0 },
       };
     });
     const plans = (raw.plans || []).map(normPlan);

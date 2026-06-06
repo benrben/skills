@@ -574,6 +574,31 @@ def mark_updated(map: str, module: str, updated: bool = True) -> dict:
 
 
 @mcp.tool(**_APP)
+def set_churn(map: str, module: str, churn: float) -> dict:
+    """Set a module's churn score (0..1) in `map` — how frequently it changes.
+    fathom:map derives this from `git log --follow` commit frequency.
+    0 = never changes (stable), 1 = changes constantly (high churn).
+    High churn + low coverage is the riskiest combination."""
+    store = REGISTRY.store(map)
+    store.update_module(module, churn=max(0.0, min(1.0, churn)))
+    return _ack(store)
+
+
+@mcp.tool
+def get_metrics(map: str, module: str | None = None) -> dict:
+    """Return computed graph metrics for one module or all modules in `map`:
+    fanIn, fanOut, instability, blastRadius, coupling, inCycle, health, churn.
+    These are derived from the dependency graph — no extra data needed."""
+    model = REGISTRY.store(map)._load()
+    all_metrics = model.compute_metrics()
+    if module:
+        if module not in model.modules:
+            raise KeyError(f"no module '{module}'")
+        return {"map": map, "module": module, "metrics": all_metrics[module]}
+    return {"map": map, "metrics": all_metrics}
+
+
+@mcp.tool(**_APP)
 def resolve(map: str, suggestion_id: str) -> dict:
     """Dismiss a suggestion in `map` (e.g. after grilling rejects it) and re-render."""
     store = REGISTRY.store(map)

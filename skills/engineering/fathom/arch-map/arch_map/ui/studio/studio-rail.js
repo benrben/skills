@@ -143,6 +143,30 @@ window.Studio = window.Studio || {};
   }
 
   /* ============ inspector ============ */
+  function healthClass(h) { return h >= 70 ? "good" : h >= 40 ? "warn" : "bad"; }
+  function instClass(i)   { return i <= 0.33 ? "good" : i <= 0.66 ? "warn" : "bad"; }
+  function metricBadge(label, value, cls, title) {
+    return `<div class="mx-stat ${cls}" title="${title}"><div class="mx-val">${value}</div><div class="mx-lbl">${label}</div></div>`;
+  }
+  function metricsSection(m) {
+    const mx = m.metrics;
+    if (!mx) return "";
+    const instPct = Math.round(mx.instability * 100);
+    return `<div class="dr-sec dr-sec-metrics">
+      <h5>Graph metrics</h5>
+      <div class="mx-grid">
+        ${metricBadge("health", mx.health, healthClass(mx.health), "Composite score: depth + coverage − leaks − churn. Higher = healthier.")}
+        ${metricBadge("fan-in", mx.fanIn, mx.fanIn >= 10 ? "warn" : "good", "How many modules depend on this one. High = critical, changes are risky.")}
+        ${metricBadge("fan-out", mx.fanOut, mx.fanOut >= 8 ? "warn" : "good", "How many modules this one depends on. High = knows too much.")}
+        ${metricBadge("instability", instPct + "%", instClass(mx.instability), "fan-out ÷ (fan-in + fan-out). 0% = rock-stable, 100% = fragile — depends on everything, nothing depends on it.")}
+        ${metricBadge("blast radius", mx.blastRadius, mx.blastRadius >= 15 ? "bad" : mx.blastRadius >= 5 ? "warn" : "good", "If this module changes, how many modules are transitively affected.")}
+        ${metricBadge("coupling", mx.coupling, mx.coupling >= 3 ? "bad" : mx.coupling >= 1 ? "warn" : "good", "Cross-domain dependencies — how many domains this module reaches into.")}
+        ${mx.inCycle ? metricBadge("cycle", "⚠ yes", "bad", "This module is part of a circular dependency. Cycles make code hard to test and change.") : ""}
+        ${mx.churn ? metricBadge("churn", mx.churn + "%", mx.churn >= 70 ? "bad" : mx.churn >= 40 ? "warn" : "good", "How frequently this module changes (from git history). High churn + low coverage = danger zone.") : ""}
+      </div>
+    </div>`;
+  }
+
   function renderInspector() {
     const m = S.model.modules.find((x) => x.id === S.selectedId);
     if (!m) {
@@ -217,6 +241,7 @@ window.Studio = window.Studio || {};
             <div class="metric depth"><div class="ml"><span>depth</span>${stepper("depth")}</div><div class="mv">${m.depth}<span class="u">/100</span></div><div class="track"><i style="width:${m.depth}%"></i></div></div>
             <div class="metric cov"><div class="ml"><span>coverage</span>${stepper("cov")}</div><div class="mv">${m.coverage}<span class="u">%</span></div><div class="track"><i style="width:${m.coverage}%"></i></div></div>
           </div></div>
+        ${metricsSection(m)}
         <div class="dr-sec"><h5>Depends on</h5>${depPills}</div>
         ${intendsSec}
         <div class="dr-sec"><h5>Used by</h5>${usedPills}</div>

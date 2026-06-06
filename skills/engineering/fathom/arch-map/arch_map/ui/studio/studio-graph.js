@@ -628,8 +628,12 @@ window.Studio = window.Studio || {};
     if ((m.leaks || []).length) {
       flags.push(`<span class="flag-leak" title="${m.leaks.length} leak(s)">${X_SVG}${m.leaks.length}</span>`);
     }
+    if (m.metrics && m.metrics.inCycle) {
+      flags.push(`<span class="flag-cycle" title="part of a dependency cycle — circular import">↺</span>`);
+    }
 
     const cov  = m.coverage; // 0..100
+    const h = m.metrics ? m.metrics.health : null;
     const tint = m.plane === "intended" ? `<span class="card-fill-tint"></span>` : "";
     const cap  = m.plane === "intended" ? `<span class="planned-cap">PLANNED</span>` : "";
 
@@ -644,6 +648,7 @@ window.Studio = window.Studio || {};
       <div class="node-foot">
         <div class="cov-bar" title="coverage ${cov}%"><i style="width:${cov}%;background:${covColor(cov)}"></i></div>
         <span class="cov-pct">${(m.plane === "intended" && cov === 0) ? "—" : cov + "%"}</span>
+        ${h !== null ? `<span class="health-dot health-${h >= 70 ? "good" : h >= 40 ? "warn" : "bad"}" title="health score ${h}/100"></span>` : ""}
       </div>${cap}`;
   }
 

@@ -99,6 +99,7 @@ class Module:
     supersedes: list[str] = field(default_factory=list)      # actual module(s) an intended one will replace
     tests: str = ""
     suggestions: list[Suggestion] = field(default_factory=list)
+    churn: float = 0.0          # commit frequency 0..1 (set by fathom:map via git log)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Module":
@@ -138,6 +139,99 @@ class ArchModel:
                 connected.add(m.id)
                 connected.update(edges)
         return [mid for mid in self.modules if mid not in connected]
+
+    # ---- computed graph metrics (all read-only, derived from edges) ----------
+    def _fan_in(self) -> dict[str, int]:
+        """Number of modules that directly depend on each module."""
+        fi: dict[str, int] = {mid: 0 for mid in self.modules}
+        for m in self.modules.values():
+            for dep in m.dependsOn:
+                if dep in fi:
+                    fi[dep] += 1
+        return fi
+
+    def _blast_radius(self, fan_in_map: dict[str, int] | None = None) -> dict[str, int]:
+        """Transitive fan-in: how many modules are (transitively) affected if this one changes."""
+        # Build reverse adjacency once
+        rev: dict[str, set[str]] = {mid: set() for mid in self.modules}
+        for m in self.modules.values():
+            for dep in m.dependsOn:
+                if dep in rev:
+                    rev[dep].add(m.id)
+        # BFS from each node
+        result: dict[str, int] = {}
+        for start in self.modules:
+            visited: set[str] = set()
+            queue = list(rev[start])
+            while queue:
+                node = queue.pop()
+                if node not in visited:
+                    visited.add(node)
+                    queue.extend(rev.get(node, set()) - visited)
+            result[start] = len(visited)
+        return result
+
+    def _find_cycles(self) -> set[str]:
+        """Module ids that are part of a dependency cycle (DFS with colour marking)."""
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color = {mid: WHITE for mid in self.modules}
+        in_cycle: set[str] = set()
+        stack: list[str] = []
+
+        def dfs(node: str) -> bool:
+            color[node] = GRAY
+            stack.append(node)
+            for dep in self.modules[node].dependsOn:
+                if dep not in color:
+                    continue
+                if color[dep] == GRAY:
+                    # found cycle — mark everything in stack from dep onward
+                    idx = stack.index(dep)
+                    in_cycle.update(stack[idx:])
+                    return True
+                if color[dep] == WHITE:
+                    dfs(dep)
+            stack.pop()
+            color[node] = BLACK
+            return False
+
+        for mid in list(self.modules):
+            if color[mid] == WHITE:
+                dfs(mid)
+        return in_cycle
+
+    def compute_metrics(self) -> dict[str, dict]:
+        """Return a dict of mid -> metrics for every module. Called once per render."""
+        fi = self._fan_in()
+        br = self._blast_radius(fi)
+        cycles = self._find_cycles()
+        result: dict[str, dict] = {}
+        for m in self.modules.values():
+            fo = len(m.dependsOn)
+            fan_in = fi[m.id]
+            total = fan_in + fo
+            instability = round(fo / total, 3) if total else 0.5
+            cross = sum(1 for dep in m.dependsOn
+                        if dep in self.modules and self.modules[dep].domain != m.domain)
+            # health: depth 40% + coverage 40% - leaks 20% - churn penalty 10%
+            health = round(
+                min(100, max(0,
+                    m.depth * 40 + m.coverage * 40
+                    - len(m.leaksTo) * 10
+                    - m.churn * 10
+                )),
+            )
+            result[m.id] = {
+                "fanIn":       fan_in,
+                "fanOut":      fo,
+                "instability": instability,   # 0=stable, 1=fragile
+                "blastRadius": br[m.id],
+                "coupling":    cross,          # cross-domain dep count
+                "inCycle":     m.id in cycles,
+                "health":      health,         # 0-100 composite
+                "churn":       m.churn,
+            }
+        return result
 
     def _superseded_by(self) -> dict[str, list[str]]:
         """Reverse of supersedes: actual module id -> intended module ids replacing it."""
@@ -400,11 +494,13 @@ class ArchModel:
     def to_dict(self) -> dict:
         orphans = set(self.orphans())
         rev = self._superseded_by()
+        metrics = self.compute_metrics()
         modules = []
         for m in self.modules.values():
             d = asdict(m)
             d["orphan"] = m.id in orphans
             d["supersededBy"] = rev.get(m.id, [])
+            d["metrics"] = metrics[m.id]
             # Back-compat convenience for any consumer still reading a single
             # suggestion: surface the first OPEN candidate (or None).
             first_open = next((asdict(s) for s in m.suggestions if _OPEN(s)), None)
@@ -432,6 +528,7 @@ class ArchModel:
         enough for an agent's context. The browser UIs fetch the full model from
         /api/model; the graph only needs these fields to render."""
         orphans = set(self.orphans())
+        metrics = self.compute_metrics()
         modules = []
         for m in self.modules.values():
             sugg = [{"id": s.id, "strength": s.strength, "status": s.status,
@@ -444,6 +541,7 @@ class ArchModel:
                 "dependsOn": m.dependsOn, "leaksTo": m.leaksTo,
                 "intendsToDependOn": m.intendsToDependOn, "supersedes": m.supersedes,
                 "orphan": m.id in orphans,
+                "metrics": metrics[m.id],
                 "suggestions": sugg,
                 # back-compat: the single open candidate's strength, as before
                 "suggestion": ({"strength": first_open["strength"]} if first_open else None),

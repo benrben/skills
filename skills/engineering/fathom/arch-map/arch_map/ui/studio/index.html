@@ -63,6 +63,29 @@
       <div class="help-enc"><span class="cand-status grilling"></span><span class="et"><b>requested · grilling · grilled</b> pills = a candidate being grilled</span></div>
     </div>
     <div class="hsec">
+      <h5>What each metric means</h5>
+      <dl class="glossary">
+        <dt>Depth <span class="gl-good">higher = better</span></dt>
+        <dd>How much logic is hidden inside vs leaking out. A deep module does a lot of work behind a small, simple surface — callers don't need to care how it works. A shallow module is basically a wrapper that exposes everything.</dd>
+        <dt>Coverage <span class="gl-good">higher = better</span></dt>
+        <dd>How much of the module is tested. 0% = nothing is tested, 100% = everything is tested. Low coverage on an important module is the most dangerous combination — you can't safely change it.</dd>
+        <dt>Leak <span class="gl-bad">always bad</span></dt>
+        <dd>A module is reaching into something it shouldn't depend on. Like a checkout page importing database internals directly. Every leak is a hidden coupling — change one thing and something far away breaks.</dd>
+        <dt>Proposal</dt>
+        <dd>The agent spotted a way to improve a module — tighten its interface, split it up, or fix a bad dependency. It's not a bug report, it's a suggestion. You decide: accept it, defer it, or reject it.</dd>
+        <dt>Grilling</dt>
+        <dd>Putting a proposal under the microscope. The agent digs into whether it's actually worth doing — cost vs benefit. Ends with a verdict: yes, not now, or no.</dd>
+        <dt>Updated <span class="gl-warn">needs attention</span></dt>
+        <dd>The code changed since the last scan. The module's depth/coverage info might be out of date — worth re-scanning to see if the numbers still hold.</dd>
+        <dt>Orphan <span class="gl-warn">worth investigating</span></dt>
+        <dd>Nothing connects to this module and it connects to nothing. It's either dead code, a very early stub, or something that was added to the map by mistake.</dd>
+        <dt>Planned</dt>
+        <dd>A module that doesn't exist in the code yet — it's the intended future design. Shows as a dashed ghost card. Once it gets built, the ghost becomes a real card.</dd>
+        <dt>Domain</dt>
+        <dd>A group of related modules — like "api", "frontend", "seeds". Just a way to cluster things visually. Cross-domain arrows are the seams between subsystems.</dd>
+      </dl>
+    </div>
+    <div class="hsec">
       <h5>Legend</h5>
       <div class="legend">
         <span class="li"><span class="sw deep"></span>deep</span>
