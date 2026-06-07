@@ -233,6 +233,7 @@
 </div>
 
 <script src="/assets/shared/state.js"></script>
+<script src="/assets/shared/focus.js"></script>
 <script src="/assets/shared/chrome.js"></script>
 <script>renderChromeToggles(document.getElementById("chromeToggles"));</script>
 <script src="/assets/studio-graph.js"></script>
@@ -285,7 +286,7 @@
         renderMapSwitcher(); reflectRepo();
         if (Maps.current() !== lastMap) {            // an actual switch (not just a count refresh)
           lastMap = Maps.current();
-          Studio.deselect && Studio.deselect();
+          window.Arch.Focus && window.Arch.Focus.deselect();
           Studio.setTab && Studio.setTab("agent");
           setTimeout(() => Studio.fit && Studio.fit(true), 60);
         }

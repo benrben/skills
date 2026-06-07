@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dataclasses import fields
+from dataclasses import dataclass, field, fields
 import fcntl
 import json
 import re
@@ -356,6 +356,61 @@ def view_ui() -> str:
 _STRENGTH_KEY = {"Strong": "strong", "Worth exploring": "worth", "Speculative": "speculative"}
 _VIEW_COLS = ("id", "label", "domain", "depth", "coverage", "tests", "files", "suggestion")
 
+_VALID_METRICS = frozenset({"depth", "coverage"})
+_VALID_GROUP_BY = frozenset({"module", "domain"})
+_VALID_AGG = frozenset({"avg", "count"})
+
+
+@dataclass
+class TableSpec:
+    of: str = "all"
+    columns: list = field(default_factory=lambda: ["id", "domain", "depth", "coverage"])
+    sortBy: str | None = None
+    sortDir: str = "asc"
+    title: str = ""
+
+
+@dataclass
+class BarSpec:
+    metric: str = "depth"
+    groupBy: str = "module"
+    agg: str = "avg"
+    of: str = "all"
+    title: str = ""
+
+
+def _parse_view_spec(spec: dict) -> TableSpec | BarSpec:
+    """Parse a freeform spec dict into a typed TableSpec or BarSpec.
+    Resolves aliases (filter->of, group->groupBy, sort->sortBy).
+    Raises ValueError on invalid kind, metric, groupBy, or agg.
+    """
+    raw = spec or {}
+    kind = (raw.get("kind") or "table").lower()
+    if kind not in ("table", "bar"):
+        raise ValueError(f"invalid view kind {kind!r}; expected 'table' or 'bar'")
+    of = raw.get("of") or raw.get("filter") or "all"
+    title = raw.get("title") or ""
+    if kind == "bar":
+        metric = (raw.get("metric") or "depth").lower()
+        if metric not in _VALID_METRICS:
+            raise ValueError(f"invalid metric {metric!r}; expected one of {sorted(_VALID_METRICS)}")
+        groupBy = (raw.get("groupBy") or raw.get("group") or "module").lower()
+        if groupBy not in _VALID_GROUP_BY:
+            raise ValueError(f"invalid groupBy {groupBy!r}; expected one of {sorted(_VALID_GROUP_BY)}")
+        agg = (raw.get("agg") or "avg").lower()
+        if agg not in _VALID_AGG:
+            raise ValueError(f"invalid agg {agg!r}; expected one of {sorted(_VALID_AGG)}")
+        return BarSpec(metric=metric, groupBy=groupBy, agg=agg, of=of, title=title)
+    sortRaw = raw.get("sortBy") or raw.get("sort")
+    if isinstance(sortRaw, dict):
+        sortDir = sortRaw.get("dir", "asc")
+        sortBy = sortRaw.get("by")
+    else:
+        sortBy = sortRaw
+        sortDir = raw.get("sortDir", "asc")
+    columns = list(raw.get("columns") or ["id", "domain", "depth", "coverage"])
+    return TableSpec(of=of, columns=columns, sortBy=sortBy, sortDir=sortDir, title=title)
+
 
 def _view_filter(modules: list[dict], of: str, model: dict) -> list[dict]:
     """Select modules by a simple predicate keyword (or a domain name)."""
@@ -377,36 +432,33 @@ def _view_filter(modules: list[dict], of: str, model: dict) -> list[dict]:
     return [m for m in modules if keep(m)]
 
 
-def _build_view(model: dict, spec: dict) -> dict:
-    """Turn a {kind, of, ...} spec + a full model into a prepared view payload the
+def _build_view(model: dict, spec: TableSpec | BarSpec) -> dict:
+    """Turn a typed view spec + a full model into a prepared view payload the
     renderer draws verbatim (numbers already scaled to 0..100 for display)."""
-    kind = (spec.get("kind") or "table").lower()
-    of = spec.get("of") or spec.get("filter") or "all"
+    of = spec.of
     sel = _view_filter(model.get("modules", []), of, model)
     label = "all modules" if str(of).lower() in ("", "all") else of
-    out = {"kind": kind, "title": spec.get("title") or f"{kind} · {label}",
+    kind = "bar" if isinstance(spec, BarSpec) else "table"
+    out = {"kind": kind, "title": spec.title or f"{kind} · {label}",
            "repo": model.get("repo", ""), "count": len(sel)}
 
-    if kind == "bar":
-        metric = (spec.get("metric") or "depth").lower()        # depth | coverage
-        group = (spec.get("groupBy") or spec.get("group") or "module").lower()
-        out["metric"], out["groupBy"] = metric, group
-        if group == "domain":
-            agg = spec.get("agg") or "avg"                       # avg | count
+    if isinstance(spec, BarSpec):
+        out["metric"], out["groupBy"] = spec.metric, spec.groupBy
+        if spec.groupBy == "domain":
             buckets: dict[str, list[float]] = {}
             for m in sel:
-                buckets.setdefault(m.get("domain", "—"), []).append(m.get(metric) or 0)
-            if agg == "count":
+                buckets.setdefault(m.get("domain", "—"), []).append(m.get(spec.metric) or 0)
+            if spec.agg == "count":
                 mx = max((len(v) for v in buckets.values()), default=1) or 1
                 bars = [{"label": d, "value": str(len(v)), "pct": round(len(v) / mx * 100)} for d, v in buckets.items()]
             else:
                 bars = [{"label": d, "value": f"{round(sum(v) / len(v) * 100)}%", "pct": round(sum(v) / len(v) * 100)} for d, v in buckets.items()]
         else:
-            bars = [{"label": m["id"], "value": f"{round((m.get(metric) or 0) * 100)}%", "pct": round((m.get(metric) or 0) * 100)} for m in sel]
+            bars = [{"label": m["id"], "value": f"{round((m.get(spec.metric) or 0) * 100)}%", "pct": round((m.get(spec.metric) or 0) * 100)} for m in sel]
         bars.sort(key=lambda b: b["pct"], reverse=True)
         out["bars"] = bars
-    else:                                                        # table (default)
-        cols = [c for c in (spec.get("columns") or ["id", "domain", "depth", "coverage"]) if c in _VIEW_COLS]
+    else:
+        cols = [c for c in spec.columns if c in _VIEW_COLS]
         cols = cols or ["id", "domain", "depth", "coverage"]
         rows = []
         for m in sel:
@@ -420,11 +472,8 @@ def _build_view(model: dict, spec: dict) -> dict:
                 elif c == "tests": row[c] = "✓" if (m.get("tests") or "").strip() else ""
                 else: row[c] = m.get(c)
             rows.append(row)
-        sby = spec.get("sortBy") or spec.get("sort")
-        sdir = spec.get("sortDir", "asc")
-        if isinstance(sby, dict): sdir, sby = sby.get("dir", "asc"), sby.get("by")
-        if sby in cols:
-            rows.sort(key=lambda r: (r.get(sby) is None, r.get(sby)), reverse=(sdir == "desc"))
+        if spec.sortBy in cols:
+            rows.sort(key=lambda r: (r.get(spec.sortBy) is None, r.get(spec.sortBy)), reverse=(spec.sortDir == "desc"))
         out["columns"], out["rows"] = cols, rows
     return out
 
@@ -522,7 +571,7 @@ def render_view(map: str, spec: dict) -> dict:
 
     e.g. render_view(map, {"kind":"table","of":"low-coverage","columns":["id","domain","coverage"],"sortBy":"coverage","sortDir":"asc"})
          render_view(map, {"kind":"bar","metric":"coverage","groupBy":"domain","agg":"avg"})"""
-    payload = _build_view(REGISTRY.store(map).to_dict(), spec or {})
+    payload = _build_view(REGISTRY.store(map).to_dict(), _parse_view_spec(spec or {}))
     payload["map"] = map
     return payload
 
@@ -736,7 +785,7 @@ def get_module(map: str, module: str) -> dict:
 @mcp.tool(**_APP)
 def update_module(map: str, module: str, fields: dict) -> dict:
     """Patch a module in `map` and re-render. Editable: label, domain, depth, size,
-    seam, iface, coverage, updated, files, dependsOn, leaksTo, tests.
+    seam, iface, coverage, churn, updated, files, dependsOn, leaksTo, tests.
     (Suggestions are managed via flag_deepening / resolve.)"""
     store = REGISTRY.store(map)
     store.update_module(module, **fields)
@@ -1019,7 +1068,11 @@ async def api_view(request):
         store = REGISTRY.resolve(q.get("map"))
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=404)
-    return JSONResponse(_build_view(store.to_dict(), spec))
+    try:
+        parsed = _parse_view_spec(spec)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(_build_view(store.to_dict(), parsed))
 
 
 @mcp.custom_route("/api/act", ["POST"])

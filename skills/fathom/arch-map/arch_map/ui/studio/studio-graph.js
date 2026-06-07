@@ -3,6 +3,7 @@ window.Studio = window.Studio || {};
 (function (S) {
   "use strict";
   const { Store, subscribe, tierOf, isOrphan, openSuggestions, isOpen, STRENGTHS } = window.Arch;
+  const Focus = window.Arch.Focus;   // the focus seam: owns selection/hover/isolation state
 
   /* ================================================================ *
    *  CONSTANTS
@@ -18,9 +19,7 @@ window.Studio = window.Studio || {};
    *  SHARED STUDIO STATE
    * ================================================================ */
   S.model      = Store.get();
-  S.selectedId = null;
-  S.hoverId    = null;
-  S.railHotId  = null;
+  // selection/hover/isolation state now lives in the focus seam (window.Arch.Focus).
   S.filter     = "all";
   S.search     = "";
   S.allEdges   = false;
@@ -49,8 +48,7 @@ window.Studio = window.Studio || {};
   let savedView = null;
   // #12 breadcrumb scope mirror (rendered into #breadcrumb).
   let scope = { mode: "overview" };
-  // #14 isolate state.
-  S.isolatedId = null;
+  // #14 isolate state now lives in the focus seam (window.Arch.Focus).
 
   // #19 minimap throttling: an offscreen scene canvas (structure-time) + a rAF-coalesced
   // viewport redraw (per-frame). mmSceneDirty forces a scene rebuild on the next draw.
@@ -697,12 +695,12 @@ window.Studio = window.Studio || {};
     el.tabIndex = 0;
     el.setAttribute("role", "button");
     el.setAttribute("aria-label", `${m.id} — ${m.label}, ${m.domain}`);
-    el.addEventListener("mouseenter", () => { S.hoverId = m.id; refreshVisualState(); });
-    el.addEventListener("mouseleave", () => { S.hoverId = null; refreshVisualState(); });
-    el.addEventListener("click", e => { e.stopPropagation(); S.selectNode && S.selectNode(m.id); });
+    el.addEventListener("mouseenter", () => Focus.hover(m.id, "graph"));
+    el.addEventListener("mouseleave", () => Focus.hover(null, "graph"));
+    el.addEventListener("click", e => { e.stopPropagation(); Focus.select(m.id); });
     el.addEventListener("keydown", e => {
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
-        e.preventDefault(); S.selectNode && S.selectNode(m.id);
+        e.preventDefault(); Focus.select(m.id);
       }
     });
     return el;
@@ -841,8 +839,8 @@ window.Studio = window.Studio || {};
     el.tabIndex = 0;
     el.setAttribute("role", "button");
     el.setAttribute("aria-label", `${dom} domain — ${members.length} modules, open`);
-    el.addEventListener("mouseenter", () => { S.hoverId = "super:" + dom; refreshVisualState(); });
-    el.addEventListener("mouseleave", () => { S.hoverId = null; refreshVisualState(); });
+    el.addEventListener("mouseenter", () => Focus.hover("super:" + dom, "graph"));
+    el.addEventListener("mouseleave", () => Focus.hover(null, "graph"));
     el.addEventListener("click", e => { e.stopPropagation(); enterDomain(dom); });
     el.addEventListener("keydown", e => {
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); enterDomain(dom); }
@@ -870,7 +868,8 @@ window.Studio = window.Studio || {};
   function renderBreadcrumb() {
     const el = els.breadcrumb;
     if (!el) return;
-    const sel = S.selectedId && S.model.modules.find(x => x.id === S.selectedId);
+    const selId = Focus.current().selectedId;
+    const sel = selId && S.model.modules.find(x => x.id === selId);
     let html = "";
     if (mode === "overview") {
       const n = domainsOf().size;
@@ -1037,7 +1036,7 @@ window.Studio = window.Studio || {};
   // strip the .isolating state + markers without restoring the view (used when a
   // mode switch or rebuild supersedes the isolation).
   function clearIsolateState() {
-    S.isolatedId = null;
+    Focus.clearIsolate();
     if (els.stage) els.stage.classList.remove("isolating");
     Object.values(nodeEl).forEach(el => el.classList.remove("iso-in"));
     els.edges.querySelectorAll(".iso-in").forEach(p => p.classList.remove("iso-in"));
@@ -1048,7 +1047,7 @@ window.Studio = window.Studio || {};
     if (!id || !layout || !nodeEl[id]) return;
     const hood = neighbourhood(id);          // the module + everything it touches
     savedView = { ...view };                 // so clearIsolate can restore the framing
-    S.isolatedId = id;
+    Focus.isolate(id);
     // mark the kept cards + the edges fully inside the hood
     Object.entries(nodeEl).forEach(([k, el]) => el.classList.toggle("iso-in", hood.has(k)));
     els.edges.querySelectorAll(".edge, .leak-x").forEach(p => {
@@ -1063,7 +1062,7 @@ window.Studio = window.Studio || {};
   };
 
   S.clearIsolate = function () {
-    if (!S.isolatedId) return;
+    if (!Focus.current().isolatedId) return;
     clearIsolateState();
     if (savedView) {                          // #14: restore the pre-isolate framing
       setSmooth(true);
@@ -1078,9 +1077,10 @@ window.Studio = window.Studio || {};
   function syncIsolateBtn() {
     const btn = document.getElementById("isolateBtn");
     if (!btn) return;
-    const on = !!S.isolatedId;
+    const f = Focus.current();
+    const on = !!f.isolatedId;
     btn.setAttribute("aria-pressed", on ? "true" : "false");
-    btn.disabled = !S.selectedId && !on;     // enabled when something is selected (or active)
+    btn.disabled = !f.selectedId && !on;     // enabled when something is selected (or active)
   }
   S.syncIsolateBtn = syncIsolateBtn;
 
@@ -1143,7 +1143,8 @@ window.Studio = window.Studio || {};
     if (!layout) return;
     // #1 sticky selection: a selected node keeps its neighbourhood spotlighted even
     // when the pointer leaves it (hover/railHot still win while active).
-    const focusId = S.hoverId || S.railHotId || S.selectedId;
+    const f       = Focus.current();
+    const focusId = f.focusId;
     const isOv    = mode === "overview";
     const hot     = focusId
       ? (isOv && focusId.startsWith("super:") ? domainNeighbourhood(focusId.slice(6)) : neighbourhood(focusId))
@@ -1165,8 +1166,8 @@ window.Studio = window.Studio || {};
       let dim = !matchFilter(m) || !matchSearch(m);
       if (hot && !hot.has(id)) dim = true;
       el.classList.toggle("dim",      dim);
-      el.classList.toggle("sel",      id === S.selectedId);
-      el.classList.toggle("spot",     id === focusId && focusId !== S.selectedId);
+      el.classList.toggle("sel",      id === f.selectedId);
+      el.classList.toggle("spot",     id === focusId && focusId !== f.selectedId);
       el.classList.toggle("match-hit", !!S.search && matchSearch(m));
     });
 
@@ -1223,7 +1224,6 @@ window.Studio = window.Studio || {};
     syncIsolateBtn();
   }
   S.refreshVisualState = refreshVisualState;
-  S.setRailHot = function (id) { S.railHotId = id; refreshVisualState(); };
 
   /* ================================================================ *
    *  ORPHAN TRAY
@@ -1234,7 +1234,7 @@ window.Studio = window.Studio || {};
     els.orphanItems.innerHTML = orphans.length
       ? orphans.map(m => `<button class="orphan-chip" data-nav="${m.id}"><code>${m.id}</code> ${m.label}</button>`).join("")
       : `<span class="ot-empty">everything is connected</span>`;
-    els.orphanItems.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => S.selectNode && S.selectNode(b.dataset.nav));
+    els.orphanItems.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => Focus.select(b.dataset.nav));
   }
 
   /* ================================================================ *
@@ -1315,13 +1315,12 @@ window.Studio = window.Studio || {};
   async function enterOverview(focusDom) {
     if (mode === "overview" && layout && !focusDom) return;
     modeSwitching = true;
-    if (S.isolatedId) clearIsolateState();   // #14: isolate is mode-scoped
+    if (Focus.current().isolatedId) clearIsolateState();   // #14: isolate is mode-scoped
     const wasSeen = seenModes.has("overview");
     const prevView = { ...view };
     mode = "overview";
     collapsed.clear();
-    S.selectedId = null;
-    if (S.deselect) S.deselect();
+    Focus.deselect();
     scope = { mode: "overview", lod: scope.lod };
     await buildGraph();
     if (focusDom && layout.supers[focusDom]) {
@@ -1344,7 +1343,7 @@ window.Studio = window.Studio || {};
     opts = opts || {};
     if (mode === "detail" && layout && !focusDom) return;
     modeSwitching = true;
-    if (S.isolatedId) clearIsolateState();   // #14: isolate is mode-scoped
+    if (Focus.current().isolatedId) clearIsolateState();   // #14: isolate is mode-scoped
     const wasSeen = seenModes.has("detail");
     const prevView = { ...view };
     mode = "detail";
@@ -1382,7 +1381,7 @@ window.Studio = window.Studio || {};
    *  PUBLIC REBUILD / SOFT UPDATE
    * ================================================================ */
   S.rebuildGraph = async function () {
-    if (S.isolatedId) clearIsolateState();   // #14: isolation doesn't survive a structural rebuild
+    if (Focus.current().isolatedId) clearIsolateState();   // #14: isolation doesn't survive a structural rebuild
     buildDomainPalette();
     await buildGraph();
     renderOrphans();
@@ -1436,8 +1435,16 @@ window.Studio = window.Studio || {};
     initPanZoom();
     initMinimapDrag();
 
+    // The focus seam drives every selection/hover/isolation visual: repaint on any
+    // change, and refresh the breadcrumb only when the selection itself moves. The rail
+    // is a separate subscriber — the two no longer reach across each other's state.
+    Focus.subscribe((next, prev) => {
+      refreshVisualState();
+      if (next.selectedId !== prev.selectedId) renderBreadcrumb();
+    });
+
     els.stage.addEventListener("click", e => {
-      if (!e.target.closest(".node, .supernode, .hull-chip")) S.deselect && S.deselect();
+      if (!e.target.closest(".node, .supernode, .hull-chip")) Focus.deselect();
     });
 
     // hull chip collapse (delegate from hulls div)
@@ -1470,8 +1477,9 @@ window.Studio = window.Studio || {};
     // #14 isolate toggle: isolate the selected module's neighbourhood, or clear it.
     const isolateBtn = document.getElementById("isolateBtn");
     if (isolateBtn) isolateBtn.onclick = () => {
-      if (S.isolatedId) S.clearIsolate();
-      else if (S.selectedId) S.isolate(S.selectedId);
+      const f = Focus.current();
+      if (f.isolatedId) S.clearIsolate();
+      else if (f.selectedId) S.isolate(f.selectedId);
       syncIsolateBtn();
     };
     syncIsolateBtn();

@@ -3,6 +3,7 @@ window.Studio = window.Studio || {};
 (function (S) {
   "use strict";
   const { Store, subscribe, tierOf, isOrphan, openSuggestions, isOpen, STRENGTHS } = window.Arch;
+  const Focus = window.Arch.Focus;   // the focus seam: owns selection/hover/isolation state
 
   const els = {};
   let activeTab = "agent";   // agent | inspector | modules | plans
@@ -128,11 +129,11 @@ window.Studio = window.Studio || {};
   function wireProps(root) {
     root.querySelectorAll(".aprop").forEach((card) => {
       const id = card.dataset.prop;
-      card.addEventListener("mouseenter", () => { S.setRailHot(id); card.classList.add("hot"); });
-      card.addEventListener("mouseleave", () => { S.setRailHot(null); card.classList.remove("hot"); });
+      card.addEventListener("mouseenter", () => { Focus.hover(id, "rail"); card.classList.add("hot"); });
+      card.addEventListener("mouseleave", () => { Focus.hover(null, "rail"); card.classList.remove("hot"); });
     });
     root.querySelectorAll("[data-locate]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.reveal(b.dataset.locate, {}); });   // #9
-    root.querySelectorAll("[data-open]").forEach((b) => b.onclick = (e) => { e.preventDefault(); S.selectNode(b.dataset.open); S.reveal(b.dataset.open, {}); });   // #9
+    root.querySelectorAll("[data-open]").forEach((b) => b.onclick = (e) => { e.preventDefault(); Focus.select(b.dataset.open); S.reveal(b.dataset.open, {}); });   // #9
     // #15 forward link: proposal → its plan (open Plans tab + flash the plan card).
     root.querySelectorAll("[data-nav-plan]").forEach((b) => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setTab("plans"); flashPlan(b.dataset.navPlan); });
     root.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => {
@@ -310,7 +311,7 @@ window.Studio = window.Studio || {};
   }
 
   function renderInspector() {
-    const m = S.model.modules.find((x) => x.id === S.selectedId);
+    const m = S.model.modules.find((x) => x.id === Focus.current().selectedId);
     if (!m) {
       els.inspPane.innerHTML = `<div class="insp-empty">
         <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></div>
@@ -406,7 +407,7 @@ window.Studio = window.Studio || {};
         <div class="danger-zone" id="dz"></div>
       </div>`;
 
-    els.inspPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.nav); S.reveal(b.dataset.nav, {}); });   // #9
+    els.inspPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { Focus.select(b.dataset.nav); S.reveal(b.dataset.nav, {}); });   // #9
     els.inspPane.querySelectorAll("[data-step]").forEach((b) => b.onclick = () => {
       const [kind, dir] = b.dataset.step.split(":"), delta = dir === "up" ? 5 : -5;
       S.model = kind === "depth" ? Store.setDepth(m.id, delta) : Store.setCoverage(m.id, delta);
@@ -439,7 +440,7 @@ window.Studio = window.Studio || {};
       dz.innerHTML = `<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Delete <b style="font-family:var(--font-mono)">${id}</b> and its edges?</div>
         <div class="confirm-row"><button class="btn" id="cancel">Cancel</button><button class="btn danger-solid" id="yes">Delete</button></div>`;
       dz.querySelector("#cancel").onclick = () => renderDanger(id);
-      dz.querySelector("#yes").onclick = () => { S.model = Store.deleteModule(id); S.selectedId = null; S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)", { undo: true }); };
+      dz.querySelector("#yes").onclick = () => { S.model = Store.deleteModule(id); Focus.deselect(); S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)", { undo: true }); };
     };
   }
   function flashProp(id) {
@@ -491,15 +492,15 @@ window.Studio = window.Studio || {};
     const sb = els.modsPane.querySelector("#modSearch");
     sb.oninput = () => { modSearch = sb.value.trim().toLowerCase(); const pos = sb.selectionStart; renderModules(); const nb = els.modsPane.querySelector("#modSearch"); nb.focus(); nb.setSelectionRange(pos, pos); };
 
-    els.modsPane.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.open); S.reveal(b.dataset.open, {}); });   // #9
+    els.modsPane.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { Focus.select(b.dataset.open); S.reveal(b.dataset.open, {}); });   // #9
     els.modsPane.querySelectorAll(".mrow").forEach((r) => {
       const id = r.dataset.row;
-      r.addEventListener("mouseenter", () => S.setRailHot(id));
-      r.addEventListener("mouseleave", () => S.setRailHot(null));
+      r.addEventListener("mouseenter", () => Focus.hover(id, "rail"));
+      r.addEventListener("mouseleave", () => Focus.hover(null, "rail"));
     });
     els.modsPane.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
       const id = b.dataset.del;
-      if (b.dataset.confirm) { S.model = Store.deleteModule(id); if (S.selectedId === id) S.selectedId = null; S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)", { undo: true }); }
+      if (b.dataset.confirm) { S.model = Store.deleteModule(id); if (Focus.current().selectedId === id) Focus.deselect(); S.rebuildGraph(); S.renderRail(); S.toast("Deleted " + id, "var(--leak)", { undo: true }); }
       else { b.dataset.confirm = "1"; b.textContent = "?"; b.style.color = "var(--leak)"; b.style.borderColor = "var(--leak)"; setTimeout(() => { if (b.isConnected) { b.dataset.confirm = ""; b.textContent = "✕"; b.style.color = ""; b.style.borderColor = ""; } }, 2000); }
     });
     els.modsPane.querySelector("#mAddSave").onclick = () => {
@@ -552,7 +553,7 @@ window.Studio = window.Studio || {};
       </article>`;
     }).join("");
 
-    els.plansPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { S.selectNode(b.dataset.nav); S.reveal(b.dataset.nav, {}); });   // #9
+    els.plansPane.querySelectorAll("[data-nav]").forEach((b) => b.onclick = () => { Focus.select(b.dataset.nav); S.reveal(b.dataset.nav, {}); });   // #9
     // #15 back-link: plan → its source proposal (open Proposals tab + flash the card).
     els.plansPane.querySelectorAll("[data-back-prop]").forEach((b) => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setTab("agent"); flashProp(b.dataset.backProp); });
     els.plansPane.querySelectorAll(".ps-set").forEach((b) => b.onclick = () => {
@@ -656,7 +657,7 @@ window.Studio = window.Studio || {};
     ipListEl.querySelectorAll("[data-ipnav]").forEach((el) => el.onclick = (ev) => {
       if (ev.target.closest("[data-ipfix]")) return;   // the fix button has its own handler
       const id = el.dataset.ipnav;
-      S.selectNode(id);                                // opens inspector + highlights
+      Focus.select(id);                                // opens inspector + highlights
       S.reveal(id, { close: true });                   // enters detail, centers, closes panel
     });
     // #11 per-row "fix →": ask the agent to fix this module.
@@ -703,25 +704,20 @@ window.Studio = window.Studio || {};
     renderIssuesPanel();
   };
 
-  /* ============ select / deselect ============ */
-  S.selectNode = function (id) {
-    S.selectedId = id;
-    setTab("inspector");
+  /* ============ react to focus (selection) changes ============ */
+  // Selection lives in the focus seam (window.Arch.Focus); the rail is a subscriber.
+  // When the selection moves, open + render the inspector and mirror it into ?sel. The
+  // graph is a separate subscriber that owns the spotlight + breadcrumb, so the two
+  // surfaces no longer reach across each other's state. Registered in bootRail().
+  function onFocusChange(next, prev) {
+    if (next.selectedId === prev.selectedId) return;   // only react to selection moves
     renderInspector();
-    S.refreshVisualState();
-    if (S.railCollapsed) S.toggleRail(true);
-    // #2 deep-link: mirror the selection into ?sel so the view is bookmarkable.
-    syncSelUrl(id);
-    // #12: reflect the selected module in the breadcrumb (graph owns the readout).
-    if (S.setBreadcrumb) S.setBreadcrumb({ mode: "detail", moduleId: id });
-  };
-  S.deselect = function () {
-    S.selectedId = null;
-    renderInspector();
-    S.refreshVisualState();
-    syncSelUrl(null);                       // #2: drop ?sel
-    if (S.setBreadcrumb) S.setBreadcrumb({});
-  };
+    syncSelUrl(next.selectedId);                       // #2: keep ?sel bookmarkable
+    if (next.selectedId) {
+      setTab("inspector");
+      if (S.railCollapsed) S.toggleRail(true);
+    }
+  }
 
   // #2: write/clear the ?sel query param (mirrors doSearch's ?q pattern in graph).
   function syncSelUrl(id) {
@@ -810,7 +806,7 @@ window.Studio = window.Studio || {};
     row.className = "activity-row agent is-new";
     row.innerHTML = `<span class="at">${esc(at)}</span><span class="av">${entry.text || activityVerb(entry)}</span>`;
     if (entry.module) {
-      row.onclick = () => { S.selectNode(entry.module); S.reveal(entry.module, { flash: true }); };
+      row.onclick = () => { Focus.select(entry.module); S.reveal(entry.module, { flash: true }); };
     }
     feed.insertBefore(row, feed.firstChild);
     activityRows++;
@@ -860,7 +856,7 @@ window.Studio = window.Studio || {};
     root.querySelectorAll("[data-xissue]").forEach((b) => b.onclick = (e) => {
       e.preventDefault();
       const id = b.dataset.xissue;
-      S.selectNode(id);
+      Focus.select(id);
       if (S.toggleIssuesPanel) S.toggleIssuesPanel(true);
     });
     root.querySelectorAll("[data-xprop]").forEach((b) => b.onclick = (e) => {
@@ -935,10 +931,13 @@ window.Studio = window.Studio || {};
     S._structSig = S.sigOf(S.model);
     S.renderRail(); renderHeaderCounts(); setTab("agent");
 
+    // react to selection changes from either surface (graph clicks, rail buttons, ?sel).
+    Focus.subscribe(onFocusChange);
+
     // deep links
     const q = new URLSearchParams(location.search);
     if (q.get("q")) { S._searchBox.value = q.get("q"); S._searchBox.dispatchEvent(new Event("input")); }
-    if (q.get("sel")) S.selectNode(q.get("sel"));
+    if (q.get("sel")) Focus.select(q.get("sel"));
 
     // issues panel wiring
     const ipTab = document.getElementById("ipTab");
@@ -952,7 +951,7 @@ window.Studio = window.Studio || {};
     window.addEventListener("keydown", (e) => {
       if (document.activeElement === ipSearchEl) return;
       if (e.key === "/" && document.activeElement !== S._searchBox) { e.preventDefault(); S._searchBox.focus(); }
-      if (e.key === "Escape") { S.deselect(); S.toggleIssuesPanel(false); }
+      if (e.key === "Escape") { Focus.deselect(); S.toggleIssuesPanel(false); }
       if (e.key === "p" || e.key === "P") S.toggleIssuesPanel();
       if (e.key === "1") setTab("agent");
       if (e.key === "2") setTab("inspector");

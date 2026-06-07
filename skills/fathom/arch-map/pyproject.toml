@@ -17,6 +17,15 @@ dependencies = [
 # (try/except) and degrades to Lane 1 when absent.
 # Install with:  uv pip install -e ".[generative]"
 generative = ["fastmcp[apps]>=3.2"]
+# Test harness — interface tests for the model/server core.
+# Install with:  uv pip install -e ".[test]"   (then: python -m pytest)
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+# Put the package root on the path so `import arch_map` works without an install,
+# and keep discovery to the tests/ tree.
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [project.scripts]
 arch-map = "arch_map.server:main"

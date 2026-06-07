@@ -357,15 +357,16 @@ class ArchModel:
 
     # ---- module CRUD ------------------------------------------------------
     _EDITABLE = frozenset({
-        "label", "domain", "depth", "size", "seam", "iface", "coverage", "updated",
-        "plane", "lifecycle", "files", "dependsOn", "leaksTo", "intendsToDependOn",
-        "supersedes", "tests",
+        "label", "domain", "depth", "size", "seam", "iface", "coverage", "churn",
+        "updated", "plane", "lifecycle", "files", "dependsOn", "leaksTo",
+        "intendsToDependOn", "supersedes", "tests",
     })
     _EDGE_FIELDS = ("dependsOn", "leaksTo", "intendsToDependOn", "supersedes")
 
     def _clamp(self, m: Module) -> None:
         m.depth = max(0.0, min(1.0, m.depth))
         m.coverage = max(0.0, min(1.0, m.coverage))
+        m.churn = max(0.0, min(1.0, m.churn))
 
     def add_module(self, module: Module) -> None:
         if module.id in self.modules:
