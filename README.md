@@ -31,7 +31,7 @@ This repo is a self-contained Claude Code **plugin + marketplace** (`fathom`). I
 
 ```bash
 cd /path/to/your/other-project
-/plugin marketplace add /Users/benreich/skills      # or the git URL: https://github.com/benrben/skills
+/plugin marketplace add https://github.com/benrben/skills      # or a local clone: /path/to/skills
 /plugin install fathom@fathom
 ```
 
