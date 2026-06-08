@@ -51,7 +51,7 @@ try:  # Lane 2 — Generative/Prefab UI — needs the prefab-ui extra ON TOP of 
 except Exception:  # pragma: no cover
     _HAS_PREFAB = False
 
-from .model import ArchModel, Module, Suggestion, Plan, WorkStep
+from .model import ArchModel, Module, Suggestion, Plan, WorkStep, Doc
 
 HERE = Path(__file__).parent
 # The unified **studio** — one workspace combining the dependency graph (canvas)
@@ -111,11 +111,15 @@ class Store:
     def get_module(self, mid): return self._load().get_module(mid)
     def get_modules(self, ids): return self._load().get_modules(ids)
     def get_plan(self, pid): return self._load().get_plan(pid)
+    def get_doc(self, did): return self._load().get_doc(did)
+    def get_docs(self, ids): return self._load().get_docs(ids)
     def queued_for_grilling(self): return self._load().queued_for_grilling()
     @property
     def modules(self): return self._load().modules
     @property
     def plans(self): return self._load().plans
+    @property
+    def docs(self): return self._load().docs
 
     # writes (load -> mutate -> save)
     def set_depth(self, mid, s): self._write(lambda m: m.set_depth(mid, s))
@@ -143,6 +147,9 @@ class Store:
     def add_work_steps(self, pid, steps): self._write(lambda m: m.add_work_steps(pid, steps))
     def set_step_status(self, pid, sid, st): self._write(lambda m: m.set_step_status(pid, sid, st))
     def delete_plan(self, pid): self._write(lambda m: m.delete_plan(pid))
+    def add_doc(self, doc): self._write(lambda m: m.add_doc(doc))
+    def update_doc(self, did, **ch): self._write(lambda m: m.update_doc(did, **ch))
+    def delete_doc(self, did): self._write(lambda m: m.delete_doc(did))
 
 
 _MAP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -485,7 +492,8 @@ def _build_view(model: dict, spec: TableSpec | BarSpec) -> dict:
 def _ack(store: Store, changed: str | None = None) -> dict:
     v = store.to_view()
     return {"ok": True, "changed": changed, "repo": v["repo"], "modules": len(v["modules"]),
-            "orphans": v["orphans"], "openSuggestions": v["openSuggestions"]}
+            "orphans": v["orphans"], "openSuggestions": v["openSuggestions"],
+            "docs": len(v.get("docs", []))}
 
 
 @mcp.tool
@@ -960,6 +968,75 @@ def update_plan(map: str, plan_id: str, fields: dict) -> dict:
     return _ack(store)
 
 
+# --- Docs: scoped architecture documents (doc-tools) ------------------------
+# ONE dispatch helper for every doc mutation, called by BOTH the @mcp.tool
+# functions below AND the /api/docs route — so docs are the first citizen of the
+# unified-dispatch shape the open `http-backend-strong` candidate proposes, NOT a
+# fourth copy of the legacy triple-dispatch (_apply_action / _call_tool / tools).
+def _apply_doc(store: Store, action: str, body: dict) -> None:
+    if action == "add":
+        store.add_doc(Doc.from_dict(body["doc"]))
+    elif action == "update":
+        store.update_doc(body["doc_id"], **body.get("fields", {}))
+    elif action == "delete":
+        store.delete_doc(body["doc_id"])
+    else:
+        raise ValueError(f"unknown doc action '{action}'")
+
+
+@mcp.tool(**_APP)
+def add_doc(map: str, id: str, type: str, title: str, scope: dict | None = None,
+            summary: str = "", body: str = "", status: str = "",
+            tags: list[str] | None = None, supersedes: list[str] | None = None,
+            adrRef: str = "", author: str = "") -> dict:
+    """Create a scoped architecture doc in `map` and re-render (creates the map if new).
+
+    type:  adr | note | rule | rfc | glossary
+    scope: {"kind": "system"} | {"kind":"explicit","ids":[...]} |
+           {"kind":"domain","domain":"<d>"} |
+           {"kind":"query","predicate":{domain/plane/lifecycle/depthGte/depthLte/
+            coverageLte/hasLeak/hasOpenCandidate/tag}}   (defaults to whole-system)
+    """
+    store = REGISTRY.ensure(map)
+    _apply_doc(store, "add", {"doc": {
+        "id": id, "type": type, "title": title, "scope": scope or {"kind": "system"},
+        "summary": summary, "body": body, "status": status, "tags": tags or [],
+        "supersedes": supersedes or [], "adrRef": adrRef, "author": author,
+    }})
+    return _ack(store, changed=f"added doc {id}")
+
+
+@mcp.tool(**_APP)
+def update_doc(map: str, doc_id: str, fields: dict) -> dict:
+    """Patch a doc in `map` and re-render. Editable: type, title, summary, body,
+    status, scope, tags, author, created, updated, supersedes, adrRef."""
+    store = REGISTRY.store(map)
+    _apply_doc(store, "update", {"doc_id": doc_id, "fields": fields})
+    return _ack(store, changed=f"updated doc {doc_id}")
+
+
+@mcp.tool(**_APP)
+def delete_doc(map: str, doc_id: str) -> dict:
+    """Delete a doc from `map` and re-render."""
+    store = REGISTRY.store(map)
+    _apply_doc(store, "delete", {"doc_id": doc_id})
+    return _ack(store, changed=f"deleted doc {doc_id}")
+
+
+@mcp.tool
+def list_docs(map: str) -> dict:
+    """List a map's docs, each with its resolved scope baked in (resolvedModuleIds +
+    drift + scopeLabel), plus the moduleId->docIds membership map. Read-only."""
+    d = REGISTRY.store(map).to_dict()
+    return {"map": map, "docs": d["docs"], "docMembership": d["docMembership"]}
+
+
+@mcp.tool
+def get_doc(map: str, doc_id: str) -> dict:
+    """Read one doc's full record from `map`, with its scope resolved. Read-only."""
+    return REGISTRY.store(map).get_doc(doc_id)
+
+
 # --- HTTP studio app (browser UI -> saved back to the server) ---------------
 # The studio (ui/studio/) is served from the same FastMCP app, so the page is
 # same-origin with /api/maps + /api/model + /api/act (no CORS). The studio picks a
@@ -1045,6 +1122,27 @@ async def api_model(request):
         store = REGISTRY.resolve(request.query_params.get("map"))
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=404)
+    return JSONResponse(store.to_dict())
+
+
+@mcp.custom_route("/api/docs", ["GET", "POST"])
+async def api_docs(request):
+    """GET -> the map's docs with resolved scope (the same projection to_dict bakes).
+    POST {op:add|update|delete,...} -> mutate via the SAME _apply_doc the @mcp.tool
+    functions use (one dispatch, two surfaces), returning the refreshed full model."""
+    if request.method == "GET":
+        try:
+            store = REGISTRY.resolve(request.query_params.get("map"))
+        except (KeyError, ValueError) as e:
+            return JSONResponse({"error": str(e)}, status_code=404)
+        d = store.to_dict()
+        return JSONResponse({"docs": d["docs"], "docMembership": d["docMembership"]})
+    body = await request.json()
+    try:
+        store = REGISTRY.resolve(body.get("map"))
+        _apply_doc(store, body.get("op", ""), body)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(store.to_dict())
 
 

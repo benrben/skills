@@ -9,11 +9,20 @@
 
 /* ---------- agent rail ---------- */
 .rail {
-  flex: 0 0 auto; width: 384px; display: flex; flex-direction: column;
-  background: var(--panel); border-left: 1px solid var(--border);
+  flex: 0 0 auto; width: var(--rail-w, 384px); display: flex; flex-direction: column;
+  background: var(--panel); border-left: 1px solid var(--border); position: relative;
   min-height: 0; transition: width .26s cubic-bezier(.4,0,.2,1);
 }
 .rail.collapsed { width: 0; overflow: hidden; }
+.rail.resizing { transition: none; }     /* no width-tween while the user is dragging */
+
+/* drag handle on the rail's left edge — resize the panel to read long proposals/docs */
+.rail-resize {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 7px; margin-left: -4px;
+  cursor: col-resize; z-index: 30; background: transparent; transition: background .12s;
+}
+.rail-resize:hover, .rail.resizing .rail-resize { background: var(--accent-weak); }
+.rail.collapsed .rail-resize { display: none; }
 
 /* agent identity header */
 .agent-head {
@@ -66,16 +75,19 @@
 .activity-row.human .at { color: var(--text-dim); }
 
 /* tabs */
-.rail-tabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--border); }
+/* 5 tabs (incl. Docs) must all fit a narrow rail: nowrap + horizontal-scroll
+   fallback, tighter padding, and no-shrink tabs so none gets clipped off-screen. */
+.rail-tabs { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 8px 0; border-bottom: 1px solid var(--border); }
 .rtab {
   position: relative; border: 0; background: transparent; color: var(--text-faint);
-  font-size: 12.5px; font-weight: 500; padding: 9px 12px 11px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  display: inline-flex; align-items: center; gap: 7px; transition: color .12s;
+  font-size: 12px; font-weight: 500; padding: 9px 8px 11px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  display: inline-flex; align-items: center; gap: 5px; transition: color .12s;
+  flex: 0 0 auto; white-space: nowrap;
 }
 .rtab:hover { color: var(--text-dim); }
 .rtab[aria-selected="true"] { color: var(--text); }
 .rtab[aria-selected="true"]::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; background: var(--accent); border-radius: 2px; }
-.rtab .tcount { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; background: var(--panel-2); color: var(--text-dim); }
+.rtab .tcount { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 999px; background: var(--panel-2); color: var(--text-dim); }
 .rtab[aria-selected="true"] .tcount { background: var(--accent-weak); color: var(--accent-text); }
 .rtab.has-open .tcount { background: var(--accent); color: var(--on-accent); }
 
@@ -356,4 +368,95 @@
 /* responsive: rail becomes overlay on small screens (contained within workspace) */
 @media (max-width: 720px) {
   .rail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 50; box-shadow: var(--shadow-lg); }
+}
+
+/* ========================================================================== *
+ *  DOCS — the Doc Browser tab (studio-docs.js) + the graph lens (studio-graph)
+ * ========================================================================== */
+.docs-pane { padding: 10px; }
+
+/* facet bar */
+.docs-facets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
+.docs-facets select {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 11.5px; padding: 4px 6px; max-width: 96px;
+}
+.docs-facets select:disabled { opacity: .4; }
+.docs-facets .docs-new { margin-left: auto; }
+
+/* doc type chips + status + drift */
+.doc-type { text-transform: uppercase; font-size: 9.5px; letter-spacing: .04em; font-weight: 700;
+  padding: 1px 6px; border-radius: 999px; }
+.doc-type-adr      { background: color-mix(in oklch, oklch(0.55 0.13 278) 18%, transparent); color: oklch(0.55 0.14 278); }
+.doc-type-note     { background: color-mix(in oklch, oklch(0.62 0.03 255) 20%, transparent); color: var(--text-dim); }
+.doc-type-rule     { background: color-mix(in oklch, oklch(0.60 0.15 152) 18%, transparent); color: oklch(0.50 0.15 152); }
+.doc-type-rfc      { background: color-mix(in oklch, oklch(0.66 0.14 60)  20%, transparent); color: oklch(0.52 0.14 60); }
+.doc-type-glossary { background: color-mix(in oklch, oklch(0.60 0.10 200) 20%, transparent); color: oklch(0.48 0.11 200); }
+.doc-status { font-size: 10px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
+.doc-drift { font-size: 10px; color: var(--leak); font-weight: 600; }
+
+/* doc cards (summary-first list) */
+.docs-list { display: flex; flex-direction: column; gap: 7px; }
+.doc-card {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 9px 10px; cursor: pointer; transition: border-color .12s, box-shadow .12s, transform .08s;
+}
+.doc-card:hover { border-color: var(--accent-ring); box-shadow: var(--shadow-sm); }
+.doc-card:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.doc-card-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.doc-card-title { font-weight: 600; font-size: 13px; color: var(--text); }
+.doc-card-summary { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; line-height: 1.35; }
+.doc-card-scope { font-size: 10.5px; color: var(--text-faint); font-family: var(--font-mono); margin-top: 5px; }
+.docs-empty { color: var(--text-faint); font-size: 12.5px; text-align: center; padding: 22px 10px; line-height: 1.6; }
+.docs-empty .btn { margin-top: 10px; }
+
+/* reader */
+.doc-reader-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.doc-reader-actions { display: flex; gap: 6px; }
+.doc-reader-actions .btn { width: auto; }
+.doc-back { background: none; border: 0; color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: var(--radius-sm); }
+.doc-back:hover { background: var(--panel-2); color: var(--text); }
+.doc-reader-meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.doc-meta-bits { font-size: 10.5px; color: var(--text-faint); }
+.doc-reader-title { font-size: 17px; font-weight: 650; margin: 8px 0 6px; color: var(--text); }
+.doc-scope-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.doc-scope-label { font-family: var(--font-mono); font-size: 11px; color: var(--accent-text, var(--accent)); background: var(--accent-weak); padding: 2px 7px; border-radius: 999px; }
+.doc-scope-row .btn { width: auto; }
+.doc-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.doc-supersedes, .doc-adrref { font-size: 11px; color: var(--text-faint); margin-bottom: 8px; }
+.doc-link { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--accent-text, var(--accent)); cursor: pointer; font-family: var(--font-mono); font-size: 10.5px; padding: 1px 6px; }
+.doc-link:hover { border-color: var(--accent-ring); }
+.doc-body { font-size: 13px; line-height: 1.55; color: var(--text); }
+.doc-body h3, .doc-body h4, .doc-body h5, .doc-body h6 { margin: 12px 0 5px; font-weight: 650; }
+.doc-body p { margin: 7px 0; }
+.doc-body ul { margin: 7px 0; padding-left: 18px; }
+.doc-body li { margin: 2px 0; }
+.doc-body code { font-family: var(--font-mono); font-size: 12px; background: var(--panel-2); padding: 1px 4px; border-radius: 4px; }
+.doc-body a { color: var(--accent-text, var(--accent)); }
+
+/* create / edit form */
+.doc-form { display: flex; flex-direction: column; gap: 9px; }
+.doc-form-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.doc-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-dim); }
+.doc-form input, .doc-form select, .doc-form textarea {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12.5px; padding: 6px 8px; font-family: inherit; width: 100%;
+}
+.doc-form textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
+.doc-form input:focus, .doc-form select:focus, .doc-form textarea:focus { outline: 0; border-color: var(--accent-ring); box-shadow: 0 0 0 3px var(--accent-ring); }
+.doc-form-hint { font-size: 11px; color: var(--text-faint); font-style: italic; }
+.doc-form-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.doc-form-foot .btn { width: auto; }
+
+/* the graph LENS: lit modules ring up, the rest fall back on the existing .dim */
+.node.lens-hit { outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 4px var(--accent-weak); z-index: 3; }
+.supernode.lens-hit { outline: 2px solid var(--accent); outline-offset: 1px; }
+.stage.lens-on .node:not(.lens-hit), .stage.lens-on .supernode:not(.lens-hit) { opacity: .2; }
+
+/* per-node doc-count badge (a corner bubble, like the suggestion ring) */
+.doc-badge {
+  position: absolute; top: -7px; right: -7px; z-index: 5;
+  background: var(--accent); color: oklch(0.99 0.01 280);
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; line-height: 1;
+  padding: 3px 5px; border-radius: 999px; box-shadow: var(--shadow-sm); pointer-events: none;
 }

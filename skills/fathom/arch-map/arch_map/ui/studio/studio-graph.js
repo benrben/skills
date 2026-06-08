@@ -4,6 +4,7 @@ window.Studio = window.Studio || {};
   "use strict";
   const { Store, subscribe, tierOf, isOrphan, openSuggestions, isOpen, STRENGTHS } = window.Arch;
   const Focus = window.Arch.Focus;   // the focus seam: owns selection/hover/isolation state
+  const DocLens = window.Arch.DocLens; // the doc lens seam: owns active doc + highlight/dim set
 
   /* ================================================================ *
    *  CONSTANTS
@@ -663,6 +664,7 @@ window.Studio = window.Studio || {};
 
     applyTransform();
     refreshVisualState();
+    applyDocBadges();
     drawMinimap();
 
     // sync overview button
@@ -1150,6 +1152,13 @@ window.Studio = window.Studio || {};
       ? (isOv && focusId.startsWith("super:") ? domainNeighbourhood(focusId.slice(6)) : neighbourhood(focusId))
       : null;
 
+    // the doc lens: when a doc is active/hovered, modules in its resolved scope are
+    // lens-hit and everything else gets dimmed — composes with focus/filter dimming.
+    const lens    = DocLens ? DocLens.current() : null;
+    const lensOn  = !!(lens && lens.focusDocId);
+    const lensSet = lensOn ? new Set(lens.highlightIds) : null;
+    if (els.stage) els.stage.classList.toggle("lens-on", lensOn);
+
     // cards + super-nodes
     Object.entries(nodeEl).forEach(([id, el]) => {
       if (id.startsWith("super:")) {
@@ -1157,6 +1166,9 @@ window.Studio = window.Studio || {};
         const members = S.model.modules.filter(m => m.domain === dom);
         let dim = isOv ? !domainMatches(dom, members) : false;
         if (hot && !hot.has(id)) dim = true;
+        const domHit = lensSet ? members.some(m => lensSet.has(m.id)) : false;
+        if (lensSet && !domHit) dim = true;
+        el.classList.toggle("lens-hit", domHit);
         el.classList.toggle("dim",  dim);
         el.classList.toggle("spot", id === focusId);
         return;
@@ -1165,9 +1177,11 @@ window.Studio = window.Studio || {};
       if (!m) return;
       let dim = !matchFilter(m) || !matchSearch(m);
       if (hot && !hot.has(id)) dim = true;
+      if (lensSet && !lensSet.has(id)) dim = true;
       el.classList.toggle("dim",      dim);
       el.classList.toggle("sel",      id === f.selectedId);
       el.classList.toggle("spot",     id === focusId && focusId !== f.selectedId);
+      el.classList.toggle("lens-hit", !!(lensSet && lensSet.has(id)));
       el.classList.toggle("match-hit", !!S.search && matchSearch(m));
     });
 
@@ -1224,6 +1238,62 @@ window.Studio = window.Studio || {};
     syncIsolateBtn();
   }
   S.refreshVisualState = refreshVisualState;
+
+  // ---- doc badges: a small "covered by N docs" chip on each module card -----
+  // Driven off the DocLens membership index (O(1) per node), refreshed on every
+  // lens change + rebuild so it never goes stale. Standing information scent.
+  function applyDocBadges() {
+    if (!DocLens) return;
+    Object.keys(nodeEl).forEach(id => {
+      if (id.startsWith("super:")) return;
+      const el = nodeEl[id];
+      if (!el) return;
+      const n = DocLens.docsForModule(id).length;
+      let badge = el.querySelector(".doc-badge");
+      if (n > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "doc-badge";
+          badge.title = "covered by documents";
+          el.appendChild(badge);
+        }
+        badge.textContent = "❏ " + n;
+      } else if (badge) {
+        badge.remove();
+      }
+    });
+  }
+  S.applyDocBadges = applyDocBadges;
+
+  // ---- zoom-to-scope: frame the lit modules (the "show models by doc" jump) --
+  // Individual module nodes only exist in DETAIL layout, so in overview we switch to
+  // detail first, then frame. The frame math mirrors S.fit but over the scope's bbox.
+  function frameScope(ids) {
+    if (!layout) return;
+    const ns = ids.map(id => layout.nodes[id]).filter(Boolean);
+    if (!ns.length) { S.fit(true); return; }   // still nothing laid out -> fit all
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    ns.forEach(n => { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h); });
+    const bw = Math.max(40, maxX - minX), bh = Math.max(40, maxY - minY), pad = 140;
+    const r = els.stage.getBoundingClientRect();
+    const k = Math.max(MIN_K, Math.min(MAX_K, LOD_NEAR, (r.width - pad) / bw, (r.height - pad) / bh));
+    setSmooth(true);
+    view.k = k;
+    view.x = r.width / 2 - (minX + bw / 2) * k;
+    view.y = r.height / 2 - (minY + bh / 2) * k;
+    applyTransform();
+    setTimeout(() => setSmooth(false), 340);
+  }
+  S.zoomToScope = function (ids) {
+    if (!ids || !ids.length) return;
+    if (mode === "overview") {
+      // switch to detail so the modules are laid out, then frame on the next frame
+      Promise.resolve(enterDetail(undefined, { keepView: true }))
+        .then(() => requestAnimationFrame(() => frameScope(ids)));
+    } else {
+      frameScope(ids);
+    }
+  };
 
   /* ================================================================ *
    *  ORPHAN TRAY
@@ -1442,6 +1512,10 @@ window.Studio = window.Studio || {};
       refreshVisualState();
       if (next.selectedId !== prev.selectedId) renderBreadcrumb();
     });
+
+    // the doc lens is a sibling subscriber: repaint the highlight/dim + refresh the
+    // per-node doc badges whenever the active doc, hover preview, or model changes.
+    if (DocLens) DocLens.subscribe(() => { refreshVisualState(); applyDocBadges(); });
 
     els.stage.addEventListener("click", e => {
       if (!e.target.closest(".node, .supernode, .hull-chip")) Focus.deselect();

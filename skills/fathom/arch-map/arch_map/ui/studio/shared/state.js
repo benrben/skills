@@ -35,6 +35,7 @@
   const API_MODEL = "api/model";
   const API_ACT = "api/act";
   const API_MAPS = "api/maps";
+  const API_DOCS = "api/docs";
 
   // ---- transport: HTTP (browser at /) vs MCP-App host (Claude desktop, etc.) -
   // The server inlines this studio as an MCP-App resource and sets __ARCH_APP__,
@@ -60,7 +61,7 @@
   // expects an immediate model back, so we keep a live normalized cache here.
   // Reads return it; writes update it optimistically, then a background POST
   // reconciles against the authoritative server response.
-  let cur = { repo: "", modules: [], plans: [], decisions: {}, seq: 0 };
+  let cur = { repo: "", modules: [], plans: [], docs: [], docMembership: {}, decisions: {}, seq: 0 };
   let lastServerJson = "";       // raw JSON of the last authoritative model
   let pendingWrites = 0;         // in-flight POSTs (gates poll-reconcile)
   let writeGen = 0;              // bumps per optimistic write; gates stale server snapshots
@@ -134,6 +135,22 @@
       })),
     };
   }
+  // docs are projected (resolvedModuleIds / drift / scopeLabel baked by the server);
+  // pass them through with array-safe defaults so the DocLens + browser can read them.
+  function normDoc(d) {
+    return {
+      id: d.id, type: d.type || "note", title: d.title || "", summary: d.summary || "",
+      body: d.body || "", status: d.status || "",
+      scope: d.scope || { kind: "system" },
+      tags: Array.isArray(d.tags) ? d.tags : [],
+      author: d.author || "", created: d.created || "", updated: d.updated || "",
+      supersedes: Array.isArray(d.supersedes) ? d.supersedes : [],
+      adrRef: d.adrRef || "",
+      resolvedModuleIds: Array.isArray(d.resolvedModuleIds) ? d.resolvedModuleIds : [],
+      drift: Array.isArray(d.drift) ? d.drift : [],
+      scopeLabel: d.scopeLabel || "",
+    };
+  }
   function normalize(raw) {
     const decisions = {};
     const modules = (raw.modules || []).map((m) => {
@@ -187,7 +204,9 @@
       };
     });
     const plans = (raw.plans || []).map(normPlan);
-    return { repo: raw.repo || "", modules, plans, decisions, seq: (cur.seq || 0) + 1 };
+    const docs = Array.isArray(raw.docs) ? raw.docs.map(normDoc) : [];
+    return { repo: raw.repo || "", modules, plans, docs,
+             docMembership: raw.docMembership || {}, decisions, seq: (cur.seq || 0) + 1 };
   }
 
   // ---- find the backend suggestion id for a module (for decide/resolve) -----
@@ -566,6 +585,50 @@
     }
   }
 
+  // ---- docs: mutate via /api/docs (browser) or the doc tools (host) ---------
+  // Separate endpoint from /api/act — docs route through the server's single
+  // _apply_doc dispatch. Non-optimistic: the POST returns the full model (with the
+  // doc's scope freshly resolved), which reconciles the cache. Mirrors act()'s
+  // writeGen/pendingWrites discipline so polls never clobber an in-flight write.
+  function _docToolFor(map, body) {
+    switch (body.op) {
+      case "add":    return ["add_doc", Object.assign({ map }, body.doc)];
+      case "update": return ["update_doc", { map, doc_id: body.doc_id, fields: body.fields || {} }];
+      case "delete": return ["delete_doc", { map, doc_id: body.doc_id }];
+      default: throw new Error("unsupported doc op: " + body.op);
+    }
+  }
+  async function docAct(body) {
+    if (HOST) {
+      const myGen = ++writeGen; pendingWrites++; const map = currentMap;
+      try {
+        const [name, args] = _docToolFor(map, body);
+        await hostCall(name, args);
+        const full = await hostCall("get_model", { map });
+        if (myGen === writeGen && full && adoptModelObject(full)) broadcast(cur);
+      } catch (e) {
+        if (myGen === writeGen) { try { const f = await hostCall("get_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
+        throw e;
+      } finally { pendingWrites--; }
+      return;
+    }
+    const myGen = ++writeGen; pendingWrites++;
+    try {
+      const res = await fetch(apiUrl(API_DOCS), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(currentMap ? Object.assign({ map: currentMap }, body) : body),
+      });
+      if (!res.ok) {
+        let msg = "doc action failed";
+        try { msg = (await res.json()).error || msg; } catch (e) {}
+        if (myGen === writeGen) { try { adoptServer(await fetchModel()); } catch (e) {} }
+        throw new Error(msg);
+      }
+      const txt = await res.text();
+      if (myGen === writeGen && applyServerModel(txt)) broadcast(cur);
+    } finally { pendingWrites--; }
+  }
+
   // ---- optimistic local mutation helpers -----------------------------------
   function bump() { cur.seq = (cur.seq || 0) + 1; }
   function clamp(n) { return Math.max(0, Math.min(100, Math.round(n))); }
@@ -732,6 +795,12 @@
       // persisted 'requested'.
       return Store.dispatch({ kind: "grill", module: id });
     },
+
+    // ---- docs (scoped architecture documents) ----
+    // doc is {id,type,title,scope,summary,body,status,tags,supersedes,adrRef,author}.
+    addDoc(doc) { docAct({ op: "add", doc }).catch(reportErr); return cur; },
+    updateDoc(docId, fields) { docAct({ op: "update", doc_id: docId, fields }).catch(reportErr); return cur; },
+    deleteDoc(docId) { docAct({ op: "delete", doc_id: docId }).catch(reportErr); return cur; },
   };
 
   function reportErr(e) {
@@ -743,7 +812,12 @@
 
   // ---- broadcast / subscribe -----------------------------------------------
   const listeners = new Set();
-  function broadcast(s) { listeners.forEach((fn) => { try { fn(s); } catch (e) {} }); }
+  function broadcast(s) {
+    // feed the doc lens seam first (it self-guards on no-op), so its subscribers
+    // (graph highlight, doc browser) see the fresh model before the general listeners.
+    if (window.Arch && window.Arch.DocLens) { try { window.Arch.DocLens.setModel(s); } catch (e) {} }
+    listeners.forEach((fn) => { try { fn(s); } catch (e) {} });
+  }
   function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 
   // poll the server — picks up model + map-list changes from the agent / desktop / other tabs
