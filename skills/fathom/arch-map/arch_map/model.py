@@ -100,6 +100,7 @@ class Module:
     tests: str = ""
     suggestions: list[Suggestion] = field(default_factory=list)
     churn: float = 0.0          # commit frequency 0..1 (set by fathom:map via git log)
+    tags: list[str] = field(default_factory=list)   # free-text labels; the anti-rot lever for query-scoped docs
 
     @classmethod
     def from_dict(cls, data: dict) -> "Module":
@@ -119,13 +120,209 @@ class Module:
         return cls(**d)
 
 
+# ---- docs: scoped architecture documents (doc-registry) ---------------------
+_DOC_TYPES = frozenset({"adr", "note", "rule", "rfc", "glossary"})
+_SCOPE_KINDS = frozenset({"system", "explicit", "domain", "query"})
+
+
+@dataclass
+class Scope:
+    """What a Doc applies to — a closed union over four kinds. `system` covers the
+    whole map; `explicit` a pinned id list; `domain` every module in one domain
+    (containment == same domain); `query` a live predicate (AND over the keys
+    present). Serializes to/from a plain dict so it rides in JSON unchanged."""
+    kind: str = "system"
+    ids: list[str] = field(default_factory=list)       # explicit
+    domain: str = ""                                    # domain
+    predicate: dict = field(default_factory=dict)       # query
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "Scope":
+        if not data:
+            return cls(kind="system")
+        kind = data.get("kind") or "system"
+        if kind not in _SCOPE_KINDS:
+            raise ValueError(f"invalid scope kind '{kind}'; expected one of {sorted(_SCOPE_KINDS)}")
+        return cls(kind=kind,
+                   ids=list(data.get("ids") or []),
+                   domain=data.get("domain") or "",
+                   predicate=dict(data.get("predicate") or {}))
+
+
+@dataclass
+class Doc:
+    """A scoped architecture document (adr / note / rule / rfc / glossary). A
+    TOP-LEVEL entity (like Plan), NOT nested per-module, so one doc can scope to
+    many modules, a domain, or the whole system. `resolvedModuleIds` / `drift` /
+    `scopeLabel` are COMPUTED at serialization (see resolve) — never stored."""
+    id: str
+    type: str                                           # adr | note | rule | rfc | glossary
+    title: str
+    summary: str = ""                                   # one-line TL;DR (information scent)
+    body: str = ""                                      # markdown
+    status: str = ""                                    # per-type lifecycle
+    scope: Scope = field(default_factory=Scope)
+    tags: list[str] = field(default_factory=list)
+    author: str = ""
+    created: str = ""
+    updated: str = ""
+    supersedes: list[str] = field(default_factory=list)   # doc -> doc links
+    adrRef: str = ""                                     # docs/adr/NNNN-slug.md (adr-writer's canonical file)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Doc":
+        """Build a Doc from a loose dict: drop computed keys, validate id/type/title,
+        check the type against the known set, and reify the nested Scope."""
+        managed = {"resolvedModuleIds", "drift", "scopeLabel", "supersededBy"}
+        d = _only_known(cls, {k: v for k, v in data.items() if k not in managed})
+        for req in ("id", "type", "title"):
+            if not d.get(req):
+                raise ValueError(f"doc needs '{req}'")
+        if d["type"] not in _DOC_TYPES:
+            raise ValueError(f"invalid doc type '{d['type']}'; expected one of {sorted(_DOC_TYPES)}")
+        d["scope"] = Scope.from_dict(d.get("scope"))
+        return cls(**d)
+
+
+# ---- doc-scope-resolver: turn a Scope into the module ids it applies to -------
+@dataclass
+class Resolution:
+    """The answer for one Scope against the live model. `ids` are sorted and exist
+    in the model; `missing` is drift (explicit ids no longer present). Both are
+    values, never exceptions, so a rotted doc can't break serialization."""
+    ids: list[str]
+    missing: list[str]
+    count: int
+    label: str
+    kind: str
+    empty: bool
+
+
+class MembershipIndex:
+    """Inverted index module-id -> [doc-id], built once by resolve_all so the UI can
+    badge a node with an O(1) lookup instead of re-resolving every doc per node."""
+    def __init__(self, by_module: dict[str, list[str]]):
+        self._by = by_module
+
+    def docsForModule(self, module_id: str) -> list[str]:
+        return list(self._by.get(module_id, ()))
+
+    def isMember(self, module_id: str, doc_id: str) -> bool:
+        return doc_id in self._by.get(module_id, ())
+
+    def as_dict(self) -> dict[str, list[str]]:
+        return {k: list(v) for k, v in self._by.items()}
+
+
+def _match_query(m: "Module", has_open_candidate: bool, pred: dict) -> bool:
+    """Closed predicate interpreter — AND over the keys present; an unknown key is
+    ignored (tolerant). Kept SEPARATE from resolve so a SelectorPort could be
+    extracted later without touching the resolver core."""
+    if "domain" in pred and m.domain != pred["domain"]:
+        return False
+    if "plane" in pred and m.plane != pred["plane"]:
+        return False
+    if "lifecycle" in pred and m.lifecycle != pred["lifecycle"]:
+        return False
+    if "depthGte" in pred and not (m.depth >= pred["depthGte"]):
+        return False
+    if "depthLte" in pred and not (m.depth <= pred["depthLte"]):
+        return False
+    if "coverageLte" in pred and not (m.coverage <= pred["coverageLte"]):
+        return False
+    if "hasLeak" in pred and bool(m.leaksTo) != bool(pred["hasLeak"]):
+        return False
+    if "hasOpenCandidate" in pred and has_open_candidate != bool(pred["hasOpenCandidate"]):
+        return False
+    if "tag" in pred and pred["tag"] not in (m.tags or []):
+        return False
+    return True
+
+
+def _scope_label(kind: str, scope: "Scope", count: int, missing: int) -> str:
+    noun = "module" if count == 1 else "modules"
+    if kind == "system":
+        base = f"Whole system — {count} {noun}"
+    elif kind == "domain":
+        base = f"Domain: {scope.domain} — {count} {noun}"
+    elif kind == "explicit":
+        base = f"Explicit — {count} {noun}"
+    elif kind == "query":
+        base = f"Query — {count} {noun}"
+    else:
+        base = f"{count} {noun}"
+    if missing:
+        base += f" ({missing} missing)"
+    return base
+
+
+def _open_candidate_ids(model) -> set[str]:
+    return {m.id for m in model.modules.values()
+            if any(_OPEN(s) for s in m.suggestions)}
+
+
+def _resolve(scope: "Scope", model, all_ids: list[str], open_ids: set[str]) -> Resolution:
+    kind = getattr(scope, "kind", "system")
+    mods = model.modules
+    missing: list[str] = []
+    if kind == "system":
+        ids = list(all_ids)
+    elif kind == "explicit":
+        want = scope.ids or []
+        ids = sorted({i for i in want if i in mods})
+        missing = sorted({i for i in want if i not in mods})
+    elif kind == "domain":
+        ids = sorted(mid for mid, m in mods.items() if m.domain == scope.domain)
+    elif kind == "query":
+        pred = scope.predicate or {}
+        ids = sorted(mid for mid, m in mods.items()
+                     if _match_query(m, mid in open_ids, pred))
+    else:                                    # unknown kind -> empty (errors are data)
+        ids = []
+    count = len(ids)
+    return Resolution(ids=ids, missing=missing, count=count,
+                      label=_scope_label(kind, scope, count, len(missing)),
+                      kind=kind, empty=count == 0)
+
+
+def resolve(scope: "Scope", model) -> Resolution:
+    """Resolve one Scope against the model. Pure; ids sorted + deterministic. This
+    is the UI-lens entry point (and what get_doc bakes)."""
+    return _resolve(scope, model, sorted(model.modules.keys()), _open_candidate_ids(model))
+
+
+def resolve_all(docs, model) -> dict:
+    """Batch-resolve every doc in ONE pass (shared keyset + open-candidate set) and
+    build the inverted MembershipIndex — the server-projection entry point. A doc
+    whose scope blows up soft-fails to an empty Resolution, so one bad doc can never
+    sink the whole projection."""
+    all_ids = sorted(model.modules.keys())
+    open_ids = _open_candidate_ids(model)
+    by_doc: dict[str, Resolution] = {}
+    by_module: dict[str, list[str]] = {}
+    for doc in docs:
+        try:
+            r = _resolve(doc.scope, model, all_ids, open_ids)
+        except Exception:                    # malformed scope -> soft-fail this one doc
+            r = Resolution(ids=[], missing=[], count=0, label="⚠ invalid scope",
+                           kind=getattr(doc.scope, "kind", "?"), empty=True)
+        by_doc[doc.id] = r
+        for mid in r.ids:
+            by_module.setdefault(mid, []).append(doc.id)
+    for mid in by_module:
+        by_module[mid].sort()
+    return {"byDoc": by_doc, "membership": MembershipIndex(by_module)}
+
+
 class ArchModel:
     """In-memory architecture model. The MCP tools mutate it; the UI renders it."""
 
-    def __init__(self, repo: str, modules: list[Module], plans: list[Plan] | None = None):
+    def __init__(self, repo: str, modules: list[Module], plans: list[Plan] | None = None,
+                 docs: list[Doc] | None = None):
         self.repo = repo
         self.modules: dict[str, Module] = {m.id: m for m in modules}
         self.plans: dict[str, Plan] = {p.id: p for p in (plans or [])}
+        self.docs: dict[str, Doc] = {d.id: d for d in (docs or [])}
 
     # ---- queries ----------------------------------------------------------
     def orphans(self) -> list[str]:
@@ -359,7 +556,7 @@ class ArchModel:
     _EDITABLE = frozenset({
         "label", "domain", "depth", "size", "seam", "iface", "coverage", "churn",
         "updated", "plane", "lifecycle", "files", "dependsOn", "leaksTo",
-        "intendsToDependOn", "supersedes", "tests",
+        "intendsToDependOn", "supersedes", "tests", "tags",
     })
     _EDGE_FIELDS = ("dependsOn", "leaksTo", "intendsToDependOn", "supersedes")
 
@@ -488,6 +685,46 @@ class ArchModel:
             raise KeyError(f"no plan '{plan_id}'")
         del self.plans[plan_id]
 
+    # ---- docs (fathom skills + the UI author; the resolver computes scope) -
+    _DOC_EDITABLE = frozenset({
+        "type", "title", "summary", "body", "status", "scope", "tags",
+        "author", "created", "updated", "supersedes", "adrRef",
+    })
+
+    def add_doc(self, doc: Doc) -> None:
+        if doc.id in self.docs:
+            raise KeyError(f"doc '{doc.id}' already exists")
+        self.docs[doc.id] = doc
+
+    def get_doc(self, doc_id: str) -> dict:
+        d = self.docs[doc_id]                        # KeyError if absent
+        out = asdict(d)
+        r = resolve(d.scope, self)
+        out["resolvedModuleIds"] = r.ids
+        out["drift"] = r.missing
+        out["scopeLabel"] = r.label
+        return out
+
+    def get_docs(self, doc_ids: list[str]) -> list[dict]:
+        return [self.get_doc(i) for i in doc_ids]
+
+    def update_doc(self, doc_id: str, **changes) -> None:
+        d = self.docs[doc_id]                        # KeyError if absent
+        unknown = set(changes) - self._DOC_EDITABLE
+        if unknown:
+            raise ValueError(f"cannot update {sorted(unknown)}; editable: {sorted(self._DOC_EDITABLE)}")
+        if "type" in changes and changes["type"] not in _DOC_TYPES:
+            raise ValueError(f"invalid doc type '{changes['type']}'; expected one of {sorted(_DOC_TYPES)}")
+        if "scope" in changes and isinstance(changes["scope"], dict):
+            changes["scope"] = Scope.from_dict(changes["scope"])
+        for k, v in changes.items():
+            setattr(d, k, v)
+
+    def delete_doc(self, doc_id: str) -> None:
+        if doc_id not in self.docs:
+            raise KeyError(f"no doc '{doc_id}'")
+        del self.docs[doc_id]
+
     # ---- serialization ----------------------------------------------------
     def _open_suggestion_ids(self) -> list[str]:
         return sorted(s.id for m in self.modules.values() for s in m.suggestions if _OPEN(s))
@@ -507,10 +744,23 @@ class ArchModel:
             first_open = next((asdict(s) for s in m.suggestions if _OPEN(s)), None)
             d["suggestion"] = first_open
             modules.append(d)
+        # Bake each doc's resolved scope (parallel to embedding compute_metrics per
+        # module) so /api/model, get_model, and the inline studio all get it for free.
+        res = resolve_all(list(self.docs.values()), self)
+        docs = []
+        for doc in self.docs.values():
+            dd = asdict(doc)
+            r = res["byDoc"][doc.id]
+            dd["resolvedModuleIds"] = r.ids
+            dd["drift"] = r.missing
+            dd["scopeLabel"] = r.label
+            docs.append(dd)
         return {
             "repo": self.repo,
             "modules": modules,
             "plans": [asdict(p) for p in self.plans.values()],
+            "docs": docs,
+            "docMembership": res["membership"].as_dict(),
             "orphans": sorted(orphans),
             "openSuggestions": self._open_suggestion_ids(),
         }
@@ -553,6 +803,9 @@ class ArchModel:
             "plans": [{"id": p.id, "title": p.title, "status": p.status,
                        "steps": len(p.steps), "modules": len(p.moduleIds)}
                       for p in self.plans.values()],
+            "docs": [{"id": d.id, "type": d.type, "title": d.title,
+                      "status": d.status, "scopeKind": d.scope.kind}
+                     for d in self.docs.values()],
             "orphans": sorted(orphans),
             "openSuggestions": self._open_suggestion_ids(),
         }
@@ -579,4 +832,13 @@ class ArchModel:
             plan = Plan(**_only_known(Plan, {k: v for k, v in p.items() if k != "steps"}))
             plan.steps = steps
             plans.append(plan)
-        return cls(raw["repo"], modules, plans)
+        docs: list[Doc] = []
+        for entry in raw.get("docs", []):               # absent on pre-docs maps -> []
+            entry = dict(entry)
+            for computed in ("resolvedModuleIds", "drift", "scopeLabel", "supersededBy"):
+                entry.pop(computed, None)
+            scope = Scope.from_dict(entry.pop("scope", None))
+            doc = Doc(**_only_known(Doc, entry))
+            doc.scope = scope
+            docs.append(doc)
+        return cls(raw["repo"], modules, plans, docs)

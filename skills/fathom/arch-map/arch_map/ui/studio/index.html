@@ -179,6 +179,7 @@
 
     <!-- agent rail -->
     <aside class="rail" id="rail">
+      <div class="rail-resize" id="railResize" title="Drag to resize · double-click to reset"></div>
       <div class="agent-head">
         <div class="agent-id">
           <div class="agent-orb"></div>
@@ -195,12 +196,14 @@
         <button class="rtab" data-tab="inspector" role="tab" aria-selected="false">Inspector</button>
         <button class="rtab" data-tab="modules" role="tab" aria-selected="false">Modules <span class="tcount">0</span></button>
         <button class="rtab" data-tab="plans" role="tab" aria-selected="false">Plans <span class="tcount">0</span></button>
+        <button class="rtab" data-tab="docs" role="tab" aria-selected="false">Docs <span class="tcount">0</span></button>
       </div>
       <div class="rail-body" id="railBody">
         <div class="rail-pane active" data-pane="agent"><div class="agent-pane" id="agentPane"></div></div>
         <div class="rail-pane" data-pane="inspector"><div id="inspPane"></div></div>
         <div class="rail-pane" data-pane="modules"><div class="mods-pane" id="modsPane"></div></div>
         <div class="rail-pane" data-pane="plans"><div class="plans-pane" id="plansPane"></div></div>
+        <div class="rail-pane" data-pane="docs"><div class="docs-pane" id="docsPane"></div></div>
       </div>
     </aside>
   </div>
@@ -234,15 +237,58 @@
 
 <script src="/assets/shared/state.js"></script>
 <script src="/assets/shared/focus.js"></script>
+<script src="/assets/shared/doclens.js"></script>
 <script src="/assets/shared/chrome.js"></script>
 <script>renderChromeToggles(document.getElementById("chromeToggles"));</script>
 <script src="/assets/studio-graph.js"></script>
 <script src="/assets/studio-rail.js"></script>
+<script src="/assets/studio-docs.js"></script>
 <script>
   (function () {
     function boot() {
       Studio.bootGraph();
       Studio.bootRail();
+      Studio.bootDocs && Studio.bootDocs();
+
+      // ---- resizable agent rail (drag its left edge; persisted) ----
+      (function () {
+        const rail = document.getElementById("rail");
+        const handle = document.getElementById("railResize");
+        if (!rail || !handle) return;
+        const KEY = "archmap.railW.v1";
+        const MIN = 300;
+        const maxW = () => Math.min(900, Math.round(window.innerWidth * 0.7));
+        function apply(w) {
+          w = Math.max(MIN, Math.min(maxW(), Math.round(w)));
+          rail.style.setProperty("--rail-w", w + "px");
+          return w;
+        }
+        try { const s = parseInt(localStorage.getItem(KEY), 10); if (s) apply(s); } catch (e) {}
+        let dragging = false, rightEdge = 0;
+        handle.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          dragging = true;
+          rightEdge = rail.getBoundingClientRect().right;   // fixed (rail is right-docked)
+          rail.classList.add("resizing");
+          document.body.style.cursor = "col-resize";
+          document.body.style.userSelect = "none";
+        });
+        window.addEventListener("mousemove", (e) => { if (dragging) apply(rightEdge - e.clientX); });
+        window.addEventListener("mouseup", () => {
+          if (!dragging) return;
+          dragging = false;
+          rail.classList.remove("resizing");
+          document.body.style.cursor = "";
+          document.body.style.userSelect = "";
+          try { localStorage.setItem(KEY, parseInt(rail.style.getPropertyValue("--rail-w"), 10) || 384); } catch (e) {}
+          window.dispatchEvent(new Event("resize"));        // canvas flexed -> re-fit + redraw minimap
+        });
+        handle.addEventListener("dblclick", () => {         // reset to default width
+          rail.style.removeProperty("--rail-w");
+          try { localStorage.removeItem(KEY); } catch (e) {}
+          window.dispatchEvent(new Event("resize"));
+        });
+      })();
 
       // ---- map switcher (named maps, one per project; shared) ----
       const Maps = window.Arch.Maps;

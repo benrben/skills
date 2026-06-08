@@ -691,6 +691,8 @@ window.Studio = window.Studio || {};
     els.tabs.querySelector('[data-tab="modules"] .tcount').textContent = S.model.modules.length;
     const plansTab = els.tabs.querySelector('[data-tab="plans"] .tcount');
     if (plansTab) plansTab.textContent = (S.model.plans || []).length;
+    const docsTab = els.tabs.querySelector('[data-tab="docs"] .tcount');
+    if (docsTab) docsTab.textContent = (S.model.docs || []).length;
   }
 
   /* ============ full rail render ============ */
@@ -700,6 +702,7 @@ window.Studio = window.Studio || {};
     renderInspector();
     renderModules();
     renderPlans();
+    if (S.renderDocs) S.renderDocs();     // doc-browser (studio-docs.js) owns its pane
     renderTabCounts();
     renderIssuesPanel();
   };
@@ -957,6 +960,7 @@ window.Studio = window.Studio || {};
       if (e.key === "2") setTab("inspector");
       if (e.key === "3") setTab("modules");
       if (e.key === "4") setTab("plans");
+      if (e.key === "5") setTab("docs");
     });
 
     subscribe(onExternal);
