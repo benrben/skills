@@ -41,9 +41,9 @@
   // The server inlines this studio as an MCP-App resource and sets __ARCH_APP__,
   // because a sandboxed iframe can't reach the HTTP server. In host mode we talk
   // to the host via @modelcontextprotocol/ext-apps: the model arrives from the
-  // show_map/get_model tools and edits route through app.callServerTool to the
-  // real tools — mirroring network.html's proven bridge. Everything host-specific
-  // is gated on HOST so the browser path is untouched.
+  // show_map/get_full_model tools and edits route through app.callServerTool to the
+  // action-dispatch tools — mirroring network.html's proven bridge. Everything
+  // host-specific is gated on HOST so the browser path is untouched.
   const HOST = typeof window !== "undefined" && !!window.__ARCH_APP__;
 
   // ---- which named map this browser is viewing -----------------------------
@@ -283,7 +283,7 @@
   }
   async function hostRefresh() {
     if (!currentMap) return false;
-    const full = await hostCall("get_model", { map: currentMap });
+    const full = await hostCall("get_full_model", { map: currentMap });
     if (full && adoptModelObject(full)) { broadcast(cur); return true; }
     return false;
   }
@@ -291,7 +291,7 @@
   async function fetchModel() {
     if (HOST) {
       if (!currentMap) return lastServerJson || JSON.stringify({ repo: "", modules: [], plans: [], orphans: [], openSuggestions: [] });
-      const full = await hostCall("get_model", { map: currentMap });
+      const full = await hostCall("get_full_model", { map: currentMap });
       return JSON.stringify(full || { repo: "", modules: [], plans: [], orphans: [], openSuggestions: [] });
     }
     const u = new URL(apiUrl(API_MODEL));
@@ -385,15 +385,18 @@
 
   // translate a Store action into the equivalent MCP tool call (host mode)
   function _toolFor(map, a) {
+    // a.action is the studio's internal action key; the FIRST array element is the
+    // real MCP tool name — the action-dispatch tools (modules / suggestions / plans),
+    // with the studio's action mapped to the dispatcher's `action` + flat args.
     switch (a.action) {
-      case "set_depth": return ["set_depth", { map, module: a.module, score: a.score }];
-      case "set_coverage": return ["set_coverage", { map, module: a.module, fraction: a.fraction }];
-      case "decide": return ["decide", { map, suggestion_id: a.suggestion_id, decision: a.decision, note: a.note || "" }];
-      case "resolve": return ["resolve", { map, suggestion_id: a.suggestion_id }];
-      case "delete": return ["delete_module", { map, module: a.module }];
-      case "update": return ["update_module", { map, module: a.module, fields: denormFields(a.fields || {}) }];
-      case "add": return ["add_module", Object.assign({ map }, a.module)];
-      case "set_step_status": return ["set_step_status", { map, plan_id: a.plan_id, step_id: a.step_id, status: a.status }];
+      case "set_depth": return ["modules", { map, action: "update", id: a.module, depth: a.score }];
+      case "set_coverage": return ["modules", { map, action: "update", id: a.module, coverage: a.fraction }];
+      case "decide": return ["suggestions", { map, action: "decide", suggestion_id: a.suggestion_id, decision: a.decision, note: a.note || "" }];
+      case "resolve": return ["suggestions", { map, action: "dismiss", suggestion_id: a.suggestion_id }];
+      case "delete": return ["modules", { map, action: "delete", id: a.module }];
+      case "update": return ["modules", Object.assign({ map, action: "update", id: a.module }, denormFields(a.fields || {}))];
+      case "add": return ["modules", Object.assign({ map, action: "add" }, a.module)];
+      case "set_step_status": return ["plans", { map, action: "set_step_status", plan_id: a.plan_id, step_id: a.step_id, step_status: a.status }];
       default: throw new Error("unsupported action: " + a.action);
     }
   }
@@ -404,10 +407,10 @@
     try {
       const [name, args] = _toolFor(map, body);
       await hostCall(name, args);                       // tools return a compact ack...
-      const full = await hostCall("get_model", { map }); // ...so re-pull the full model
+      const full = await hostCall("get_full_model", { map }); // ...so re-pull the full model
       if (myGen === writeGen && full && adoptModelObject(full)) broadcast(cur);
     } catch (e) {
-      if (myGen === writeGen) { try { const f = await hostCall("get_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
+      if (myGen === writeGen) { try { const f = await hostCall("get_full_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
       throw e;
     } finally {
       pendingWrites--;
@@ -453,7 +456,7 @@
     const caps = (app.getHostCapabilities && app.getHostCapabilities()) || {};
     let prompt;
     try {                                          // (1) persist 'requested' + get the prompt (iframe-only)
-      prompt = grillText(await app.callServerTool({ name: "start_grilling", arguments: { map, module } }), module);
+      prompt = grillText(await app.callServerTool({ name: "grilling", arguments: { map, action: "start", module } }), module);
     } catch (e) { prompt = grillText(null, module); }
     if (!caps.message) return { triggered: false, prompt, reason: "no-message-capability" };
     try {                                          // (2) stage the candidate body for the next turn (no trigger)
@@ -515,13 +518,13 @@
   // full arg shape we can supply here are pre-called; the rest are left to the
   // agent turn the prompt triggers (flag_deepening needs title/strength/problem/…
   // the agent authors, scan_signals takes no module, so we don't pre-call those —
-  // we re-scan via mark_updated(false) to clear the stale halo and let the agent
+  // we re-scan via modules(action="update", updated=false) to clear the stale halo and let the agent
   // re-evaluate). This keeps strict (additionalProperties:false) hosts from
   // rejecting a malformed pre-call.
   function dispatchTools(map, req) {
     switch (req.kind) {
-      case "rescan":  return [["mark_updated", { map, module: req.module, updated: false }]];
-      case "realize": return [["realize_module", { map, module: req.module }]];
+      case "rescan":  return [["modules", { map, action: "update", id: req.module, updated: false }]];
+      case "realize": return [["modules", { map, action: "realize", id: req.module }]];
       default:        return [];   // fix / triage: the sendMessage turn does the work
     }
   }
@@ -592,9 +595,12 @@
   // writeGen/pendingWrites discipline so polls never clobber an in-flight write.
   function _docToolFor(map, body) {
     switch (body.op) {
-      case "add":    return ["add_doc", Object.assign({ map }, body.doc)];
-      case "update": return ["update_doc", { map, doc_id: body.doc_id, fields: body.fields || {} }];
-      case "delete": return ["delete_doc", { map, doc_id: body.doc_id }];
+      case "add": {
+        const { id, ...rest } = body.doc;   // docs dispatcher takes doc_id, not id
+        return ["docs", Object.assign({ map, action: "add", doc_id: id }, rest)];
+      }
+      case "update": return ["docs", Object.assign({ map, action: "update", doc_id: body.doc_id }, body.fields || {})];
+      case "delete": return ["docs", { map, action: "delete", doc_id: body.doc_id }];
       default: throw new Error("unsupported doc op: " + body.op);
     }
   }
@@ -604,10 +610,10 @@
       try {
         const [name, args] = _docToolFor(map, body);
         await hostCall(name, args);
-        const full = await hostCall("get_model", { map });
+        const full = await hostCall("get_full_model", { map });
         if (myGen === writeGen && full && adoptModelObject(full)) broadcast(cur);
       } catch (e) {
-        if (myGen === writeGen) { try { const f = await hostCall("get_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
+        if (myGen === writeGen) { try { const f = await hostCall("get_full_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
         throw e;
       } finally { pendingWrites--; }
       return;

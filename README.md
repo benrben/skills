@@ -21,7 +21,7 @@ Six skills, one lifecycle — **map → understand → deepen → plan → code*
 
 ## The spine: `arch-map`
 
-The suite ships a [FastMCP](https://github.com/jlowin/fastmcp) server at [`arch-map/`](./skills/fathom/arch-map/) — the persistent model every skill reads and writes. The agent keeps it current with tools (`show_map`, `flag_deepening`, `set_depth`, `set_coverage`, `decide`, `resolve`, …) and a UI-capable host renders it inline via [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/): depth = node size, coverage = ring, suggestions = ⚠ ring, leaks = red edge, orphans = a "not connected" tray. Registered for this repo in [`.mcp.json`](./.mcp.json). See the [arch-map README](./skills/fathom/arch-map/README.md).
+The suite ships a [FastMCP](https://github.com/jlowin/fastmcp) server at [`arch-map/`](./skills/fathom/arch-map/) — the persistent model every skill reads and writes. The agent keeps it current with a small tool surface (`show_map`, `scan_signals`, and five action-dispatchers — `modules`, `suggestions`, `grilling`, `plans`, `docs` — e.g. `suggestions(action="flag", …)`, `modules(action="update", depth=…)`) and a UI-capable host renders it inline via [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/): depth = node size, coverage = ring, suggestions = ⚠ ring, leaks = red edge, orphans = a "not connected" tray. Registered for this repo in [`.mcp.json`](./.mcp.json). See the [arch-map README](./skills/fathom/arch-map/README.md).
 
 ## Install it in another project
 

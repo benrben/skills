@@ -38,9 +38,9 @@ The map is shared and file-backed. Resolve it before anything else:
 
 Then read the target the spine holds — never invent one:
 
-- `get_model(map)` to see the whole picture, then `get_module(map, module)` for the specific target.
+- `get_full_model(map)` to see the whole picture, then `modules(map, action="get", id=module)` for the specific target.
 - **Mode (a) REFACTOR** — an accepted candidate: a Suggestion with `decision == "accepted"` on a shallow module. Read its `category`, `problem`, `solution`, `wins`. The `category` drives the seam strategy in step 4.
-- **Mode (b) BUILD** — a planned WorkStep: `get_plan(map, plan_id)` for the ordered steps; the step names its `targets` (intended module ids, `plane == "intended"`, `lifecycle == "planned"`), its `interface` (the test surface), `dependsOnSteps`, and `adapters` (the dependency category + which adapters). Take the **next** step whose dependencies are `done`.
+- **Mode (b) BUILD** — a planned WorkStep: `plans(map, action="get", plan_id=)` for the ordered steps; the step names its `targets` (intended module ids, `plane == "intended"`, `lifecycle == "planned"`), its `interface` (the test surface), `dependsOnSteps`, and `adapters` (the dependency category + which adapters). Take the **next** step whose dependencies are `done`.
 
 If there is **no** accepted candidate and **no** planned WorkStep, STOP. Hand back to **fathom:deepen** (to grill and accept a candidate) or **fathom:plan** (to design and sequence one). fathom:code chooses nothing.
 
@@ -90,16 +90,16 @@ Run the full suite at the interface. For mode (a), confirm behaviour is unchange
 fathom:code persists what *it* changed; it does not re-derive the whole graph. The broad sweep — orphan recomputation, re-deriving modules you didn't touch, the periodic honesty pass — belongs to **fathom:map**. Reconcile the directly-touched modules and their immediate edges, then stop.
 
 **Mode (a) — refactor:**
-- `set_depth(map, module, <new higher score>)` on the survivor — complexity now sits behind a small interface, so it is deeper.
-- `set_coverage(map, module, <fraction>)` to record interface coverage after the test migration.
-- Collapse the absorbed pass-throughs: `update_module(map, module, {"files": [...], "dependsOn": [...], "iface": "...", "tests": "..."})` on the survivor, and `delete_module(map, <pass-through id>)` for each absorbed node (this prunes dangling edges). Re-point any `dependsOn` that referenced the old nodes to the survivor.
-- `decide(map, suggestion_id, "accepted", note)` then `resolve(map, suggestion_id)` to close the executed candidate. Both keep the candidate as the durable record (`resolve` sets status `done`, it does not delete it).
+- `modules(map, action="update", id=module, depth=<new higher score>)` on the survivor — complexity now sits behind a small interface, so it is deeper.
+- `modules(map, action="update", id=module, coverage=<fraction>)` to record interface coverage after the test migration.
+- Collapse the absorbed pass-throughs: `modules(map, action="update", id=module, files=[...], dependsOn=[...], iface="...", tests="...")` on the survivor, and `modules(map, action="delete", id=<pass-through id>)` for each absorbed node (this prunes dangling edges). Re-point any `dependsOn` that referenced the old nodes to the survivor.
+- `suggestions(map, action="decide", suggestion_id=, decision="accepted", note=)` then `suggestions(map, action="dismiss", suggestion_id=)` to close the executed candidate. Both keep the candidate as the durable record (the `suggestions` tool with `action="dismiss"` sets status `done`, it does not delete it).
 
 **Mode (b) — build:**
-- `realize_module(map, module, depth=<achieved>, coverage=<fraction>, files=[...])` — flips the intended module from `plane="intended"`/`lifecycle="planned"` to `plane="actual"`/`lifecycle="built"` and records what landed. This is the single legible "it's real now" transition; fathom:code owns it.
-- `set_step_status(map, plan_id, step_id, "done")` to close the WorkStep (use `"in-progress"` when you start, `"blocked"` if it can't proceed).
+- `modules(map, action="realize", id=module, depth=<achieved>, coverage=<fraction>, files=[...])` — flips the intended module from `plane="intended"`/`lifecycle="planned"` to `plane="actual"`/`lifecycle="built"` and records what landed. This is the single legible "it's real now" transition; fathom:code owns it.
+- `plans(map, action="set_step_status", plan_id=, step_id=, step_status="done")` to close the WorkStep (use `"in-progress"` when you start, `"blocked"` if it can't proceed).
 
-**Both modes:** `mark_updated(map, module)` so the survivor/built node shows as changed since the last scan. Add the new/changed source files to the module's `files` list so the spine reflects what exists. Then stop — leave the rest to fathom:map.
+**Both modes:** `modules(map, action="update", id=module, updated=true)` so the survivor/built node shows as changed since the last scan. Add the new/changed source files to the module's `files` list so the spine reflects what exists. Then stop — leave the rest to fathom:map.
 
 ### 9. Keep domain language honest
 

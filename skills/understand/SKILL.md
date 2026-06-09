@@ -76,16 +76,16 @@ render_view(map, {"kind": "table", "columns": ["id","domain","depth","coverage"]
 A good tour is three passes over the same map, each answering a question a newcomer actually has. Pull full module records as you go — `show_map` gives the skeleton, but the interface text, files, and tests live in the full model:
 
 ```
-get_model(map)              # the FULL model: every iface, files, tests, candidate body
-get_module(map, module)     # one module's full record (read-only; does not redraw)
-get_modules(map, [ids])     # several at once
+get_full_model(map)                       # the FULL model: every iface, files, tests, candidate body
+modules(map, action="get", id=X)          # one module's full record (read-only; does not redraw)
+modules(map, action="get", ids=[...])     # several at once
 ```
 
 **Lens A — Entry interfaces: "where do I come in?"**
 The modules a caller or a newcomer meets first. Find them structurally: modules many others `dependsOn` but that depend on little themselves (the things the system is *used through*), plus the top of each domain. For each, narrate its **interface** — what a caller must know to use it (types, invariants, error modes, ordering, config), not just the signature. This is the map a newcomer most needs.
 
 **Lens B — Deepest modules: "where does the leverage live?"**
-Sort by `depth` (`render_view` with `sortBy: "depth", sortDir: "desc"`, or read it off `get_model`). The deepest modules are where a lot of behaviour sits behind a small interface — the load-bearing parts worth understanding well. Use the **deletion test** to explain *why* each is deep: deleting it would scatter its complexity across N callers. Note their `coverage` — a deep module with high interface coverage is one you can lean on with confidence; a deep module with low coverage is the one to be careful around.
+Sort by `depth` (`render_view` with `sortBy: "depth", sortDir: "desc"`, or read it off `get_full_model`). The deepest modules are where a lot of behaviour sits behind a small interface — the load-bearing parts worth understanding well. Use the **deletion test** to explain *why* each is deep: deleting it would scatter its complexity across N callers. Note their `coverage` — a deep module with high interface coverage is one you can lean on with confidence; a deep module with low coverage is the one to be careful around.
 
 **Lens C — Hot-spots: "where is the friction?"**
 The places that explain why the codebase feels harder than its size suggests. Start with `scan_signals(map)` — it returns every module carrying a structural signal sorted worst-first by health score, which is the fastest triage of the whole map. Then narrate what you find:
@@ -104,7 +104,7 @@ The places that explain why the codebase feels harder than its size suggests. St
 
 You may also use `get_metrics(map, module)` to pull a single module's raw numbers (fanIn, fanOut, instability, blastRadius, health) when a user asks "how bad is this one specifically?" That gives you the numbers; `scan_signals` gives you the interpretation.
 
-Scope each lens to what the user asked for. "Give me a tour" earns all three across all domains; "what does the billing area do?" earns all three filtered to that domain (`render_view(map, {"of": "<domain>"})`, then `get_modules` for the bodies).
+Scope each lens to what the user asked for. "Give me a tour" earns all three across all domains; "what does the billing area do?" earns all three filtered to that domain (`render_view(map, {"of": "<domain>"})`, then `modules` with `action="get"` for the bodies).
 
 ### 4. Narrate the tour
 

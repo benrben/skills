@@ -573,7 +573,10 @@ class ArchModel:
         self.modules[module.id] = module
 
     def get_module(self, module_id: str) -> dict:
-        m = self.modules[module_id]                  # KeyError if absent
+        if module_id not in self.modules:
+            raise KeyError(f"no module '{module_id}'. Call show_map to list module "
+                           f"ids, or modules(action='add') to create it.")
+        m = self.modules[module_id]
         d = asdict(m)
         d["orphan"] = module_id in set(self.orphans())
         d["supersededBy"] = self._superseded_by().get(module_id, [])
@@ -652,7 +655,10 @@ class ArchModel:
         self.plans[plan.id] = plan
 
     def get_plan(self, plan_id: str) -> dict:
-        return asdict(self.plans[plan_id])           # KeyError if absent
+        if plan_id not in self.plans:
+            raise KeyError(f"no plan '{plan_id}'. Call get_full_model to see this "
+                           f"map's plans, or plans(action='create') to create one.")
+        return asdict(self.plans[plan_id])
 
     _PLAN_EDITABLE = frozenset({"title", "domain", "intent", "status", "moduleIds", "adrRefs"})
 
@@ -697,7 +703,10 @@ class ArchModel:
         self.docs[doc.id] = doc
 
     def get_doc(self, doc_id: str) -> dict:
-        d = self.docs[doc_id]                        # KeyError if absent
+        if doc_id not in self.docs:
+            raise KeyError(f"no doc '{doc_id}'. Call docs(action='list') to see this "
+                           f"map's docs, or docs(action='add') to create one.")
+        d = self.docs[doc_id]
         out = asdict(d)
         r = resolve(d.scope, self)
         out["resolvedModuleIds"] = r.ids

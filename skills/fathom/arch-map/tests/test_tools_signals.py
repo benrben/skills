@@ -62,8 +62,8 @@ def test_leaky_seam():
 # ---- scan_signals -----------------------------------------------------------
 
 def test_scan_signals_reports_and_filters(reg):
-    srv.add_module(map="m", id="a", label="A", domain="d", leaksTo=["b"])
-    srv.add_module(map="m", id="b", label="B", domain="d")
+    srv.modules(action="add", map="m", id="a", label="A", domain="d", leaksTo=["b"])
+    srv.modules(action="add", map="m", id="b", label="B", domain="d")
     out = srv.scan_signals(map="m")
     assert {"map", "filter", "total", "signalCounts", "modules"} <= set(out)
     a = next(r for r in out["modules"] if r["id"] == "a")
@@ -76,9 +76,9 @@ def test_scan_signals_reports_and_filters(reg):
 
 def test_scan_signals_sorted_worst_health_first(reg):
     # a leaks (lower health) ; c is clean and depended-on (higher health)
-    srv.add_module(map="m", id="a", label="A", domain="d", depth=0.1, coverage=0.0,
+    srv.modules(action="add", map="m", id="a", label="A", domain="d", depth=0.1, coverage=0.0,
                    leaksTo=["c"])
-    srv.add_module(map="m", id="c", label="C", domain="d", depth=0.9, coverage=0.9)
+    srv.modules(action="add", map="m", id="c", label="C", domain="d", depth=0.9, coverage=0.9)
     healths = [r["health"] for r in srv.scan_signals(map="m")["modules"]]
     assert healths == sorted(healths)          # ascending = worst-first
 
@@ -86,8 +86,8 @@ def test_scan_signals_sorted_worst_health_first(reg):
 # ---- get_metrics ------------------------------------------------------------
 
 def test_get_metrics_single_and_all(reg):
-    srv.add_module(map="m", id="a", label="A", domain="d")
-    srv.add_module(map="m", id="b", label="B", domain="d", dependsOn=["a"])
+    srv.modules(action="add", map="m", id="a", label="A", domain="d")
+    srv.modules(action="add", map="m", id="b", label="B", domain="d", dependsOn=["a"])
     one = srv.get_metrics(map="m", module="a")
     assert one["module"] == "a"
     assert one["metrics"]["fanIn"] == 1        # b depends on a
@@ -95,6 +95,38 @@ def test_get_metrics_single_and_all(reg):
     assert set(allm["metrics"]) == {"a", "b"}
 
 def test_get_metrics_unknown_module_raises(reg):
-    srv.add_module(map="m", id="a", label="A", domain="d")
+    srv.modules(action="add", map="m", id="a", label="A", domain="d")
     with pytest.raises(KeyError):
         srv.get_metrics(map="m", module="ghost")
+
+
+# ---- pagination (P6) --------------------------------------------------------
+
+def test_scan_signals_paginates_and_summary_covers_full_set(reg):
+    # three modules that each carry a signal (all leak -> leaky-seam)
+    for mid in ("a", "b", "c"):
+        srv.modules(action="add", map="m", id=mid, label=mid.upper(), domain="d", leaksTo=["x"])
+    first = srv.scan_signals(map="m", limit=2, offset=0)
+    assert first["total"] == 3                       # full count, not the page size
+    assert len(first["modules"]) == 2
+    assert first["has_more"] is True
+    assert first["next_offset"] == 2
+    assert first["signalCounts"]["leaky-seam"] == 3  # summary spans the FULL set
+    second = srv.scan_signals(map="m", limit=2, offset=2)
+    assert len(second["modules"]) == 1
+    assert second["has_more"] is False
+    assert second["next_offset"] is None
+
+
+def test_get_metrics_paginates(reg):
+    for mid in ("a", "b", "c"):
+        srv.modules(action="add", map="m", id=mid, label=mid.upper(), domain="d")
+    page = srv.get_metrics(map="m", limit=2, offset=0)
+    assert page["total_count"] == 3
+    assert len(page["metrics"]) == 2
+    assert page["has_more"] is True
+    assert page["next_offset"] == 2
+    last = srv.get_metrics(map="m", limit=2, offset=2)
+    assert len(last["metrics"]) == 1
+    assert last["has_more"] is False
+    assert last["next_offset"] is None

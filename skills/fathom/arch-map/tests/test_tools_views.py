@@ -104,7 +104,7 @@ def test_bar_by_domain_count():
 # ---- render_view tool -------------------------------------------------------
 
 def test_render_view_tool_wraps_builder(reg):
-    srv.add_module(map="m", id="a", label="A", domain="d", depth=0.6)
+    srv.modules(action="add", map="m", id="a", label="A", domain="d", depth=0.6)
     out = srv.render_view(map="m", spec={"kind": "table"})
     assert out["map"] == "m"
     assert out["kind"] == "table"

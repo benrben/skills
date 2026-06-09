@@ -13,29 +13,29 @@ ACK_KEYS = {"ok", "changed", "repo", "modules", "orphans", "openSuggestions"}
 
 
 def test_add_module_returns_uniform_ack(reg):
-    ack = srv.add_module(map="m", id="a", label="A", domain="d")   # ensure-creates the map
+    ack = srv.modules(action="add", map="m", id="a", label="A", domain="d")   # ensure-creates the map
     assert ack["ok"] is True
     assert ACK_KEYS <= set(ack)
     assert ack["modules"] == 1
 
 
 def test_get_and_update_and_delete_module(reg):
-    srv.add_module(map="m", id="a", label="A", domain="d")
-    assert srv.get_module(map="m", module="a")["id"] == "a"
-    srv.update_module(map="m", module="a", fields={"depth": 0.9, "iface": "x"})
-    assert srv.get_module(map="m", module="a")["depth"] == 0.9
-    srv.delete_module(map="m", module="a")
+    srv.modules(action="add", map="m", id="a", label="A", domain="d")
+    assert srv.modules(action="get", map="m", id="a")["id"] == "a"
+    srv.modules(action="update", map="m", id="a", depth=0.9, iface="x")
+    assert srv.modules(action="get", map="m", id="a")["depth"] == 0.9
+    srv.modules(action="delete", map="m", id="a")
     with pytest.raises(KeyError):
-        srv.get_module(map="m", module="a")
+        srv.modules(action="get", map="m", id="a")
 
 
 def test_set_depth_coverage_churn_and_mark_updated(reg):
-    srv.add_module(map="m", id="a", label="A", domain="d")
-    srv.set_depth(map="m", module="a", score=0.7)
-    srv.set_coverage(map="m", module="a", fraction=0.6)
-    srv.set_churn(map="m", module="a", churn=9.0)        # clamped to 1.0
-    srv.mark_updated(map="m", module="a", updated=False)
-    rec = srv.get_module(map="m", module="a")
+    srv.modules(action="add", map="m", id="a", label="A", domain="d")
+    srv.modules(action="update", map="m", id="a", depth=0.7)
+    srv.modules(action="update", map="m", id="a", coverage=0.6)
+    srv.modules(action="update", map="m", id="a", churn=9.0)        # clamped to 1.0
+    srv.modules(action="update", map="m", id="a", updated=False)
+    rec = srv.modules(action="get", map="m", id="a")
     assert rec["depth"] == 0.7
     assert rec["coverage"] == 0.6
     assert rec["churn"] == 1.0
@@ -43,30 +43,36 @@ def test_set_depth_coverage_churn_and_mark_updated(reg):
 
 
 def test_bulk_add_get_update_delete(reg):
-    srv.add_modules(map="m", modules=[
+    srv.modules(action="add", map="m", items=[
         {"id": "a", "label": "A", "domain": "d"},
         {"id": "b", "label": "B", "domain": "d", "dependsOn": ["a"]},
     ])
-    got = srv.get_modules(map="m", modules=["a", "b"])["modules"]
+    got = srv.modules(action="get", map="m", ids=["a", "b"])["modules"]
     assert [r["id"] for r in got] == ["a", "b"]
-    srv.update_modules(map="m", updates=[{"id": "a", "depth": 0.95}])
-    assert srv.get_module(map="m", module="a")["depth"] == 0.95
-    srv.delete_modules(map="m", modules=["a", "b"])
+    srv.modules(action="update", map="m", items=[{"id": "a", "depth": 0.95}])
+    assert srv.modules(action="get", map="m", id="a")["depth"] == 0.95
+    srv.modules(action="delete", map="m", ids=["a", "b"])
     assert srv.show_map(map="m")["modules"] == []
 
 
 def test_store_tool_on_missing_map_raises(reg):
     with pytest.raises(KeyError):
-        srv.set_coverage(map="ghost", module="a", fraction=0.5)
+        srv.modules(action="update", map="ghost", id="a", coverage=0.5)
 
 
 def test_update_unknown_module_raises(reg):
-    srv.create_map(map="m", repo="M")
+    srv.create_project(name="M", map_id="m", repo="M")
     with pytest.raises(KeyError):
-        srv.update_module(map="m", module="ghost", fields={"depth": 0.1})
+        srv.modules(action="update", map="m", id="ghost", depth=0.1)
 
 
 def test_update_module_rejects_non_editable_field(reg):
-    srv.add_module(map="m", id="a", label="A", domain="d")
+    # modules(action="update") has no param for a non-editable field, so an unknown
+    # kwarg is a TypeError at the tool boundary (the agent's schema can't even offer
+    # it). The model-level _EDITABLE guard is still exercised via the bulk items path,
+    # which takes raw dicts.
+    srv.modules(action="add", map="m", id="a", label="A", domain="d")
+    with pytest.raises(TypeError):
+        srv.modules(action="update", map="m", id="a", bogus=1)
     with pytest.raises(ValueError):
-        srv.update_module(map="m", module="a", fields={"bogus": 1})
+        srv.modules(action="update", map="m", items=[{"id": "a", "bogus": 1}])

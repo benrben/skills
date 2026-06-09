@@ -35,10 +35,10 @@ fathom:map has a sharp, single-purpose seam against the shared spine. It writes 
 
 It MUST NOT:
 
-- **Propose deepenings or attach candidates** — no `flag_deepening`, no grilling, no candidate queue. That lifecycle is owned by [fathom:deepen](../deepen/SKILL.md). The map models shallowness as a fact via the `depth` score; it never recommends fixing it.
+- **Propose deepenings or attach candidates** — no `suggestions` (action="flag"), no grilling, no candidate queue. That lifecycle is owned by [fathom:deepen](../deepen/SKILL.md). The map models shallowness as a fact via the `depth` score; it never recommends fixing it.
 - **Design intended/aspirational structure** — it records the module graph that EXISTS today, never the one you want. Intended-plane modules and Plans are [fathom:plan](../plan/SKILL.md)'s territory.
 - **Edit, refactor, move, or merge source, or change interfaces** — it is read-only against the repo. [fathom:code](../code/SKILL.md) is the only skill that edits source.
-- **Decide on, accept, defer, or resolve candidates** — it never touches the decisions slice (`decide` / `resolve` / `start_grilling` / `grilling_done`).
+- **Decide on, accept, defer, or resolve candidates** — it never touches the decisions slice (`suggestions` action="decide" / `suggestions` action="dismiss" / `grilling` action="start" / `grilling` action="finish").
 - **Author ADRs** — it reads ADRs as facts about what is; it defers decision-recording to [adr-writer](../adr-writer/SKILL.md).
 - **Run, build, or test the app, or import a coverage report** — `coverage` is a judgement about the interface test surface, not a numeric report.
 
@@ -91,10 +91,10 @@ Record modules at the granularity that **earns its keep** — a module is scale-
 
 ### 4. Commit the model in bulk
 
-Call `add_modules(map, [...])` with the full module list. `id` / `label` / `domain` are required; fill `depth` / `size` / `seam` / `iface` / `coverage` / `files` / `dependsOn` / `leaksTo` / `tests`. Prefer one or a few bulk calls over many `add_module` calls. Edges resolve by id, so **add all nodes before** relying on `dependsOn` / `leaksTo` to render.
+Call `modules("my-repo", action="add", items=[...])` with the full module list. `id` / `label` / `domain` are required; fill `depth` / `size` / `seam` / `iface` / `coverage` / `files` / `dependsOn` / `leaksTo` / `tests`. Prefer one or a few bulk calls over many single `modules` (action="add") calls. Edges resolve by id, so **add all nodes before** relying on `dependsOn` / `leaksTo` to render.
 
 ```
-add_modules("my-repo", [
+modules("my-repo", action="add", items=[
   {"id": "order-intake", "label": "Order Intake", "domain": "orders",
    "depth": 0.8, "coverage": 0.7, "size": 1.4,
    "seam": "OrderIntake.submit(cart) -> OrderId",
@@ -121,23 +121,23 @@ scan_signals("my-repo")                                               # all stru
 
 `scan_signals` returns every module carrying a structural signal (danger-zone, needs-refactor, bottleneck, leaky-seam, etc.) sorted by health score. Use it to surface the riskiest spots quickly — especially `scan_signals("my-repo", "test-first")` (high blast-radius + low coverage) and `scan_signals("my-repo", "danger-zone")` (high churn + low coverage). This is the same signal layer the studio's inspector shows; calling it here gives you the same triage list in your context.
 
-Walk the orphans and leaks with the maintainer. An **orphan is almost always a real edge you missed** — fix its `dependsOn` rather than leave it floating; only rarely is it genuinely dead code. The map should match how the maintainer describes the system; **where it doesn't, the map is wrong** — correct it with `update_module` / `set_depth` / `set_coverage`.
+Walk the orphans and leaks with the maintainer. An **orphan is almost always a real edge you missed** — fix its `dependsOn` rather than leave it floating; only rarely is it genuinely dead code. The map should match how the maintainer describes the system; **where it doesn't, the map is wrong** — correct it with `modules` (action="update", optionally setting just `depth` or `coverage`).
 
 ### 6. Reconcile drift (resumed map)
 
 A reconcile is an explicit re-walk of the parts of the repo that may have changed — you decide the scope (a recent merge's files, a domain the maintainer flags, or the whole repo for a periodic health check). There is no background drift signal to consult; you re-derive against the real code.
 
-- **For each module in the reconcile scope**, pull its current record (`get_module` / `get_modules`), re-walk its `files` (an Explore subagent if the change is large), and re-derive depth / coverage / dependsOn / leaksTo / iface / seam / tests via `update_module` or `update_modules`. A refactor can deepen a module (raise `depth`); a new caller can change its edges. Use `set_depth` / `set_coverage` for targeted single-field corrections.
-- **For files that belong to no module**, decide: do they extend an existing module (add to that module's `files`), or are they a newly-discovered module (`add_module`)?
-- **For modules whose files no longer exist**, `delete_modules(map, [...])` — this prunes dangling edges. If a file merely **moved**, prefer updating `files` over deleting, so hand-curated iface/seam prose isn't lost.
-- **Clear the halos.** Once a module's model matches reality again, `mark_updated(map, module, False)` so it stops showing the "changed since last scan" halo.
-- **Record churn from git.** For each module in the reconcile scope, compute commit frequency from `git log --follow -- <files>` over the last 90 days, normalise to 0..1 (0 = never changes, 1 = changes every week), and call `set_churn(map, module, churn)`. Churn feeds the `danger-zone` signal (high churn + low coverage) and the health score visible in the studio inspector — without it those signals can't fire.
+- **For each module in the reconcile scope**, pull its current record (`modules` action="get", single via `id` or bulk via `ids`), re-walk its `files` (an Explore subagent if the change is large), and re-derive depth / coverage / dependsOn / leaksTo / iface / seam / tests via `modules` action="update" (single `id` or bulk `items`). A refactor can deepen a module (raise `depth`); a new caller can change its edges. Use `modules` action="update" with just `depth` or `coverage` for targeted single-field corrections.
+- **For files that belong to no module**, decide: do they extend an existing module (add to that module's `files`), or are they a newly-discovered module (`modules` action="add")?
+- **For modules whose files no longer exist**, `modules("my-repo", action="delete", ids=[...])` — this prunes dangling edges. If a file merely **moved**, prefer updating `files` over deleting, so hand-curated iface/seam prose isn't lost.
+- **Clear the halos.** Once a module's model matches reality again, `modules(map, action="update", id=module, updated=False)` so it stops showing the "changed since last scan" halo.
+- **Record churn from git.** For each module in the reconcile scope, compute commit frequency from `git log --follow -- <files>` over the last 90 days, normalise to 0..1 (0 = never changes, 1 = changes every week), and call `modules(map, action="update", id=module, churn=churn)`. Churn feeds the `danger-zone` signal (high churn + low coverage) and the health score visible in the studio inspector — without it those signals can't fire.
 
 ```
-get_modules("my-repo", ["order-intake", "pricing"])
-update_modules("my-repo", [{"id": "order-intake", "depth": 0.9, "dependsOn": ["inventory", "pricing", "promotions"]}])
-delete_modules("my-repo", ["legacy-coupon"])     # its files are gone
-mark_updated("my-repo", "order-intake", False)
+modules("my-repo", action="get", ids=["order-intake", "pricing"])
+modules("my-repo", action="update", items=[{"id": "order-intake", "depth": 0.9, "dependsOn": ["inventory", "pricing", "promotions"]}])
+modules("my-repo", action="delete", ids=["legacy-coupon"])     # its files are gone
+modules("my-repo", action="update", id="order-intake", updated=False)
 ```
 
 ### 7. Maintain the domain language as a side effect

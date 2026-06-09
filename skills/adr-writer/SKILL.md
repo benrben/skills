@@ -81,14 +81,14 @@ When invoked from a Fathom skill, close the loop so the map and the ADR cross-re
 - **From `fathom:deepen` (a rejected candidate).** Record the verdict on the candidate's suggestion with the ADR path in the note:
 
   ```
-  decide(map, suggestion_id, "rejected", note="<one-line reason> — see docs/adr/NNNN-slug.md")
+  suggestions(map, action="decide", suggestion_id=, decision="rejected", note="<one-line reason> — see docs/adr/NNNN-slug.md")
   ```
 
-  Use `decide`, **never `resolve`**. `decide(... "rejected" ...)` keeps the verdict and the note on the candidate — the durable "don't re-suggest this" record a future scan sees. `resolve(map, suggestion_id)` clears the candidate and discards the reason, which would re-open the door to re-suggesting the same deepening. (`decision` is exactly `"accepted"` | `"deferred"` | `"rejected"`, or `""` to re-open.) If the rejection came out of a grilling loop, the closing call carries the ADR directly: `grilling_done(map, suggestion_id, "rejected", note=reason, adr="docs/adr/NNNN-slug.md")`.
+  Use the `suggestions` tool with `action="decide"`, **never `action="dismiss"`**. `suggestions(map, action="decide", ... decision="rejected" ...)` keeps the verdict and the note on the candidate — the durable "don't re-suggest this" record a future scan sees. `suggestions(map, action="dismiss", suggestion_id=)` clears the candidate and discards the reason, which would re-open the door to re-suggesting the same deepening. (`decision` is exactly `"accepted"` | `"deferred"` | `"rejected"`, or `""` to re-open.) If the rejection came out of a grilling loop, the closing call carries the ADR directly: `grilling(map, action="finish", suggestion_id=, decision="rejected", note=reason, adr="docs/adr/NNNN-slug.md")`.
 
-- **From `fathom:plan` (a design-it-twice trade-off).** Reference the ADR path from the plan's intent so the chosen design records why the rejected alternative lost: `update_plan(map, plan_id, intent="… chosen over <alt>; see docs/adr/NNNN-slug.md")` (or carry the reference in the plan when it is created). For a work step that deviates from the obvious build, note the ADR on that step.
+- **From `fathom:plan` (a design-it-twice trade-off).** Reference the ADR path from the plan's intent so the chosen design records why the rejected alternative lost: `plans(map, action="update", plan_id=, intent="… chosen over <alt>; see docs/adr/NNNN-slug.md")` (or carry the reference in the plan when it is created). For a work step that deviates from the obvious build, note the ADR on that step.
 
-- **From `fathom:code` (a deliberate deviation while building).** When the implementation departs from a planned interface for a recorded reason, note the ADR path on the relevant work step (`set_step_status` / the step's `note`) or on the module's interface text so the deviation isn't later "fixed."
+- **From `fathom:code` (a deliberate deviation while building).** When the implementation departs from a planned interface for a recorded reason, note the ADR path on the relevant work step (`plans` with `action="set_step_status"` / the step's `note`) or on the module's interface text so the deviation isn't later "fixed."
 
 arch-map has no ADR awareness of its own — the link is free text in the note / intent, so always include the full `docs/adr/NNNN-slug.md` path verbatim. The candidate keeps a rejected verdict badge that points a future explorer at the rationale.
 

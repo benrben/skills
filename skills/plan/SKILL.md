@@ -31,7 +31,7 @@ The arch-map holds two planes. `plan` writes only the **intended** plane.
 - `plane = "actual"` — what the code IS today (seeded and reconciled by `fathom:map`; realized by `fathom:code`). **`plan` never writes the actual plane.**
 - `plane = "intended"` — what you WANT to build. Every module `plan` records is `plane="intended"`, `lifecycle="planned"`, `coverage` 0, with `intendsToDependOn` edges and a `supersedes` list naming the actual modules it will replace.
 
-`lifecycle` is the per-module build state: `"planned"` → `"building"` → `"built"`. `plan` seeds modules at `"planned"`; only `fathom:code` advances them (via `realize_module`). Leave `coverage` at 0 and never `mark_updated` an intended module — those are claims of *built* work, and tripping them would make a planned node look like real, drifting source.
+`lifecycle` is the per-module build state: `"planned"` → `"building"` → `"built"`. `plan` seeds modules at `"planned"`; only `fathom:code` advances them (via `modules` with `action="realize"`). Leave `coverage` at 0 and never call `modules` with `action="update"` to mark an intended module updated — those are claims of *built* work, and tripping them would make a planned node look like real, drifting source.
 
 ## Process
 
@@ -46,11 +46,11 @@ Read the project's `CONTEXT.md` (or `CONTEXT-MAP.md` to pick the right context) 
 ```
 list_maps()                       # find this project's map (resume) — or create_project(<human name>) -> {map}
 show_map(map)                     # the lightweight network view
-get_model(map)                    # the full model when you need every interface/seam
-get_module(map, <id>)             # inspect a specific actual module's interface you'll depend on
+get_full_model(map)              # the full model when you need every interface/seam
+modules(map, action="get", id=<id>)   # inspect a specific actual module's interface you'll depend on
 ```
 
-Thread the returned `map` id through *every* later call. Identify which **actual** modules the new work touches, depends on, or sits beside. If the repo isn't mapped yet, **stop and hand to `fathom:map`** to seed it — `plan` consumes an accurate map, it does not build one. (You may also read open candidates with `get_module` to avoid designing around something `fathom:deepen` is about to reshape — but `plan` never creates or decides candidates.)
+Thread the returned `map` id through *every* later call. Identify which **actual** modules the new work touches, depends on, or sits beside. If the repo isn't mapped yet, **stop and hand to `fathom:map`** to seed it — `plan` consumes an accurate map, it does not build one. (You may also read open candidates with `modules` (`action="get"`) to avoid designing around something `fathom:deepen` is about to reshape — but `plan` never creates or decides candidates.)
 
 ### 3. Design the module graph twice (system level)
 
@@ -92,10 +92,10 @@ Apply seam discipline: **only introduce a port where at least two adapters are j
 
 ### 6. Record the chosen structure on the map as INTENDED
 
-Add the picked modules as `plane="intended"`, `lifecycle="planned"`, `coverage=0`, `depth` set to the intended deep value, each `supersedes`-ing the actual module(s) it will replace, wired with `intendsToDependOn` edges (intended edges, distinct from the actual `dependsOn` graph). Use `add_modules` so the intended-plane fields pass through `Module.from_dict`:
+Add the picked modules as `plane="intended"`, `lifecycle="planned"`, `coverage=0`, `depth` set to the intended deep value, each `supersedes`-ing the actual module(s) it will replace, wired with `intendsToDependOn` edges (intended edges, distinct from the actual `dependsOn` graph). Use `modules` with `action="add"` so the intended-plane fields pass through `Module.from_dict`:
 
 ```
-add_modules(map, [
+modules(map, action="add", items=[
   {"id": "order-intake", "label": "Order intake", "domain": "orders",
    "plane": "intended", "lifecycle": "planned", "depth": 0.8, "coverage": 0.0,
    "seam": "<where the interface lives>",
@@ -109,20 +109,20 @@ add_modules(map, [
 Then create the **Plan** and connect the intended modules to it:
 
 ```
-create_plan(map, id="orders-rework", title="Order intake rework",
+plans(map, action="create", plan_id="orders-rework", title="Order intake rework",
             domain="orders",
             intent="<1–3 sentences naming the intended deep structure; record rejected decompositions here so later runs don't re-propose them>",
             moduleIds=["order-intake", ...])
 ```
 
-Leave `coverage` 0 and never `mark_updated` these nodes — `fathom:code` sets real depth/coverage and advances `lifecycle` when it builds them. Do **not** touch the actual-plane `depth`/`coverage`/`dependsOn`/`leaksTo` of existing modules, and never write `leaksTo` on an intended node — a leak is an as-is defect, never a plan target.
+Leave `coverage` 0 and never call `modules` with `action="update"` to mark these nodes updated — `fathom:code` sets real depth/coverage and advances `lifecycle` when it builds them. Do **not** touch the actual-plane `depth`/`coverage`/`dependsOn`/`leaksTo` of existing modules, and never write `leaksTo` on an intended node — a leak is an as-is defect, never a plan target.
 
 ### 7. Sequence the work into ordered build steps
 
 Produce an ordered list where **each step hands ONE intended module** to `fathom:code` — its interface (test surface), seam, and dependency category — in dependency order: leaf/deepest modules first, callers after, **ports before their adapters**. Record the sequence on the map so `fathom:code` can resume it across sessions:
 
 ```
-add_work_steps(map, "orders-rework", [
+plans(map, action="add_steps", plan_id="orders-rework", steps=[
   {"id": "s1", "title": "Build pricing-engine port + adapters",
    "targets": ["pricing-engine"],
    "interface": "<the test surface to assert at>",
@@ -134,7 +134,7 @@ add_work_steps(map, "orders-rework", [
 ])
 ```
 
-Each step must be self-contained enough that `fathom:code` can build it **deep from line one** and assert at its interface. Inspect the result with `get_plan(map, "orders-rework")` and `set_step_status` only if you need to mark a step (status is otherwise `fathom:code`'s to advance: `todo` → `in-progress` → `done` | `blocked`).
+Each step must be self-contained enough that `fathom:code` can build it **deep from line one** and assert at its interface. Inspect the result with `plans(map, action="get", plan_id="orders-rework")` and `plans` (`action="set_step_status"`) only if you need to mark a step (status is otherwise `fathom:code`'s to advance: `todo` → `in-progress` → `done` | `blocked`).
 
 ### 8. Offer ADRs and hand off
 
@@ -149,14 +149,14 @@ Then hand the sequenced plan to **`fathom:code`** to execute. State the headline
 | Call | Read / Write | Why |
 | --- | --- | --- |
 | `list_maps()` / `create_project(name)` | bootstrap | Find or create the project's shared map; thread the returned `map` id everywhere. |
-| `show_map(map)` / `get_model(map)` / `get_module(map, id)` / `get_modules(map, ids)` | READ | Load the actual graph the new work plugs into; inspect interfaces it depends on. |
-| `add_modules(map, [...])` (or `add_module`) | WRITE — intended modules | Seed `plane="intended"`, `lifecycle="planned"`, `coverage=0`, with `iface`/`seam`/`tests`, `supersedes`, `intendsToDependOn`. |
-| `update_module(map, module, fields)` | WRITE — intended interface text | Patch `iface`/`seam`/`tests`/`intendsToDependOn` on an intended node as the design firms up. |
-| `create_plan(map, id, title, domain, intent, moduleIds)` | WRITE — Plan | Record the intended structure as a resumable Plan; capture rejected alternatives in `intent`. |
-| `add_work_steps(map, plan_id, steps)` | WRITE — WorkSteps | The ordered, dependency-respecting build sequence `fathom:code` executes. |
-| `get_plan(map, plan_id)` | READ | Confirm the recorded plan + step order. |
+| `show_map(map)` / `get_full_model(map)` / `modules(map, action="get", id=...)` / `modules(map, action="get", ids=[...])` | READ | Load the actual graph the new work plugs into; inspect interfaces it depends on. |
+| `modules(map, action="add", items=[...])` (or `action="add"` with a single `id=`) | WRITE — intended modules | Seed `plane="intended"`, `lifecycle="planned"`, `coverage=0`, with `iface`/`seam`/`tests`, `supersedes`, `intendsToDependOn`. |
+| `modules(map, action="update", id=...)` | WRITE — intended interface text | Patch `iface`/`seam`/`tests`/`intendsToDependOn` on an intended node as the design firms up. |
+| `plans(map, action="create", plan_id, title, domain, intent, moduleIds)` | WRITE — Plan | Record the intended structure as a resumable Plan; capture rejected alternatives in `intent`. |
+| `plans(map, action="add_steps", plan_id, steps)` | WRITE — WorkSteps | The ordered, dependency-respecting build sequence `fathom:code` executes. |
+| `plans(map, action="get", plan_id)` | READ | Confirm the recorded plan + step order. |
 
-**`plan` does NOT call:** `flag_deepening` / `decide` / `resolve` / `start_grilling` / `grilling_done` (the candidate lifecycle owned by `fathom:deepen`); `set_depth` / `set_coverage` / `mark_updated` / `realize_module` on actual modules, and never advances `lifecycle` (those are `fathom:code`'s — `plan` leaves intended nodes at `planned`, `coverage` 0); `delete_module` / `update_module` against the **actual** plane. It writes only the intended plane and the Plan/WorkStep entities.
+**`plan` does NOT call:** `suggestions` (`action="flag"` / `action="decide"` / `action="dismiss"`) / `grilling` (`action="start"` / `action="finish"`) (the candidate lifecycle owned by `fathom:deepen`); `modules` with `action="update"` (to set `depth`/`coverage` or mark updated) or `action="realize"` on actual modules, and never advances `lifecycle` (those are `fathom:code`'s — `plan` leaves intended nodes at `planned`, `coverage` 0); `modules` with `action="delete"` / `action="update"` against the **actual** plane. It writes only the intended plane and the Plan/WorkStep entities.
 
 ## Hand-offs
 
@@ -178,7 +178,7 @@ Then hand the sequenced plan to **`fathom:code`** to execute. State the headline
 - **Does NOT find or fix friction in EXISTING shallow modules** — that is `fathom:deepen`. The tell: if every module in the discussion already has files on the actual plane, it's `deepen`; if any target module is to-be-built, it's `plan`.
 - **Does NOT seed a repo into the map or reconcile drift** — that is `fathom:map`. `plan` consumes an accurate map; it doesn't build or correct one.
 - **Does NOT edit, write, or refactor any source or test file** — the only skill that touches source is `fathom:code`. `plan` stops at the design and the sequenced hand-off.
-- **Does NOT create deepening candidates (`flag_deepening`) or decide/resolve them** — that surface belongs to `fathom:deepen`.
+- **Does NOT create deepening candidates (`suggestions` with `action="flag"`) or decide/resolve them** — that surface belongs to `fathom:deepen`.
 - **Does NOT set real depth/coverage, mark modules updated, or realize a module** — it leaves intended modules at `coverage` 0 / `lifecycle="planned"` for `fathom:code`.
 - **Does NOT write ADRs** — it *offers* them and hands to `adr-writer`, the sole writer of `docs/adr/`.
 - **Does NOT re-litigate recorded ADRs** — it reads them as constraints and only reopens one with an explicit, surfaced reason.

@@ -8,14 +8,14 @@ A **living codebase architecture map**, served as a [FastMCP](https://github.com
  PROJECT AGENT ──calls tools──►  arch-map (FastMCP)  ──ui:// resource──►  host renders
  (Claude in repo)                 holds the model       network graph        inline graph
         ▲                         + tools                                        │
-        └──────────────── start_grilling  ◄── app.callServerTool ◄── click in UI ┘
+        └──────────────── grilling(action="start")  ◄── app.callServerTool ◄── click in UI ┘
 ```
 
-The agent never writes HTML. It calls `flag_deepening(...)`, `set_depth(...)`, `mark_updated(...)`. The graph redraws from the model each time. Clicking a node's **Grill this candidate →** button calls back into the server.
+The agent never writes HTML. It calls `suggestions(action="flag", ...)`, `modules(action="update", depth=...)`, `modules(action="update", updated=...)`. The graph redraws from the model each time. Clicking a node's **Grill this candidate →** button calls back into the server.
 
 ## Two rendering lanes (hybrid)
 
-- **Lane 1 — the studio, everywhere** ([`arch_map/ui/studio/`](arch_map/ui/studio/)): the *same* studio served in the browser is also inlined as the `ui://arch/network.html` MCP-App resource, so a UI-capable host renders it **inline** — driven by the tools. `show_map` names the map, `get_model` feeds the full model, and `set_depth`/`add_module`/`decide`/… mutate it (the studio routes these through `app.callServerTool`). Its `state.js` has two transports — HTTP for the browser, the [`@modelcontextprotocol/ext-apps`](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/) host bridge for MCP-App hosts — picked by a flag the server injects when inlining. (The old self-contained `network.html` is kept for history.)
+- **Lane 1 — the studio, everywhere** ([`arch_map/ui/studio/`](arch_map/ui/studio/)): the *same* studio served in the browser is also inlined as the `ui://arch/network.html` MCP-App resource, so a UI-capable host renders it **inline** — driven by the tools. `show_map` names the map, `get_full_model` feeds the full model, and `modules` (action="update", depth=…)/`modules` (action="add")/`suggestions` (action="decide")/… mutate it (the studio routes these through `app.callServerTool`). Its `state.js` has two transports — HTTP for the browser, the [`@modelcontextprotocol/ext-apps`](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/) host bridge for MCP-App hosts — picked by a flag the server injects when inlining. (The old self-contained `network.html` is kept for history.)
 - **Lane 2 — FastMCP Generative UI** (Prefab): `mcp.add_provider(GenerativeUI())` for ad-hoc charts/tables the model improvises. *Off by default* — it needs the `prefab-ui` extra and renders in Prefab's generic look (no arch-map design); the studio is the on-brand surface. See [FastMCP docs](https://gofastmcp.com/apps/generative).
 
 ## What the graph encodes
@@ -41,7 +41,7 @@ is no per-agent access control, any client can read or write any of them. Every
 tool and HTTP route takes an explicit **`map`** id to say which project it acts on.
 
 Create one with `create_project("Mr. Meeseeks")` (slugs to the id `mr-meeseeks`)
-or, for an explicit id, `create_map(map, repo)`. The studio's header has a project
+or, for an explicit id, `create_project(name, map_id, repo)`. The studio's header has a project
 switcher (pick a project, or type a name to create one); a browser deep-links a
 project with `?map=<id>`. A pre-existing single `arch_state.json` is migrated into
 `maps/<repo>.json` once, non-destructively.
@@ -50,7 +50,7 @@ project with `?map=<id>`. A pre-existing single `arch_state.json` is migrated in
 |---|---|
 | `list_maps()` | list every project map (id, label, counts) |
 | `create_project(name)` | create a project; returns its `map` id to use next |
-| `create_map(map, repo)` | create a map with an explicit id |
+| `create_project(name, map_id, repo)` | create a map with an explicit id |
 | `rename_map(map, to, repo)` | rename / relabel a map |
 | `delete_map(map)` | delete a map and its file |
 
@@ -61,16 +61,16 @@ All take `map` — the project map to act on (see above).
 | tool | effect |
 |---|---|
 | `show_map(map)` | render that project's network (lightweight; names the map for the inline studio) |
-| `get_model(map)` | full model (interfaces/files/tests/suggestion bodies) — what the inline studio renders |
-| `decide(map, suggestion_id, decision, note)` | record accept/defer/reject (or `""` to re-open) |
-| `flag_deepening(map, module, title, strength, category, problem, solution, wins)` | attach a suggestion |
-| `set_depth(map, module, score)` | update depth (0–1) |
-| `set_coverage(map, module, fraction)` | update coverage (0–1) |
-| `mark_updated(map, module, updated=True)` | toggle the updated halo |
-| `resolve(map, suggestion_id)` | dismiss a suggestion |
-| `add_module` / `update_module` / `delete_module` (+ bulk `*_modules`) | module CRUD on `map` |
+| `get_full_model(map)` | full model (interfaces/files/tests/suggestion bodies) — what the inline studio renders |
+| `suggestions(map, action="decide", suggestion_id=, decision=, note=)` | record accept/defer/reject (or `""` to re-open) |
+| `suggestions(map, action="flag", module=, title=, strength=, category=, problem=, solution=, wins=)` | attach a suggestion |
+| `modules(map, action="update", id=, depth=)` | update depth (0–1) |
+| `modules(map, action="update", id=, coverage=)` | update coverage (0–1) |
+| `modules(map, action="update", id=, updated=True)` | toggle the updated halo |
+| `suggestions(map, action="dismiss", suggestion_id=)` | dismiss a suggestion |
+| `modules` with `action="add"` / `"update"` / `"delete"` (+ bulk via `items=`/`ids=`) | module CRUD on `map` |
 | `render_view(map, spec)` | on-brand ad-hoc **view** — a table or bar chart of the map, drawn with the studio's design (the on-brand answer to "chart depth", "table of orphans"). Browser: `/view?map=…&kind=bar&metric=coverage&groupBy=domain` |
-| `start_grilling(map, module)` | UI callback → hands off to the grilling loop |
+| `grilling(map, action="start", module=)` | UI callback → hands off to the grilling loop |
 
 ## Run
 

@@ -4,8 +4,9 @@ Two rendering lanes, per the explored design:
 
   Lane 1 — the bespoke *studio* (ui://arch/network.html), inlined from ui/studio/.
            Tools link to it via AppConfig and stream the model into it
-           (show_map/get_model -> app.ontoolresult); the studio routes edits back
-           via app.callServerTool (set_depth/add_module/decide/resolve/...). The
+           (show_map/get_full_model -> app.ontoolresult); the studio
+           routes edits back via app.callServerTool to the action-dispatch tools
+           (modules / suggestions / grilling / plans / docs). The
            same studio is served over HTTP for the browser.
   Lane 2 — FastMCP's Generative UI (Prefab) for ad-hoc charts/tables the model
            improvises ("chart depth across the repo", "table of orphans").
@@ -32,6 +33,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dataclasses import dataclass, field, fields
+from typing import Literal
 import fcntl
 import json
 import re
@@ -200,7 +202,8 @@ class MapRegistry:
     def store(self, map_id: str) -> Store:
         p = self.path(map_id)
         if not p.exists():
-            raise KeyError(f"no map '{map_id}' (create it with create_map)")
+            raise KeyError(f"no map '{map_id}' (create it with create_project, "
+                           f"or call list_maps to see existing map ids)")
         return Store(p)
 
     def create(self, map_id: str, repo: str = "") -> Store:
@@ -342,9 +345,10 @@ def _inline_app(index_path: Path) -> str:
 @mcp.resource(UI_URI, mime_type="text/html;profile=mcp-app", **_RES_APP)
 def studio_ui() -> str:
     """The unified studio, inlined for the MCP-App sandbox. A host renders this in a
-    sandboxed iframe and drives it through the tools: show_map names the map,
-    get_model feeds the full model, and set_depth / add_module / decide / resolve /
-    … mutate it — every change re-rendered with the studio's own components."""
+    sandboxed iframe and drives it through the tools: show_map names the
+    map, get_full_model feeds the full model, and the action-dispatch tools
+    (modules / suggestions / grilling / plans / docs) mutate it — every change
+    re-rendered with the studio's own components."""
     return _inline_app(STUDIO_INDEX)
 
 
@@ -497,33 +501,34 @@ def _ack(store: Store, changed: str | None = None) -> dict:
 
 
 @mcp.tool
-def list_maps() -> dict:
+def list_maps(limit: int = 50, offset: int = 0) -> dict:
     """List the available architecture maps (id, repo label, module/proposal counts).
-    Maps are shared — any agent can read or write any of them; pass the id as `map`."""
-    return {"maps": REGISTRY.list(), "default": REGISTRY.default_id()}
+    Maps are shared — any agent can read or write any of them; pass the id as `map`.
+    Use `limit` (default 50) and `offset` to page `maps`; the response carries
+    total_count / has_more / next_offset."""
+    all_maps = REGISTRY.list()
+    page = all_maps[offset:offset + limit]
+    return {"maps": page, "default": REGISTRY.default_id(),
+            "total_count": len(all_maps),
+            "has_more": offset + limit < len(all_maps),
+            "next_offset": offset + limit if offset + limit < len(all_maps) else None}
 
 
 @mcp.tool(**_APP)
-def create_project(name: str) -> dict:
-    """Create a new project and open its (empty) architecture map. `name` is the
-    human project name (e.g. "Mr. Meeseeks"); it becomes the display label and is
-    slugged to the map id (e.g. "mr-meeseeks"). Returns that id as `map` — pass it
-    to add_module/add_modules/flag_deepening to populate the project. Projects are
-    shared: any agent can read or write this one.
+def create_project(name: str, map_id: str = "", repo: str = "") -> dict:
+    """Create a new project and open its (empty) architecture map, then render it.
 
-    This is the friendly front door for create_map (which takes an explicit id)."""
-    mid = _slug(name)
-    ack = _ack(REGISTRY.create(mid, name or mid), changed=f"created project {mid}")
+    When to use: starting a new project/map (typically one per repo). `name` is the
+    human project name (e.g. "Mr. Meeseeks") and becomes the display label. By
+    default the map id is slugged from `name` ("mr-meeseeks"); pass `map_id` to set
+    the id explicitly (lowercase a-z, 0-9, . _ -) and `repo` to override the display
+    label. Returns the map id as `map` — pass it to modules(action="add", ...) and
+    suggestions(action="flag", ...) to populate the project. Projects are shared:
+    any agent can read or write this one."""
+    mid = map_id if map_id else _slug(name)   # explicit id passes through (REGISTRY validates it)
+    ack = _ack(REGISTRY.create(mid, repo or name or mid), changed=f"created project {mid}")
     ack["map"] = mid          # the id to pass to subsequent tool calls
     return ack
-
-
-@mcp.tool(**_APP)
-def create_map(map: str, repo: str = "") -> dict:
-    """Create a new named, empty map (typically one per project) and render it.
-    `map` is the id (lowercase a-z, 0-9, . _ -); `repo` is the display label.
-    Prefer create_project(name) unless you need to set the id explicitly."""
-    return _ack(REGISTRY.create(map, repo), changed=f"created map {map}")
 
 
 @mcp.tool(**_APP)
@@ -547,18 +552,18 @@ def show_map(map: str) -> dict:
     """Render a map's architecture network graph (lightweight view). Creates the
     map empty if it doesn't exist yet. Inside an MCP-App host this drives the
     inline studio: the result tells the studio which `map` to render, and it then
-    pulls the full model via get_model."""
+    pulls the full model via get_full_model."""
     v = REGISTRY.ensure(map).to_view()
     v["map"] = map
     return v
 
 
 @mcp.tool(**_APP)
-def get_model(map: str) -> dict:
+def get_full_model(map: str) -> dict:
     """Return a map's FULL model — every module's interface, files, tests, and
     suggestion bodies — which is what the inline studio renders. Heavier than
-    show_map (which is the lightweight agent view), so the studio calls this once
-    it knows the map and after each edit; agents normally use show_map."""
+    show_map (the lightweight agent view), so the studio calls this once it
+    knows the map and after each edit; agents normally use show_map."""
     v = REGISTRY.ensure(map).to_dict()
     v["map"] = map
     return v
@@ -584,75 +589,31 @@ def render_view(map: str, spec: dict) -> dict:
     return payload
 
 
-@mcp.tool(**_APP)
-def flag_deepening(
-    map: str,
-    module: str,
-    title: str,
-    strength: str,
-    category: str,
-    problem: str,
-    solution: str,
-    wins: list[str],
-) -> dict:
-    """Attach a deepening suggestion to a module in `map` and re-render.
-
-    strength: "Strong" | "Worth exploring" | "Speculative".
-    category: the dependency category at the seam (in-process, ports & adapters, ...).
-    """
-    sid = f"{module}-{strength}".lower().replace(" ", "-")
-    store = REGISTRY.store(map)
-    store.add_suggestion(module, Suggestion(sid, title, strength, category, problem, solution, wins))
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def set_depth(map: str, module: str, score: float) -> dict:
-    """Set a module's depth score (0 = shallow, 1 = deep) in `map` and re-render."""
-    store = REGISTRY.store(map)
-    store.set_depth(module, score)
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def set_coverage(map: str, module: str, fraction: float) -> dict:
-    """Set a module's interface test coverage (0..1) in `map` and re-render."""
-    store = REGISTRY.store(map)
-    store.set_coverage(module, fraction)
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def mark_updated(map: str, module: str, updated: bool = True) -> dict:
-    """Flag a module as changed since the last scan (drives the 'updated' halo)."""
-    store = REGISTRY.store(map)
-    store.mark_updated(module, updated)
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def set_churn(map: str, module: str, churn: float) -> dict:
-    """Set a module's churn score (0..1) in `map` — how frequently it changes.
-    fathom:map derives this from `git log --follow` commit frequency.
-    0 = never changes (stable), 1 = changes constantly (high churn).
-    High churn + low coverage is the riskiest combination."""
-    store = REGISTRY.store(map)
-    store.update_module(module, churn=max(0.0, min(1.0, churn)))
-    return _ack(store)
-
-
 @mcp.tool
-def get_metrics(map: str, module: str | None = None) -> dict:
+def get_metrics(map: str, module: str | None = None,
+                        limit: int = 50, offset: int = 0) -> dict:
     """Return computed graph metrics for one module or all modules in `map`:
     fanIn, fanOut, instability, blastRadius, coupling, inCycle, health, churn.
-    These are derived from the dependency graph — no extra data needed."""
+    These are derived from the dependency graph — no extra data needed.
+
+    Pass `module` for a single module's metrics. With no `module`, returns a page of
+    all modules' metrics (keyed by id, ordered by id) — use `limit` (default 50) and
+    `offset` to page; the response carries total_count / has_more / next_offset."""
     model = REGISTRY.store(map)._load()
     all_metrics = model.compute_metrics()
     if module:
         if module not in model.modules:
-            raise KeyError(f"no module '{module}'")
+            raise KeyError(f"no module '{module}' in map '{map}'. "
+                           f"Call get_metrics(map) for all modules, or "
+                           f"show_map(map) to list module ids.")
         return {"map": map, "module": module, "metrics": all_metrics[module]}
-    return {"map": map, "metrics": all_metrics}
+    ids = sorted(all_metrics)
+    page = ids[offset:offset + limit]
+    return {"map": map,
+            "metrics": {mid: all_metrics[mid] for mid in page},
+            "total_count": len(ids),
+            "has_more": offset + limit < len(ids),
+            "next_offset": offset + limit if offset + limit < len(ids) else None}
 
 
 def _compute_signals(m, mx: dict) -> list[str]:
@@ -684,12 +645,15 @@ def _compute_signals(m, mx: dict) -> list[str]:
 
 
 @mcp.tool
-def scan_signals(map: str, signal: str | None = None) -> dict:
+def scan_signals(map: str, signal: str | None = None,
+                         limit: int = 50, offset: int = 0) -> dict:
     """Scan a map for structural signals (rules-based architectural issues).
 
-    Returns every module that has at least one signal, with the signals it
-    carries and a health score, sorted worst-first. Optionally filter by a
-    specific signal id.
+    Returns the modules that have at least one signal, with the signals they
+    carry and a health score, sorted worst-first (lowest health). Optionally filter
+    by a specific signal id. Results are paged: `limit` (default 50) and `offset`
+    bound `modules`; `total` is the full count and the response carries has_more /
+    next_offset. `signalCounts` always summarises the FULL result set, not the page.
 
     Signal ids:
       danger-zone             high churn + low coverage (highest risk)
@@ -703,8 +667,9 @@ def scan_signals(map: str, signal: str | None = None) -> dict:
       split-candidate         high fan-out crossing many domains
       leaky-seam              has seam violations (leaksTo)
 
-    Use `signal=<id>` to focus on one issue type, e.g. scan_signals(map, "test-first")
-    returns the modules you should write tests for first, in priority order."""
+    Use `signal=<id>` to focus on one issue type, e.g.
+    scan_signals(map, "test-first") returns the modules you should write
+    tests for first, in priority order."""
     model = REGISTRY.store(map)._load()
     all_metrics = model.compute_metrics()
     results = []
@@ -726,127 +691,309 @@ def scan_signals(map: str, signal: str | None = None) -> dict:
         })
     results.sort(key=lambda r: (r["health"], r["id"]))  # worst health first
     summary = {}
-    for r in results:
+    for r in results:                                   # summarise the FULL set, not the page
         for s in r["signals"]:
             summary[s] = summary.get(s, 0) + 1
+    page = results[offset:offset + limit]
     return {
         "map": map,
         "filter": signal,
         "total": len(results),
         "signalCounts": summary,
-        "modules": results,
+        "modules": page,
+        "has_more": offset + limit < len(results),
+        "next_offset": offset + limit if offset + limit < len(results) else None,
     }
 
 
+# --- Write dispatchers: one action-routed tool per rich resource ------------
+# modules / suggestions / grilling / plans / docs collapse the many per-operation
+# tools into five action-dispatch tools, keeping the agent's tool surface small
+# (≤15 total). The whole-map reads (show_map / get_full_model / get_metrics /
+# scan_signals / render_view) and the map lifecycle stay as standalone tools above.
 @mcp.tool(**_APP)
-def resolve(map: str, suggestion_id: str) -> dict:
-    """Dismiss a suggestion in `map` (e.g. after grilling rejects it) and re-render."""
-    store = REGISTRY.store(map)
-    store.resolve(suggestion_id)
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def decide(map: str, suggestion_id: str, decision: str, note: str = "") -> dict:
-    """Record a decision on a suggestion in `map` and re-render. decision is
-    "accepted" | "deferred" | "rejected" (or "" to re-open). The studio's
-    Accept / Defer / Reject buttons call this; Dismiss calls resolve()."""
-    store = REGISTRY.store(map)
-    store.decide(suggestion_id, decision, note)
-    return _ack(store)
-
-
-# --- Module CRUD ------------------------------------------------------------
-@mcp.tool(**_APP)
-def add_module(
+def modules(
     map: str,
-    id: str,
-    label: str,
-    domain: str,
-    depth: float = 0.5,
-    size: float = 1.0,
-    seam: str = "",
-    iface: str = "",
-    coverage: float = 0.0,
-    files: list[str] | None = None,
-    dependsOn: list[str] | None = None,
-    leaksTo: list[str] | None = None,
-    tests: str = "",
+    action: Literal["add", "update", "delete", "get", "realize"],
+    id: str = "",
+    label: str | None = None, domain: str | None = None,
+    depth: float | None = None, size: float | None = None,
+    seam: str | None = None, iface: str | None = None,
+    coverage: float | None = None, churn: float | None = None,
+    updated: bool | None = None, plane: str | None = None, lifecycle: str | None = None,
+    files: list[str] | None = None, dependsOn: list[str] | None = None,
+    leaksTo: list[str] | None = None, intendsToDependOn: list[str] | None = None,
+    supersedes: list[str] | None = None, tests: str | None = None,
+    tags: list[str] | None = None,
+    items: list[dict] | None = None, ids: list[str] | None = None,
 ) -> dict:
-    """Create a module node in `map` and re-render (creates the map if new).
-    depth 0=shallow..1=deep; domain groups it."""
-    store = REGISTRY.ensure(map)
-    store.add_module(Module(
-        id=id, label=label, domain=domain, depth=depth, size=size, seam=seam,
-        iface=iface, coverage=coverage, files=files or [],
-        dependsOn=dependsOn or [], leaksTo=leaksTo or [], tests=tests,
-    ))
+    """Create / read / update / delete / realize MODULE nodes in `map`, selected by
+    `action`. Writes re-render and return the compact ack; get returns the record(s).
+
+      action="add":     create a module — needs id, label, domain (+ optional
+                        depth/size/seam/iface/coverage/churn/files/dependsOn/leaksTo/
+                        intendsToDependOn/supersedes/tests/tags). Bulk: items=[{...}, ...].
+      action="update":  patch module `id` with any field above (depth/coverage/churn
+                        0..1, clamped; omitted fields unchanged). Bulk: items=[{id,...}].
+      action="delete":  delete module `id` and prune its edges. Bulk: ids=[...].
+      action="get":     read module `id`'s full record (read-only). Bulk: ids=[...] ->
+                        {"modules": [...]}.
+      action="realize": flip planned module `id` to built (plane->actual,
+                        lifecycle->built); optional depth/coverage/files. (fathom:code)"""
+    store = REGISTRY.ensure(map) if action == "add" else REGISTRY.store(map)
+    flds = {k: v for k, v in dict(
+        label=label, domain=domain, depth=depth, size=size, seam=seam, iface=iface,
+        coverage=coverage, churn=churn, updated=updated, plane=plane, lifecycle=lifecycle,
+        files=files, dependsOn=dependsOn, leaksTo=leaksTo,
+        intendsToDependOn=intendsToDependOn, supersedes=supersedes, tests=tests, tags=tags,
+    ).items() if v is not None}
+    if action == "add":
+        if items is not None:
+            store.add_modules([Module.from_dict(d) for d in items])
+        else:
+            store.add_module(Module.from_dict({"id": id, **flds}))   # from_dict validates id/label/domain
+        return _ack(store)
+    if action == "update":
+        if items is not None:
+            store.update_modules(items)
+        elif id:
+            store.update_module(id, **flds)
+        else:
+            raise ValueError("modules(action='update') needs id, or items=[{id, ...}]")
+        return _ack(store)
+    if action == "delete":
+        if ids is not None:
+            store.delete_modules(ids)
+        elif id:
+            store.delete_module(id)
+        else:
+            raise ValueError("modules(action='delete') needs id, or ids=[...]")
+        return _ack(store)
+    if action == "get":
+        if ids is not None:
+            return {"map": map, "modules": store.get_modules(ids)}
+        if not id:
+            raise ValueError("modules(action='get') needs id, or ids=[...]")
+        return store.get_module(id)
+    if not id:                                                       # realize
+        raise ValueError("modules(action='realize') needs id")
+    store.realize_module(id, depth, coverage, files)
     return _ack(store)
 
 
-@mcp.tool
-def get_module(map: str, module: str) -> dict:
-    """Read one module's full record from `map` (read-only; does not redraw)."""
-    return REGISTRY.store(map).get_module(module)
-
-
 @mcp.tool(**_APP)
-def update_module(map: str, module: str, fields: dict) -> dict:
-    """Patch a module in `map` and re-render. Editable: label, domain, depth, size,
-    seam, iface, coverage, churn, updated, files, dependsOn, leaksTo, tests.
-    (Suggestions are managed via flag_deepening / resolve.)"""
+def suggestions(
+    map: str,
+    action: Literal["flag", "decide", "dismiss"],
+    module: str = "",
+    suggestion_id: str = "",
+    title: str = "",
+    strength: Literal["Strong", "Worth exploring", "Speculative", ""] = "",
+    category: str = "",
+    problem: str = "",
+    solution: str = "",
+    wins: list[str] | None = None,
+    decision: Literal["accepted", "deferred", "rejected", ""] = "",
+    note: str = "",
+) -> dict:
+    """Manage deepening SUGGESTIONS (candidates) on a module in `map`, by `action`.
+    Re-renders; returns the compact ack.
+
+      action="flag":    attach a new deepening suggestion to `module` — needs title,
+                        strength ("Strong"|"Worth exploring"|"Speculative"), category,
+                        problem, solution, wins. The suggestion id is derived as
+                        f"{module}-{strength}" lower-cased with spaces dashed — pass
+                        that id back as `suggestion_id` to decide/dismiss/grilling.
+      action="decide":  record a verdict WITH its reason on `suggestion_id`: decision
+                        "accepted"|"deferred"|"rejected" (or "" to re-open); `note` is
+                        the reason. The candidate is KEPT as the durable record.
+      action="dismiss": dismiss `suggestion_id` (status->done) with NO reason — the
+                        never-load-bearing case. To keep a reason, use decide instead."""
     store = REGISTRY.store(map)
-    store.update_module(module, **fields)
+    if action == "flag":
+        if not (module and title and strength):
+            raise ValueError("suggestions(action='flag') needs module, title, strength")
+        sid = f"{module}-{strength}".lower().replace(" ", "-")
+        store.add_suggestion(module, Suggestion(sid, title, strength, category,
+                                                problem, solution, wins or []))
+        return _ack(store)
+    if not suggestion_id:
+        raise ValueError(f"suggestions(action='{action}') needs suggestion_id")
+    if action == "decide":
+        store.decide(suggestion_id, decision, note)
+    else:                                          # dismiss
+        store.resolve(suggestion_id)
     return _ack(store)
 
 
 @mcp.tool(**_APP)
-def delete_module(map: str, module: str) -> dict:
-    """Delete a module from `map` and prune edges that referenced it, then re-render."""
+def grilling(
+    map: str,
+    action: Literal["start", "mark", "finish", "queue"],
+    module: str = "",
+    suggestion_id: str = "",
+    decision: Literal["accepted", "deferred", "rejected", ""] = "",
+    note: str = "",
+    adr: str = "",
+):
+    """Drive the /deepen GRILLING lifecycle for a candidate in `map`, by `action`.
+
+      action="start":  UI callback — persist `module`'s first open candidate as
+                       'requested' and RETURN the canonical /deepen prompt (a string).
+      action="mark":   mark `suggestion_id` as actively being grilled (status->grilling).
+                       Call at the start of the loop; re-renders.
+      action="finish": close the loop on `suggestion_id` — mark grilled and record
+                       decision ("accepted"|"deferred"|"rejected") + `note` (+ optional
+                       `adr` path, e.g. "docs/adr/0007-...md"). Candidate KEPT. Re-renders.
+      action="queue":  list candidates a user flagged for grilling that no agent has
+                       picked up yet (a terminal /deepen polls this). Read-only."""
     store = REGISTRY.store(map)
-    store.delete_module(module)
-    return _ack(store)
-
-
-# --- Bulk CRUD --------------------------------------------------------------
-@mcp.tool(**_APP)
-def add_modules(map: str, modules: list[dict]) -> dict:
-    """Bulk-create modules in `map` and re-render (creates the map if new). Each
-    dict needs id/label/domain; depth/size/seam/iface/coverage/files/dependsOn/
-    leaksTo/tests are optional."""
-    store = REGISTRY.ensure(map)
-    store.add_modules([Module.from_dict(d) for d in modules])
-    return _ack(store)
-
-
-@mcp.tool
-def get_modules(map: str, modules: list[str]) -> dict:
-    """Bulk-read module records from `map` by id (read-only; does not redraw)."""
-    return {"modules": REGISTRY.store(map).get_modules(modules)}
-
-
-@mcp.tool(**_APP)
-def update_modules(map: str, updates: list[dict]) -> dict:
-    """Bulk-patch modules in `map` and re-render. Each dict needs 'id' plus editable fields."""
-    store = REGISTRY.store(map)
-    store.update_modules(updates)
+    if action == "start":
+        if not module:
+            raise ValueError("grilling(action='start') needs module")
+        s = _first_open(store.modules[module])
+        if s:
+            store.request_grilling(s.id)
+        return _grill_prompt(store, map, module)
+    if action == "queue":
+        return {"map": map, "queued": store.queued_for_grilling()}
+    if not suggestion_id:
+        raise ValueError(f"grilling(action='{action}') needs suggestion_id")
+    if action == "mark":
+        store.mark_grilling(suggestion_id)
+    else:                                          # finish
+        if not decision:
+            raise ValueError("grilling(action='finish') needs decision (accepted|deferred|rejected)")
+        store.mark_grilled(suggestion_id)
+        store.decide(suggestion_id, decision, note, adr)
     return _ack(store)
 
 
 @mcp.tool(**_APP)
-def delete_modules(map: str, modules: list[str]) -> dict:
-    """Bulk-delete modules from `map` by id, prune dangling edges, then re-render."""
-    store = REGISTRY.store(map)
-    store.delete_modules(modules)
-    return _ack(store)
+def plans(
+    map: str,
+    action: Literal["create", "add_steps", "set_step_status", "update", "get"],
+    plan_id: str = "",
+    title: str = "",
+    domain: str | None = None,
+    intent: str | None = None,
+    status: Literal["draft", "active", "done", "abandoned", ""] = "",
+    moduleIds: list[str] | None = None,
+    adrRefs: list[str] | None = None,
+    steps: list[dict] | None = None,
+    step_id: str = "",
+    step_status: Literal["todo", "in-progress", "done", "blocked", ""] = "",
+) -> dict:
+    """Manage PLANS (intended deep structure) and their work steps in `map`, by `action`.
+    Writes re-render and return the compact ack; get returns the plan record.
+
+      action="create":          create plan `plan_id` (needs title; optional domain,
+                                 intent, moduleIds). (fathom:plan)
+      action="add_steps":       append ordered build steps to `plan_id`: steps=[{id,
+                                 title, targets?, interface?, dependsOnSteps?, adapters?,
+                                 note?}, ...]. fathom:code executes them in order.
+      action="set_step_status": set step `step_id` of `plan_id` to step_status
+                                 (todo|in-progress|done|blocked).
+      action="update":          patch plan `plan_id` (title/domain/intent/status/
+                                 moduleIds/adrRefs); status is draft|active|done|abandoned.
+      action="get":             read plan `plan_id`'s full record (read-only)."""
+    store = REGISTRY.ensure(map) if action == "create" else REGISTRY.store(map)
+    if action == "create":
+        store.create_plan(Plan(id=plan_id, title=title, domain=domain or "",
+                               intent=intent or "", moduleIds=moduleIds or []))
+        return _ack(store)
+    if action == "add_steps":
+        store.add_work_steps(plan_id, [WorkStep(**{k: v for k, v in s.items() if k in _WS_FIELDS})
+                                       for s in (steps or [])])
+        return _ack(store)
+    if action == "set_step_status":
+        store.set_step_status(plan_id, step_id, step_status)
+        return _ack(store)
+    if action == "update":
+        ch = {k: v for k, v in dict(title=(title or None), domain=domain, intent=intent,
+                                    status=(status or None), moduleIds=moduleIds,
+                                    adrRefs=adrRefs).items() if v is not None}
+        store.update_plan(plan_id, **ch)
+        return _ack(store)
+    return store.get_plan(plan_id)                 # get
+
+
+@mcp.tool(**_APP)
+def docs(
+    map: str,
+    action: Literal["add", "update", "delete", "list", "get"],
+    doc_id: str = "",
+    type: Literal["adr", "note", "rule", "rfc", "glossary", ""] = "",
+    title: str | None = None,
+    scope: dict | None = None,
+    summary: str | None = None,
+    body: str | None = None,
+    status: str | None = None,
+    tags: list[str] | None = None,
+    supersedes: list[str] | None = None,
+    adrRef: str | None = None,
+    author: str | None = None,
+    created: str | None = None,
+    updated: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Manage scoped architecture DOCS in `map`, by `action`. Writes re-render.
+
+      action="add":    create doc `doc_id` — needs type (adr|note|rule|rfc|glossary)
+                       and title; optional scope (below), summary, body, status, tags,
+                       supersedes, adrRef, author.
+      action="update": patch doc `doc_id` (any of type/title/scope/summary/body/status/
+                       tags/supersedes/adrRef/author/created/updated; omitted unchanged).
+      action="delete": delete doc `doc_id`.
+      action="list":   list docs (paged via limit/offset) with resolved scope +
+                       the moduleId->docIds membership map. Read-only.
+      action="get":    read doc `doc_id`'s full record with scope resolved. Read-only.
+
+    scope: {"kind":"system"} | {"kind":"explicit","ids":[...]} |
+           {"kind":"domain","domain":"<d>"} | {"kind":"query","predicate":{domain/plane/
+           lifecycle/depthGte/depthLte/coverageLte/hasLeak/hasOpenCandidate/tag}}
+           (defaults to whole-system)."""
+    store = REGISTRY.ensure(map) if action == "add" else REGISTRY.store(map)
+    if action == "add":
+        if not (doc_id and type and title):
+            raise ValueError("docs(action='add') needs doc_id, type, title")
+        _apply_doc(store, "add", {"doc": {
+            "id": doc_id, "type": type, "title": title,
+            "scope": scope or {"kind": "system"},
+            "summary": summary or "", "body": body or "", "status": status or "",
+            "tags": tags or [], "supersedes": supersedes or [],
+            "adrRef": adrRef or "", "author": author or "",
+        }})
+        return _ack(store, changed=f"added doc {doc_id}")
+    if action == "update":
+        ch = {k: v for k, v in dict(
+            type=(type or None), title=title, scope=scope, summary=summary, body=body,
+            status=status, tags=tags, supersedes=supersedes, adrRef=adrRef,
+            author=author, created=created, updated=updated,
+        ).items() if v is not None}
+        _apply_doc(store, "update", {"doc_id": doc_id, "fields": ch})
+        return _ack(store, changed=f"updated doc {doc_id}")
+    if action == "delete":
+        _apply_doc(store, "delete", {"doc_id": doc_id})
+        return _ack(store, changed=f"deleted doc {doc_id}")
+    if action == "list":
+        d = store.to_dict()
+        page = d["docs"][offset:offset + limit]
+        return {"map": map, "docs": page, "docMembership": d["docMembership"],
+                "total_count": len(d["docs"]),
+                "has_more": offset + limit < len(d["docs"]),
+                "next_offset": offset + limit if offset + limit < len(d["docs"]) else None}
+    return store.get_doc(doc_id)                   # get
 
 
 _WS_FIELDS = {f.name for f in fields(WorkStep)}
 
 CANON_GRILL_PROMPT = (
     "Enter the /deepen grilling loop for {head} (map '{map}', module '{module}'"
-    "{sid}, depth {depth:.2f}, coverage {cov:.0%}). Call mark_grilling as you begin, "
-    "then grilling_done(decision=accepted|deferred|rejected, note, adr) to close it; "
+    "{sid}, depth {depth:.2f}, coverage {cov:.0%}). Call grilling(action='mark') as you "
+    "begin, then grilling(action='finish', decision=accepted|deferred|rejected, note, adr) "
+    "to close it; "
     "offer an ADR on a load-bearing rejection."
 )
 
@@ -865,107 +1012,7 @@ def _grill_prompt(store: Store, map: str, module: str) -> str:
                                      depth=m.depth, cov=m.coverage)
 
 
-@mcp.tool
-def start_grilling(map: str, module: str) -> str:
-    """UI callback: fired when the user clicks 'Grill this candidate' on a node.
-
-    Persists the candidate as 'requested' (so a terminal /deepen or another surface
-    can pick it up via grilling_queue) and returns the prompt that hands control to
-    the /deepen grilling loop for `module` in `map`.
-    """
-    store = REGISTRY.store(map)
-    s = _first_open(store.modules[module])
-    if s:
-        store.request_grilling(s.id)
-    return _grill_prompt(store, map, module)
-
-
-@mcp.tool
-def grilling_queue(map: str) -> dict:
-    """Candidates a user flagged for grilling that no agent has picked up yet — a
-    terminal /deepen polls this to find work queued from the studio / another surface."""
-    return {"map": map, "queued": REGISTRY.store(map).queued_for_grilling()}
-
-
-@mcp.tool(**_APP)
-def mark_grilling(map: str, suggestion_id: str) -> dict:
-    """Mark a candidate as actively being grilled (status -> 'grilling'). Call at the
-    start of the /deepen grilling loop; grilling_done closes it out. Re-renders."""
-    store = REGISTRY.store(map)
-    store.mark_grilling(suggestion_id)
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def grilling_done(map: str, suggestion_id: str, decision: str, note: str = "", adr: str = "") -> dict:
-    """Close a grilling loop: mark the candidate grilled and record the verdict
-    (accepted | deferred | rejected) + reason (+ optional docs/adr/NNNN path), then
-    re-render. The candidate is KEPT as the durable record (not deleted)."""
-    store = REGISTRY.store(map)
-    store.mark_grilled(suggestion_id)
-    store.decide(suggestion_id, decision, note, adr)
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def realize_module(map: str, module: str, depth: float | None = None,
-                   coverage: float | None = None, files: list[str] | None = None) -> dict:
-    """fathom:code: flip a planned/intended module to a real built one
-    (plane->actual, lifecycle->built) once its source exists, optionally recording
-    the achieved depth/coverage/files. Re-renders."""
-    store = REGISTRY.store(map)
-    store.realize_module(module, depth, coverage, files)
-    return _ack(store)
-
-
 # --- Plans + work steps (fathom:plan creates; fathom:code executes) ----------
-@mcp.tool(**_APP)
-def create_plan(map: str, id: str, title: str, domain: str = "", intent: str = "",
-                moduleIds: list[str] | None = None) -> dict:
-    """fathom:plan: create a Plan (intended deep structure for new/changing work) on
-    `map`. `moduleIds` are the intended modules it introduces — add those with
-    add_module(plane='intended', lifecycle='planned'). Re-renders."""
-    store = REGISTRY.ensure(map)
-    store.create_plan(Plan(id=id, title=title, domain=domain, intent=intent,
-                           moduleIds=moduleIds or []))
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def add_work_steps(map: str, plan_id: str, steps: list[dict]) -> dict:
-    """Append ordered build steps to a plan. Each step dict needs id/title; optional
-    targets (module ids), interface (the test surface), dependsOnSteps, adapters
-    (DEEPENING.md category + which adapters), note. fathom:code executes them in
-    order. Re-renders."""
-    store = REGISTRY.store(map)
-    store.add_work_steps(plan_id, [WorkStep(**{k: v for k, v in s.items() if k in _WS_FIELDS})
-                                   for s in steps])
-    return _ack(store)
-
-
-@mcp.tool(**_APP)
-def set_step_status(map: str, plan_id: str, step_id: str, status: str) -> dict:
-    """Advance a work step: todo | in-progress | done | blocked. Re-renders."""
-    store = REGISTRY.store(map)
-    store.set_step_status(plan_id, step_id, status)
-    return _ack(store)
-
-
-@mcp.tool
-def get_plan(map: str, plan_id: str) -> dict:
-    """Read a plan's full record (intent, intended module ids, ordered steps). Read-only."""
-    return REGISTRY.store(map).get_plan(plan_id)
-
-
-@mcp.tool(**_APP)
-def update_plan(map: str, plan_id: str, fields: dict) -> dict:
-    """Patch a plan in `map` and re-render. Editable: title, domain, intent, status
-    (draft | active | done | abandoned), moduleIds, adrRefs. Use to advance a plan's
-    lifecycle once its steps are done — step status (set_step_status) does not roll up
-    to the plan automatically."""
-    store = REGISTRY.store(map)
-    store.update_plan(plan_id, **fields)
-    return _ack(store)
 
 
 # --- Docs: scoped architecture documents (doc-tools) ------------------------
@@ -982,59 +1029,6 @@ def _apply_doc(store: Store, action: str, body: dict) -> None:
         store.delete_doc(body["doc_id"])
     else:
         raise ValueError(f"unknown doc action '{action}'")
-
-
-@mcp.tool(**_APP)
-def add_doc(map: str, id: str, type: str, title: str, scope: dict | None = None,
-            summary: str = "", body: str = "", status: str = "",
-            tags: list[str] | None = None, supersedes: list[str] | None = None,
-            adrRef: str = "", author: str = "") -> dict:
-    """Create a scoped architecture doc in `map` and re-render (creates the map if new).
-
-    type:  adr | note | rule | rfc | glossary
-    scope: {"kind": "system"} | {"kind":"explicit","ids":[...]} |
-           {"kind":"domain","domain":"<d>"} |
-           {"kind":"query","predicate":{domain/plane/lifecycle/depthGte/depthLte/
-            coverageLte/hasLeak/hasOpenCandidate/tag}}   (defaults to whole-system)
-    """
-    store = REGISTRY.ensure(map)
-    _apply_doc(store, "add", {"doc": {
-        "id": id, "type": type, "title": title, "scope": scope or {"kind": "system"},
-        "summary": summary, "body": body, "status": status, "tags": tags or [],
-        "supersedes": supersedes or [], "adrRef": adrRef, "author": author,
-    }})
-    return _ack(store, changed=f"added doc {id}")
-
-
-@mcp.tool(**_APP)
-def update_doc(map: str, doc_id: str, fields: dict) -> dict:
-    """Patch a doc in `map` and re-render. Editable: type, title, summary, body,
-    status, scope, tags, author, created, updated, supersedes, adrRef."""
-    store = REGISTRY.store(map)
-    _apply_doc(store, "update", {"doc_id": doc_id, "fields": fields})
-    return _ack(store, changed=f"updated doc {doc_id}")
-
-
-@mcp.tool(**_APP)
-def delete_doc(map: str, doc_id: str) -> dict:
-    """Delete a doc from `map` and re-render."""
-    store = REGISTRY.store(map)
-    _apply_doc(store, "delete", {"doc_id": doc_id})
-    return _ack(store, changed=f"deleted doc {doc_id}")
-
-
-@mcp.tool
-def list_docs(map: str) -> dict:
-    """List a map's docs, each with its resolved scope baked in (resolvedModuleIds +
-    drift + scopeLabel), plus the moduleId->docIds membership map. Read-only."""
-    d = REGISTRY.store(map).to_dict()
-    return {"map": map, "docs": d["docs"], "docMembership": d["docMembership"]}
-
-
-@mcp.tool
-def get_doc(map: str, doc_id: str) -> dict:
-    """Read one doc's full record from `map`, with its scope resolved. Read-only."""
-    return REGISTRY.store(map).get_doc(doc_id)
 
 
 # --- HTTP studio app (browser UI -> saved back to the server) ---------------
