@@ -283,7 +283,7 @@
   }
   async function hostRefresh() {
     if (!currentMap) return false;
-    const full = await hostCall("get_full_model", { map: currentMap });
+    const full = await hostCall("archmap_get_full_model", { map: currentMap });
     if (full && adoptModelObject(full)) { broadcast(cur); return true; }
     return false;
   }
@@ -291,7 +291,7 @@
   async function fetchModel() {
     if (HOST) {
       if (!currentMap) return lastServerJson || JSON.stringify({ repo: "", modules: [], plans: [], orphans: [], openSuggestions: [] });
-      const full = await hostCall("get_full_model", { map: currentMap });
+      const full = await hostCall("archmap_get_full_model", { map: currentMap });
       return JSON.stringify(full || { repo: "", modules: [], plans: [], orphans: [], openSuggestions: [] });
     }
     const u = new URL(apiUrl(API_MODEL));
@@ -312,7 +312,7 @@
   async function fetchMaps() {
     if (HOST) {
       try {
-        const r = await hostCall("list_maps", {});
+        const r = await hostCall("archmap_list_maps", {});
         if (r && r.maps) {
           mapList = r.maps;
           defaultMap = r.default || (mapList[0] && mapList[0].id) || null;
@@ -350,7 +350,7 @@
   async function createMap(name) {
     if (HOST) {
       try {
-        const r = await hostCall("create_project", { name });
+        const r = await hostCall("archmap_create_map", { name });
         const mid = r && r.map ? r.map : null;
         lastMapsJson = ""; await fetchMaps();
         if (mid) await switchMap(mid); else notifyMaps();
@@ -389,14 +389,21 @@
     // real MCP tool name — the action-dispatch tools (modules / suggestions / plans),
     // with the studio's action mapped to the dispatcher's `action` + flat args.
     switch (a.action) {
-      case "set_depth": return ["modules", { map, action: "update", id: a.module, depth: a.score }];
-      case "set_coverage": return ["modules", { map, action: "update", id: a.module, coverage: a.fraction }];
-      case "decide": return ["suggestions", { map, action: "decide", suggestion_id: a.suggestion_id, decision: a.decision, note: a.note || "" }];
-      case "resolve": return ["suggestions", { map, action: "dismiss", suggestion_id: a.suggestion_id }];
-      case "delete": return ["modules", { map, action: "delete", id: a.module }];
-      case "update": return ["modules", Object.assign({ map, action: "update", id: a.module }, denormFields(a.fields || {}))];
-      case "add": return ["modules", Object.assign({ map, action: "add" }, a.module)];
-      case "set_step_status": return ["plans", { map, action: "set_step_status", plan_id: a.plan_id, step_id: a.step_id, step_status: a.status }];
+      case "set_depth": return ["archmap_modules", { map, action: "update", id: a.module, depth: a.score }];
+      case "set_coverage": return ["archmap_modules", { map, action: "update", id: a.module, coverage: a.fraction }];
+      case "decide": return ["archmap_suggestions", { map, action: "decide", suggestion_id: a.suggestion_id, decision: a.decision, note: a.note || "" }];
+      case "resolve": return ["archmap_suggestions", { map, action: "dismiss", suggestion_id: a.suggestion_id }];
+      case "delete": return ["archmap_modules", { map, action: "delete", id: a.module }];
+      case "update": return ["archmap_modules", Object.assign({ map, action: "update", id: a.module }, denormFields(a.fields || {}))];
+      case "add": return ["archmap_modules", Object.assign({ map, action: "add" }, a.module)];
+      case "set_step_status": return ["archmap_plans", { map, action: "set_step_status", plan_id: a.plan_id, step_id: a.step_id, step_status: a.status }];
+      case "flag": {
+        const s = a.suggestion || {};
+        return ["archmap_suggestions", { map, action: "flag", module: a.module,
+          title: s.title || "", strength: s.strength || "Worth exploring",
+          category: s.category || "", problem: s.problem || "",
+          solution: s.solution || "", wins: s.wins || [] }];
+      }
       default: throw new Error("unsupported action: " + a.action);
     }
   }
@@ -407,10 +414,10 @@
     try {
       const [name, args] = _toolFor(map, body);
       await hostCall(name, args);                       // tools return a compact ack...
-      const full = await hostCall("get_full_model", { map }); // ...so re-pull the full model
+      const full = await hostCall("archmap_get_full_model", { map }); // ...so re-pull the full model
       if (myGen === writeGen && full && adoptModelObject(full)) broadcast(cur);
     } catch (e) {
-      if (myGen === writeGen) { try { const f = await hostCall("get_full_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
+      if (myGen === writeGen) { try { const f = await hostCall("archmap_get_full_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
       throw e;
     } finally {
       pendingWrites--;
@@ -437,12 +444,17 @@
       m.interface ? "Interface: " + m.interface : "",
     ].filter(Boolean).join("\n");
   }
-  function grillText(r, module) {                  // start_grilling returns a TEXT prompt
+  function grillText(r, module) {                  // grilling(start) returns {prompt, ...}
+    const sc = r && r.structuredContent;
+    if (sc && typeof sc === "object" && typeof sc.prompt === "string") return sc.prompt;
+    if (typeof sc === "string") return sc;
     if (r && Array.isArray(r.content)) {
       const t = r.content.find((c) => c && c.type === "text");
-      if (t && t.text) return t.text;
+      if (t && t.text) {
+        try { const p = JSON.parse(t.text); if (p && typeof p.prompt === "string") return p.prompt; } catch (e) {}
+        return t.text;
+      }
     }
-    if (r && typeof r.structuredContent === "string") return r.structuredContent;
     return "Enter the /deepen grilling loop for module '" + module + "'.";
   }
   function showGrillFallback(prompt, resume) {
@@ -456,7 +468,7 @@
     const caps = (app.getHostCapabilities && app.getHostCapabilities()) || {};
     let prompt;
     try {                                          // (1) persist 'requested' + get the prompt (iframe-only)
-      prompt = grillText(await app.callServerTool({ name: "grilling", arguments: { map, action: "start", module } }), module);
+      prompt = grillText(await app.callServerTool({ name: "archmap_grilling", arguments: { map, action: "start", module } }), module);
     } catch (e) { prompt = grillText(null, module); }
     if (!caps.message) return { triggered: false, prompt, reason: "no-message-capability" };
     try {                                          // (2) stage the candidate body for the next turn (no trigger)
@@ -523,8 +535,8 @@
   // rejecting a malformed pre-call.
   function dispatchTools(map, req) {
     switch (req.kind) {
-      case "rescan":  return [["modules", { map, action: "update", id: req.module, updated: false }]];
-      case "realize": return [["modules", { map, action: "realize", id: req.module }]];
+      case "rescan":  return [["archmap_modules", { map, action: "update", id: req.module, updated: false }]];
+      case "realize": return [["archmap_modules", { map, action: "realize", id: req.module }]];
       default:        return [];   // fix / triage: the sendMessage turn does the work
     }
   }
@@ -593,14 +605,34 @@
   // _apply_doc dispatch. Non-optimistic: the POST returns the full model (with the
   // doc's scope freshly resolved), which reconciles the cache. Mirrors act()'s
   // writeGen/pendingWrites discipline so polls never clobber an in-flight write.
+  // archmap_docs takes the scope FLAT (scope_kind/scope_ids/scope_domain/query_*),
+  // not a nested dict — convert the form's scope object before dispatching.
+  function _flattenScope(fields) {
+    const { scope, ...rest } = fields || {};
+    if (!scope || typeof scope !== "object") return rest;
+    const out = Object.assign({}, rest, { scope_kind: scope.kind || "system" });
+    if (scope.ids) out.scope_ids = scope.ids;
+    if (scope.domain) out.scope_domain = scope.domain;
+    const p = scope.predicate || {};
+    if (p.domain != null) out.query_domain = p.domain;
+    if (p.plane != null) out.query_plane = p.plane;
+    if (p.lifecycle != null) out.query_lifecycle = p.lifecycle;
+    if (p.depthGte != null) out.query_depth_gte = p.depthGte;
+    if (p.depthLte != null) out.query_depth_lte = p.depthLte;
+    if (p.coverageLte != null) out.query_coverage_lte = p.coverageLte;
+    if (p.hasLeak != null) out.query_has_leak = p.hasLeak;
+    if (p.hasOpenCandidate != null) out.query_has_open_candidate = p.hasOpenCandidate;
+    if (p.tag != null) out.query_tag = p.tag;
+    return out;
+  }
   function _docToolFor(map, body) {
     switch (body.op) {
       case "add": {
         const { id, ...rest } = body.doc;   // docs dispatcher takes doc_id, not id
-        return ["docs", Object.assign({ map, action: "add", doc_id: id }, rest)];
+        return ["archmap_docs", Object.assign({ map, action: "add", doc_id: id }, _flattenScope(rest))];
       }
-      case "update": return ["docs", Object.assign({ map, action: "update", doc_id: body.doc_id }, body.fields || {})];
-      case "delete": return ["docs", { map, action: "delete", doc_id: body.doc_id }];
+      case "update": return ["archmap_docs", Object.assign({ map, action: "update", doc_id: body.doc_id }, _flattenScope(body.fields || {}))];
+      case "delete": return ["archmap_docs", { map, action: "delete", doc_id: body.doc_id }];
       default: throw new Error("unsupported doc op: " + body.op);
     }
   }
@@ -610,10 +642,10 @@
       try {
         const [name, args] = _docToolFor(map, body);
         await hostCall(name, args);
-        const full = await hostCall("get_full_model", { map });
+        const full = await hostCall("archmap_get_full_model", { map });
         if (myGen === writeGen && full && adoptModelObject(full)) broadcast(cur);
       } catch (e) {
-        if (myGen === writeGen) { try { const f = await hostCall("get_full_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
+        if (myGen === writeGen) { try { const f = await hostCall("archmap_get_full_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
         throw e;
       } finally { pendingWrites--; }
       return;
@@ -800,6 +832,30 @@
       // surfaces the prompt + a resume line to paste. Either way the candidate is
       // persisted 'requested'.
       return Store.dispatch({ kind: "grill", module: id });
+    },
+
+    // ---- what-if merge preview (pure READ: archmap_whatif / GET /api/whatif) --
+    // Returns a promise of the server's preview_merge payload; never mutates the
+    // map. The metrics math lives server-side beside graph-metrics by design.
+    whatif(ids) {
+      const map = currentMap;
+      if (HOST) return hostCall("archmap_whatif", { map, ids: ids || [] });
+      const u = new URL(apiUrl("api/whatif"));
+      if (map) u.searchParams.set("map", map);
+      u.searchParams.set("ids", (ids || []).join(","));
+      return fetch(u.toString(), { headers: { "accept": "application/json" } })
+        .then(async (res) => {
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok || d.error) throw new Error(d.error || "what-if preview failed");
+          return d;
+        });
+    },
+    // flag ONE candidate from a what-if preview through the existing suggestion
+    // FSM (grilling/deciding stay with fathom:deepen). sug: {title, strength,
+    // category, problem, solution, wins[]} in backend strength spelling.
+    flagCandidate(id, sug) {
+      act({ action: "flag", module: id, suggestion: sug }).catch(reportErr);
+      return cur;
     },
 
     // ---- docs (scoped architecture documents) ----

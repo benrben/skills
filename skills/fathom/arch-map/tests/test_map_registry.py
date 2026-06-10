@@ -164,3 +164,29 @@ def test_migrate_legacy_moves_data_to_default_map(tmp_path, monkeypatch):
     ids = {m["id"] for m in reg.store("myrepo").to_dict()["modules"]}
     assert ids == {"a"}
     assert legacy.exists()   # non-destructive copy; original preserved
+
+
+# ---- migration + traversal + rename edge cases --------------------------------
+
+def test_legacy_migration_with_corrupt_json_falls_back_to_default(tmp_path, monkeypatch):
+    legacy = tmp_path / "arch_state.json"
+    legacy.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(srv, "LEGACY_STATE", legacy)
+    r = MapRegistry(tmp_path / "maps")
+    assert (r.root / "default.json").exists()      # unparseable repo name -> 'default'
+
+def test_path_rejects_symlink_escaping_root(reg, tmp_path):
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    (reg.root / "evil.json").symlink_to(outside)
+    with pytest.raises(ValueError, match="invalid map id"):
+        reg.path("evil")                           # resolves outside root -> refused
+
+def test_rename_removes_old_map_and_its_lock(reg):
+    reg.create("old", "Old")
+    lock = reg.root / "old.json.lock"
+    lock.write_text("", encoding="utf-8")
+    reg.rename("old", "new")
+    assert not (reg.root / "old.json").exists()
+    assert not lock.exists()
+    assert (reg.root / "new.json").exists()

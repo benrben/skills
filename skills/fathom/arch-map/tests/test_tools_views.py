@@ -105,7 +105,43 @@ def test_bar_by_domain_count():
 
 def test_render_view_tool_wraps_builder(reg):
     srv.modules(action="add", map="m", id="a", label="A", domain="d", depth=0.6)
-    out = srv.render_view(map="m", spec={"kind": "table"})
+    out = srv.render_view(map="m")
     assert out["map"] == "m"
     assert out["kind"] == "table"
     assert out["rows"][0]["id"] == "a"
+
+
+def test_render_view_flat_args_table_and_bar(reg):
+    srv.modules(action="add", map="m", items=[
+        {"id": "a", "label": "A", "domain": "d", "depth": 0.6, "coverage": 0.2},
+        {"id": "b", "label": "B", "domain": "d", "depth": 0.9, "coverage": 0.8},
+    ])
+    table = srv.render_view(map="m", of="all", columns=["id", "depth"],
+                            sort_by="depth", sort_dir="desc")
+    assert table["columns"] == ["id", "depth"]
+    assert table["rows"][0]["id"] == "b"            # sorted desc by depth
+    bar = srv.render_view(map="m", kind="bar", metric="coverage",
+                          group_by="domain", agg="avg")
+    assert bar["bars"][0]["label"] == "d"
+    assert bar["bars"][0]["pct"] == 50              # avg(0.2, 0.8)
+
+
+# ---- remaining filters + suggestion column -----------------------------------
+
+def test_filter_suggestions_and_updated():
+    model = built_model()
+    for m in model["modules"]:
+        m["updated"] = (m["id"] == "deepc")            # add_module marked all fresh
+        if m["id"] == "leaky":
+            m["suggestion"] = {"strength": "Strong"}
+    assert [m["id"] for m in srv._view_filter(model["modules"], "suggestions", model)] == ["leaky"]
+    assert [m["id"] for m in srv._view_filter(model["modules"], "updated", model)] == ["deepc"]
+
+def test_table_suggestion_column_renders_strength_or_none():
+    model = built_model()
+    for m in model["modules"]:
+        m["suggestion"] = {"strength": "Strong"} if m["id"] == "leaky" else None
+    view = srv._build_view(model, TableSpec(columns=["id", "suggestion"]))
+    rows = {r["id"]: r["suggestion"] for r in view["rows"]}
+    assert rows["leaky"] == {"strength": "strong", "label": "Strong"}
+    assert rows["lonely"] is None

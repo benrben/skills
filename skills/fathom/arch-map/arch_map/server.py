@@ -6,7 +6,8 @@ Two rendering lanes, per the explored design:
            Tools link to it via AppConfig and stream the model into it
            (show_map/get_full_model -> app.ontoolresult); the studio
            routes edits back via app.callServerTool to the action-dispatch tools
-           (modules / suggestions / grilling / plans / docs). The
+           (archmap_modules / archmap_suggestions / archmap_grilling /
+           archmap_plans / archmap_docs). The
            same studio is served over HTTP for the browser.
   Lane 2 — FastMCP's Generative UI (Prefab) for ad-hoc charts/tables the model
            improvises ("chart depth across the repo", "table of orphans").
@@ -33,9 +34,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from dataclasses import dataclass, field, fields
+from datetime import datetime, timezone
 from typing import Literal
 import fcntl
 import json
+import os
 import re
 
 from fastmcp import FastMCP
@@ -54,6 +57,11 @@ except Exception:  # pragma: no cover
     _HAS_PREFAB = False
 
 from .model import ArchModel, Module, Suggestion, Plan, WorkStep, Doc
+from . import ledger
+from .coverage_ingest import module_coverage, read_report
+from .git_facts import GitFacts
+from .import_graph import verify as verify_imports
+from .whatif import preview_merge
 
 HERE = Path(__file__).parent
 # The unified **studio** — one workspace combining the dependency graph (canvas)
@@ -152,6 +160,8 @@ class Store:
     def add_doc(self, doc): self._write(lambda m: m.add_doc(doc))
     def update_doc(self, did, **ch): self._write(lambda m: m.update_doc(did, **ch))
     def delete_doc(self, did): self._write(lambda m: m.delete_doc(did))
+    def record_anchor(self, sha, ts, keep=200):
+        self._write(lambda m: ledger.record_anchor(m, sha, ts, keep))
 
 
 _MAP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -367,6 +377,13 @@ def view_ui() -> str:
 _STRENGTH_KEY = {"Strong": "strong", "Worth exploring": "worth", "Speculative": "speculative"}
 _VIEW_COLS = ("id", "label", "domain", "depth", "coverage", "tests", "files", "suggestion")
 
+
+def _has_tests(prose) -> bool:
+    """The `tests` field is prose; "none — browser-only" is a recorded FACT of no
+    tests, not a test reference, so it must not render as a checkmark."""
+    t = (prose or "").strip()
+    return bool(t) and not t.lower().startswith(("none", "n/a", "no "))
+
 _VALID_METRICS = frozenset({"depth", "coverage"})
 _VALID_GROUP_BY = frozenset({"module", "domain"})
 _VALID_AGG = frozenset({"avg", "count"})
@@ -480,7 +497,7 @@ def _build_view(model: dict, spec: TableSpec | BarSpec) -> dict:
                     s = m.get("suggestion")
                     row[c] = {"strength": _STRENGTH_KEY.get(s["strength"], "speculative"), "label": s["strength"]} if s else None
                 elif c == "files": row[c] = len(m.get("files") or [])
-                elif c == "tests": row[c] = "✓" if (m.get("tests") or "").strip() else ""
+                elif c == "tests": row[c] = "✓" if _has_tests(m.get("tests")) else ""
                 else: row[c] = m.get(c)
             rows.append(row)
         if spec.sortBy in cols:
@@ -492,15 +509,42 @@ def _build_view(model: dict, spec: TableSpec | BarSpec) -> dict:
 # --- Tools the project-agent drives. Every tool takes `map` — the named map it
 # operates on (one per project). Mutations return a compact ack — the full model
 # is too big for an agent's context (the browser UIs fetch it from /api/model and
-# the graph polls). show_map returns the lightweight view.
+# the graph polls). show_map returns a digest.
 def _ack(store: Store, changed: str | None = None) -> dict:
     v = store.to_view()
-    return {"ok": True, "changed": changed, "repo": v["repo"], "modules": len(v["modules"]),
-            "orphans": v["orphans"], "openSuggestions": v["openSuggestions"],
-            "docs": len(v.get("docs", []))}
+    ack = {"ok": True, "changed": changed, "repo": v["repo"], "modules": len(v["modules"]),
+           "orphans": v["orphans"], "openSuggestions": v["openSuggestions"],
+           "docs": len(v.get("docs", []))}
+    ids = {m["id"] for m in v["modules"]}
+    dangling = sorted({f"{m['id']}->{t}"
+                       for m in v["modules"]
+                       for key in ("dependsOn", "leaksTo")
+                       for t in (m.get(key) or []) if t not in ids})
+    if dangling:                       # edge targets that match no module — usually a typo'd id
+        ack["unresolvedEdges"] = dangling
+    return ack
 
 
-@mcp.tool
+# Every string an agent reads is an instruction: when a dispatcher fails, the error
+# must carry the call context, the atomicity guarantee, and a next step — not a bare
+# KeyError. Writes go through Store (load -> mutate -> save under one lock), so a
+# failed write means NOTHING was persisted.
+def _guard(call: str, write: bool, hint: str, fn):
+    try:
+        return fn()
+    except (KeyError, ValueError) as e:            # expected — keep the type, add context
+        msg = e.args[0] if e.args else str(e)
+        raise type(e)(_fail(call, str(msg), write, hint)) from e
+    except Exception as e:  # unexpected — still reach the agent with context
+        raise ValueError(_fail(call, f"{type(e).__name__}: {e}", write, hint)) from e
+
+
+def _fail(call: str, msg: str, write: bool, hint: str) -> str:
+    atomic = " Nothing was written — writes are all-or-nothing." if write else ""
+    return f"{call} failed: {msg}.{atomic}" + (f" {hint}" if hint else "")
+
+
+@mcp.tool(name="archmap_list_maps")
 def list_maps(limit: int = 50, offset: int = 0) -> dict:
     """List the available architecture maps (id, repo label, module/proposal counts).
     Maps are shared — any agent can read or write any of them; pass the id as `map`.
@@ -514,16 +558,16 @@ def list_maps(limit: int = 50, offset: int = 0) -> dict:
             "next_offset": offset + limit if offset + limit < len(all_maps) else None}
 
 
-@mcp.tool(**_APP)
+@mcp.tool(name="archmap_create_map", **_APP)
 def create_project(name: str, map_id: str = "", repo: str = "") -> dict:
-    """Create a new project and open its (empty) architecture map, then render it.
+    """Create a new map (one per project/repo) and open it empty, then render it.
 
     When to use: starting a new project/map (typically one per repo). `name` is the
     human project name (e.g. "Mr. Meeseeks") and becomes the display label. By
     default the map id is slugged from `name` ("mr-meeseeks"); pass `map_id` to set
     the id explicitly (lowercase a-z, 0-9, . _ -) and `repo` to override the display
-    label. Returns the map id as `map` — pass it to modules(action="add", ...) and
-    suggestions(action="flag", ...) to populate the project. Projects are shared:
+    label. Returns the map id as `map` — pass it to archmap_modules(action="add", ...)
+    and archmap_suggestions(action="flag", ...) to populate the map. Maps are shared:
     any agent can read or write this one."""
     mid = map_id if map_id else _slug(name)   # explicit id passes through (REGISTRY validates it)
     ack = _ack(REGISTRY.create(mid, repo or name or mid), changed=f"created project {mid}")
@@ -531,7 +575,7 @@ def create_project(name: str, map_id: str = "", repo: str = "") -> dict:
     return ack
 
 
-@mcp.tool(**_APP)
+@mcp.tool(name="archmap_rename_map", **_APP)
 def rename_map(map: str, to: str, repo: str = "") -> dict:
     """Rename a map. `map` is the current id, `to` the new id, `repo` the new
     display label (defaults to `to` if blank). Use to point a map at a real
@@ -540,56 +584,103 @@ def rename_map(map: str, to: str, repo: str = "") -> dict:
     return _ack(REGISTRY.rename(map, new_id, repo or to), changed=f"renamed {map} -> {new_id}")
 
 
-@mcp.tool
+@mcp.tool(name="archmap_delete_map")
 def delete_map(map: str) -> dict:
-    """Delete an entire named map and its file."""
+    """Delete an entire named map and its file. IRREVERSIBLE — the map's JSON file
+    is removed permanently and there is no undo; archmap_list_maps first if unsure."""
     REGISTRY.delete(map)
     return {"ok": True, "deleted": map, "maps": [m["id"] for m in REGISTRY.list()]}
 
 
-@mcp.tool(**_APP)
-def show_map(map: str) -> dict:
-    """Render a map's architecture network graph (lightweight view). Creates the
-    map empty if it doesn't exist yet. Inside an MCP-App host this drives the
-    inline studio: the result tells the studio which `map` to render, and it then
-    pulls the full model via get_full_model."""
-    v = REGISTRY.ensure(map).to_view()
-    v["map"] = map
-    return v
+@mcp.tool(name="archmap_show_map", **_APP)
+def show_map(map: str, domain: str = "", ids: list[str] | None = None) -> dict:
+    """Render a map — a DIGEST by default, module records only on request. Creates
+    the map empty if it doesn't exist yet.
+
+    No filter -> digest: module/domain counts, orphans, open suggestions, and the
+    ten worst-health modules. It deliberately does NOT return every module record
+    (that grows with the map); pass `domain="<d>"` or `ids=[...]` to get the full
+    view records for just that slice, or call archmap_get_full_model for everything.
+    Inside an MCP-App host this drives the inline studio: the result tells the
+    studio which `map` to render and it pulls the full model itself."""
+    store = REGISTRY.ensure(map)
+    v = store.to_view()
+    if domain or ids:
+        want = set(ids or [])
+        sel = [m for m in v["modules"]
+               if (m["id"] in want) or (domain and m.get("domain") == domain)]
+        return {"map": map, "repo": v["repo"], "count": len(sel), "modules": sel}
+    domains: dict[str, int] = {}
+    for m in v["modules"]:
+        d = m.get("domain") or "—"
+        domains[d] = domains.get(d, 0) + 1
+    worst = sorted(v["modules"], key=lambda m: (m.get("metrics") or {}).get("health", 100))[:10]
+    return {
+        "map": map, "repo": v["repo"],
+        "moduleCount": len(v["modules"]),
+        "domains": domains,
+        "staleness": ledger.staleness_line(store._load(), GitFacts(os.getcwd())),
+        "orphans": v["orphans"],
+        "openSuggestions": v["openSuggestions"],
+        "plans": len(v.get("plans", [])),
+        "docs": len(v.get("docs", [])),
+        "worstHealth": [{"id": m["id"], "domain": m.get("domain"),
+                         "depth": m.get("depth"), "coverage": m.get("coverage"),
+                         "health": (m.get("metrics") or {}).get("health")} for m in worst],
+        "hint": "digest only — pass domain= or ids=[...] for module records; "
+                "archmap_get_full_model(map) for the whole model",
+    }
 
 
-@mcp.tool(**_APP)
+@mcp.tool(name="archmap_get_full_model", **_APP)
 def get_full_model(map: str) -> dict:
     """Return a map's FULL model — every module's interface, files, tests, and
     suggestion bodies — which is what the inline studio renders. Heavier than
-    show_map (the lightweight agent view), so the studio calls this once it
-    knows the map and after each edit; agents normally use show_map."""
+    archmap_show_map (the digest), so the studio calls this once it knows the
+    map and after each edit; agents normally use archmap_show_map."""
     v = REGISTRY.ensure(map).to_dict()
     v["map"] = map
     return v
 
 
-@mcp.tool(**_VIEW_APP)
-def render_view(map: str, spec: dict) -> dict:
+@mcp.tool(name="archmap_render_view", **_VIEW_APP)
+def render_view(
+    map: str,
+    kind: Literal["table", "bar"] = "table",
+    of: str = "all",
+    columns: list[str] | None = None,
+    sort_by: str = "",
+    sort_dir: Literal["asc", "desc"] = "asc",
+    metric: Literal["depth", "coverage"] = "depth",
+    group_by: Literal["module", "domain"] = "module",
+    agg: Literal["avg", "count"] = "avg",
+    title: str = "",
+) -> dict:
     """Render an on-brand ad-hoc VIEW of a map — a table or bar chart drawn with the
-    studio's own design (not generic widgets). `spec` is declarative:
+    studio's own design (not generic widgets).
 
-      kind:    "table" (default) | "bar"
-      of:      which modules — "all" | "orphans" | "leaks" | "suggestions" |
-               "updated" | "low-coverage" | "shallow" | "mid" | "deep" | <domain>
-      title:   optional heading
-      table:   columns=[id,label,domain,depth,coverage,tests,files,suggestion],
-               sortBy=<column>, sortDir="asc"|"desc"
-      bar:     metric="depth"|"coverage", groupBy="module"|"domain", agg="avg"|"count"
+    `of` selects which modules: "all" | "orphans" | "leaks" | "suggestions" |
+    "updated" | "low-coverage" | "shallow" | "mid" | "deep" | <domain name>.
+    Tables use `columns` (any of id, label, domain, depth, coverage, tests, files,
+    suggestion), `sort_by` (a chosen column) and `sort_dir`. Bars use `metric`,
+    `group_by` and `agg`; `title` overrides the heading.
 
-    e.g. render_view(map, {"kind":"table","of":"low-coverage","columns":["id","domain","coverage"],"sortBy":"coverage","sortDir":"asc"})
-         render_view(map, {"kind":"bar","metric":"coverage","groupBy":"domain","agg":"avg"})"""
-    payload = _build_view(REGISTRY.store(map).to_dict(), _parse_view_spec(spec or {}))
+    e.g. archmap_render_view(map, of="low-coverage", columns=["id","domain","coverage"], sort_by="coverage")
+         archmap_render_view(map, kind="bar", metric="coverage", group_by="domain", agg="avg")"""
+    spec: dict = {"kind": kind, "of": of, "title": title}
+    if kind == "bar":
+        spec |= {"metric": metric, "groupBy": group_by, "agg": agg}
+    else:
+        if columns:
+            spec["columns"] = columns
+        if sort_by:
+            spec |= {"sortBy": sort_by, "sortDir": sort_dir}
+    payload = _build_view(REGISTRY.store(map).to_dict(), _parse_view_spec(spec))
     payload["map"] = map
     return payload
 
 
-@mcp.tool
+@mcp.tool(name="archmap_get_metrics")
 def get_metrics(map: str, module: str | None = None,
                         limit: int = 50, offset: int = 0) -> dict:
     """Return computed graph metrics for one module or all modules in `map`:
@@ -604,8 +695,8 @@ def get_metrics(map: str, module: str | None = None,
     if module:
         if module not in model.modules:
             raise KeyError(f"no module '{module}' in map '{map}'. "
-                           f"Call get_metrics(map) for all modules, or "
-                           f"show_map(map) to list module ids.")
+                           f"Call archmap_get_metrics(map) for all modules, or "
+                           f"archmap_show_map(map) to list module ids.")
         return {"map": map, "module": module, "metrics": all_metrics[module]}
     ids = sorted(all_metrics)
     page = ids[offset:offset + limit]
@@ -644,7 +735,7 @@ def _compute_signals(m, mx: dict) -> list[str]:
     return signals
 
 
-@mcp.tool
+@mcp.tool(name="archmap_scan_signals")
 def scan_signals(map: str, signal: str | None = None,
                          limit: int = 50, offset: int = 0) -> dict:
     """Scan a map for structural signals (rules-based architectural issues).
@@ -706,12 +797,149 @@ def scan_signals(map: str, signal: str | None = None,
     }
 
 
+# --- Ground truth: measured facts, drift, history, edge verification ---------
+# These tools make the map self-truing: churn/coverage/LOC become measurements
+# (git-facts + coverage-ingest), anchors recorded by the reconcile flow give the
+# digest its staleness line (reconcile-ledger), and recorded edges are checked
+# against real imports (import-graph). `root` is the repo work tree; it defaults
+# to the server's cwd.
+def _repo_root(root: str) -> str:
+    return root or os.getcwd()
+
+
+@mcp.tool(name="archmap_ingest")
+def ingest(map: str, root: str = "", coverage_report: str = "",
+           window_days: int = 90, anchor: bool = True) -> dict:
+    """Measure ground truth for `map` and patch module facts in ONE locked write.
+
+    churn: per actual-plane module with files, the share of the last
+    `window_days`' commits touching those files (git history — measured, not
+    estimated). coverage: only when `coverage_report` names a coverage.py
+    XML/JSON or lcov file — line-weighted per module via its files; module
+    halos are NOT flipped (fathom:map owns them). LOC per module is returned
+    but never written. Unless anchor=False, records a reconcile anchor
+    (HEAD sha + per-module snapshot) — the baseline archmap_drift and
+    archmap_history read. `root` defaults to the server's cwd."""
+    call = f"archmap_ingest(map='{map}')"
+    hint = ("Pass root=<repo work tree> if the server does not run inside the "
+            "repo; coverage_report is optional.")
+    return _guard(call, True, hint, lambda: _ingest_impl(
+        map, root, coverage_report, window_days, anchor))
+
+
+def _ingest_impl(map, root, coverage_report, window_days, anchor) -> dict:
+    store = REGISTRY.store(map)
+    g = GitFacts(_repo_root(root))
+    head = g.head_sha()                       # NotARepo/UnknownSha -> guarded
+    report = read_report(coverage_report) if coverage_report else None
+    out = {"ok": True, "map": map, "sha": head, "churned": 0, "covered": 0,
+           "loc": {}, "anchor": None}
+
+    def mutate(m):
+        cov = module_coverage(m, report) if report else {}
+        for mid, mod in m.modules.items():
+            if mod.plane != "actual" or not mod.files:
+                continue
+            mod.churn = max(0.0, min(1.0, g.churn(mod.files, window_days)))
+            out["churned"] += 1
+            out["loc"][mid] = g.loc(mod.files)
+        for mid, frac in cov.items():
+            if mid in m.modules:
+                m.modules[mid].coverage = max(0.0, min(1.0, frac))
+                out["covered"] += 1
+        if anchor:
+            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            a = ledger.record_anchor(m, head, ts)
+            out["anchor"] = {"sha": a["sha"], "ts": a["ts"],
+                             "moduleCount": a["moduleCount"]}
+
+    store._write(mutate)
+    if report:
+        out["unmappedCoverage"] = round(
+            module_coverage(store._load(), report).get("_unmapped", 0.0), 3)
+    return out
+
+
+@mcp.tool(name="archmap_drift")
+def drift(map: str, since_sha: str = "", root: str = "") -> dict:
+    """How stale is the map? Changes since the last reconcile anchor (or since an
+    explicit `since_sha` baseline — the review-style question): the changed files,
+    the modules they belong to, the changed files NO module owns, and a one-line
+    summary. Read-only; degraded outcomes (no anchors / no repo) come back with
+    anchored=false and a `reason`, never an error."""
+    call = f"archmap_drift(map='{map}')"
+    hint = "Record a baseline first via archmap_ingest(map) on a reconcile."
+
+    def run():
+        model = REGISTRY.store(map)._load()
+        out = ledger.drift(model, GitFacts(_repo_root(root)), since_sha or None)
+        out["map"] = map
+        return out
+    return _guard(call, False, hint, run)
+
+
+@mcp.tool(name="archmap_history")
+def history(map: str, module: str = "", domain: str = "",
+            metrics: list[str] | None = None) -> dict:
+    """Trend series across the map's reconcile anchors, oldest -> newest: health/
+    depth/coverage per module (default: every module ever anchored), for one
+    `module`, or aggregated as the mean over one `domain`. Series lists are
+    index-aligned with `anchors` (null where a module did not exist yet).
+    Read-only; zero anchors -> empty lists, not an error."""
+    call = f"archmap_history(map='{map}')"
+    hint = "Anchors are recorded by archmap_ingest; run it on each reconcile."
+
+    def run():
+        model = REGISTRY.store(map)._load()
+        out = ledger.history(model, module_id=module, domain=domain,
+                             metrics=tuple(metrics) if metrics else ledger.METRICS)
+        out["map"] = map
+        return out
+    return _guard(call, False, hint, run)
+
+
+@mcp.tool(name="archmap_verify_edges")
+def verify_edges(map: str, root: str = "") -> dict:
+    """Check the map's recorded dependsOn/leaksTo edges against the code's REAL
+    imports (Python via ast, JS/TS via import lexing). Returns confirmedEdges,
+    undeclaredEdges (in code but not on the map — candidate leaks), missingEdges
+    (on the map but not in code; only reported when both modules own parsed
+    source, so prose modules never false-positive), and the unparseable files.
+    Read-only — surfacing is this tool's job, deciding is fathom:map's."""
+    call = f"archmap_verify_edges(map='{map}')"
+    hint = "Pass root=<repo work tree> if the server does not run inside the repo."
+
+    def run():
+        out = verify_imports(REGISTRY.store(map)._load(), _repo_root(root))
+        out["map"] = map
+        return out
+    return _guard(call, False, hint, run)
+
+
+@mcp.tool(name="archmap_whatif")
+def whatif(map: str, ids: list[str]) -> dict:
+    """Preview the metrics of a hypothetical merge of 2+ modules: the merged
+    node's fanIn/fanOut/instability/blastRadius/health (computed on a rewritten
+    copy of the edge graph — no duplicated math), size-weighted depth/coverage,
+    the member edges the merge absorbs, and the external edges it keeps.
+    Pure read — the map is never changed; flagging a candidate from a preview
+    stays with archmap_suggestions."""
+    call = f"archmap_whatif(map='{map}')"
+    hint = "Pass ids=[...] with at least two existing module ids."
+
+    def run():
+        out = preview_merge(REGISTRY.store(map)._load(), ids or [])
+        out["map"] = map
+        return out
+    return _guard(call, False, hint, run)
+
+
 # --- Write dispatchers: one action-routed tool per rich resource ------------
 # modules / suggestions / grilling / plans / docs collapse the many per-operation
 # tools into five action-dispatch tools, keeping the agent's tool surface small
 # (≤15 total). The whole-map reads (show_map / get_full_model / get_metrics /
 # scan_signals / render_view) and the map lifecycle stay as standalone tools above.
-@mcp.tool(**_APP)
+@mcp.tool(name="archmap_modules", **_APP)
 def modules(
     map: str,
     action: Literal["add", "update", "delete", "get", "realize"],
@@ -725,28 +953,52 @@ def modules(
     leaksTo: list[str] | None = None, intendsToDependOn: list[str] | None = None,
     supersedes: list[str] | None = None, tests: str | None = None,
     tags: list[str] | None = None,
+    dependsOnAdd: list[str] | None = None, dependsOnRemove: list[str] | None = None,
+    leaksToAdd: list[str] | None = None, leaksToRemove: list[str] | None = None,
     items: list[dict] | None = None, ids: list[str] | None = None,
 ) -> dict:
     """Create / read / update / delete / realize MODULE nodes in `map`, selected by
-    `action`. Writes re-render and return the compact ack; get returns the record(s).
+    `action`. Writes re-render and return the compact ack (it carries
+    `unresolvedEdges` when an edge target matches no module — usually a typo);
+    get returns the record(s).
 
       action="add":     create a module — needs id, label, domain (+ optional
                         depth/size/seam/iface/coverage/churn/files/dependsOn/leaksTo/
                         intendsToDependOn/supersedes/tests/tags). Bulk: items=[{...}, ...].
       action="update":  patch module `id` with any field above (depth/coverage/churn
-                        0..1, clamped; omitted fields unchanged). Bulk: items=[{id,...}].
+                        0..1, clamped; omitted fields unchanged). Edge edits without
+                        resending the whole list: dependsOnAdd/dependsOnRemove and
+                        leaksToAdd/leaksToRemove merge server-side. Broadcast: pass
+                        ids=[...] (or ids=["*"] for every module) to apply ONE shared
+                        patch to many modules in a single write. Bulk with per-module
+                        fields: items=[{id, ...}].
       action="delete":  delete module `id` and prune its edges. Bulk: ids=[...].
       action="get":     read module `id`'s full record (read-only). Bulk: ids=[...] ->
                         {"modules": [...]}.
       action="realize": flip planned module `id` to built (plane->actual,
                         lifecycle->built); optional depth/coverage/files. (fathom:code)"""
+    call = f"archmap_modules(action='{action}'" + (f", id='{id}'" if id else "") + ")"
+    hint = ("Check ids with archmap_modules(map, action='get', ids=[...]) or "
+            "archmap_show_map(map).")
+    return _guard(call, action != "get", hint, lambda: _modules_impl(
+        map, action, id, dict(
+            label=label, domain=domain, depth=depth, size=size, seam=seam, iface=iface,
+            coverage=coverage, churn=churn, updated=updated, plane=plane, lifecycle=lifecycle,
+            files=files, dependsOn=dependsOn, leaksTo=leaksTo,
+            intendsToDependOn=intendsToDependOn, supersedes=supersedes, tests=tests, tags=tags,
+        ),
+        dependsOnAdd, dependsOnRemove, leaksToAdd, leaksToRemove,
+        items, ids, depth, coverage, files))
+
+
+def _modules_impl(map: str, action: str, id: str, raw_flds: dict,
+                  dependsOnAdd, dependsOnRemove, leaksToAdd, leaksToRemove,
+                  items, ids, depth, coverage, files) -> dict:
     store = REGISTRY.ensure(map) if action == "add" else REGISTRY.store(map)
-    flds = {k: v for k, v in dict(
-        label=label, domain=domain, depth=depth, size=size, seam=seam, iface=iface,
-        coverage=coverage, churn=churn, updated=updated, plane=plane, lifecycle=lifecycle,
-        files=files, dependsOn=dependsOn, leaksTo=leaksTo,
-        intendsToDependOn=intendsToDependOn, supersedes=supersedes, tests=tests, tags=tags,
-    ).items() if v is not None}
+    flds = {k: v for k, v in raw_flds.items() if v is not None}
+    edge_ops = (("dependsOn", dependsOnAdd, dependsOnRemove),
+                ("leaksTo", leaksToAdd, leaksToRemove))
+    has_edge_ops = any(add or rem for _, add, rem in edge_ops)
     if action == "add":
         if items is not None:
             store.add_modules([Module.from_dict(d) for d in items])
@@ -756,10 +1008,26 @@ def modules(
     if action == "update":
         if items is not None:
             store.update_modules(items)
-        elif id:
-            store.update_module(id, **flds)
         else:
-            raise ValueError("modules(action='update') needs id, or items=[{id, ...}]")
+            target_ids = ids if ids else ([id] if id else None)
+            if not target_ids:
+                raise ValueError("modules(action='update') needs id, ids=[...] "
+                                 "(or [\"*\"] for all), or items=[{id, ...}]")
+            if list(target_ids) == ["*"]:
+                target_ids = sorted(store.modules.keys())
+            current = {r["id"]: r for r in store.get_modules(target_ids)} if has_edge_ops else {}
+            patches = []
+            for tid in target_ids:
+                p = dict(flds)
+                for base, add, rem in edge_ops:
+                    if add or rem:
+                        cur = list(p.get(base) if base in p else (current[tid].get(base) or []))
+                        drop = set(rem or [])
+                        merged = [x for x in cur if x not in drop]
+                        merged += [x for x in (add or []) if x not in merged]
+                        p[base] = merged
+                patches.append({"id": tid, **p})
+            store.update_modules(patches)            # one locked, all-or-nothing write
         return _ack(store)
     if action == "delete":
         if ids is not None:
@@ -781,7 +1049,7 @@ def modules(
     return _ack(store)
 
 
-@mcp.tool(**_APP)
+@mcp.tool(name="archmap_suggestions", **_APP)
 def suggestions(
     map: str,
     action: Literal["flag", "decide", "dismiss"],
@@ -809,6 +1077,17 @@ def suggestions(
                         the reason. The candidate is KEPT as the durable record.
       action="dismiss": dismiss `suggestion_id` (status->done) with NO reason — the
                         never-load-bearing case. To keep a reason, use decide instead."""
+    call = (f"archmap_suggestions(action='{action}'"
+            + (f", module='{module}'" if module else "")
+            + (f", suggestion_id='{suggestion_id}'" if suggestion_id else "") + ")")
+    hint = "List a module's candidates via archmap_modules(map, action='get', id=<module>)."
+    return _guard(call, True, hint, lambda: _suggestions_impl(
+        map, action, module, suggestion_id, title, strength, category,
+        problem, solution, wins, decision, note))
+
+
+def _suggestions_impl(map, action, module, suggestion_id, title, strength,
+                      category, problem, solution, wins, decision, note) -> dict:
     store = REGISTRY.store(map)
     if action == "flag":
         if not (module and title and strength):
@@ -826,7 +1105,7 @@ def suggestions(
     return _ack(store)
 
 
-@mcp.tool(**_APP)
+@mcp.tool(name="archmap_grilling", **_APP)
 def grilling(
     map: str,
     action: Literal["start", "mark", "finish", "queue"],
@@ -839,7 +1118,8 @@ def grilling(
     """Drive the /deepen GRILLING lifecycle for a candidate in `map`, by `action`.
 
       action="start":  UI callback — persist `module`'s first open candidate as
-                       'requested' and RETURN the canonical /deepen prompt (a string).
+                       'requested' and return {map, module, suggestion_id, prompt}
+                       where `prompt` is the canonical /deepen prompt.
       action="mark":   mark `suggestion_id` as actively being grilled (status->grilling).
                        Call at the start of the loop; re-renders.
       action="finish": close the loop on `suggestion_id` — mark grilled and record
@@ -847,6 +1127,15 @@ def grilling(
                        `adr` path, e.g. "docs/adr/0007-...md"). Candidate KEPT. Re-renders.
       action="queue":  list candidates a user flagged for grilling that no agent has
                        picked up yet (a terminal /deepen polls this). Read-only."""
+    call = (f"archmap_grilling(action='{action}'"
+            + (f", module='{module}'" if module else "")
+            + (f", suggestion_id='{suggestion_id}'" if suggestion_id else "") + ")")
+    hint = "See waiting candidates via archmap_grilling(map, action='queue')."
+    return _guard(call, action not in ("queue",), hint, lambda: _grilling_impl(
+        map, action, module, suggestion_id, decision, note, adr))
+
+
+def _grilling_impl(map, action, module, suggestion_id, decision, note, adr):
     store = REGISTRY.store(map)
     if action == "start":
         if not module:
@@ -854,7 +1143,9 @@ def grilling(
         s = _first_open(store.modules[module])
         if s:
             store.request_grilling(s.id)
-        return _grill_prompt(store, map, module)
+        return {"map": map, "module": module,
+                "suggestion_id": s.id if s else None,
+                "prompt": _grill_prompt(store, map, module)}
     if action == "queue":
         return {"map": map, "queued": store.queued_for_grilling()}
     if not suggestion_id:
@@ -869,7 +1160,7 @@ def grilling(
     return _ack(store)
 
 
-@mcp.tool(**_APP)
+@mcp.tool(name="archmap_plans", **_APP)
 def plans(
     map: str,
     action: Literal["create", "add_steps", "set_step_status", "update", "get"],
@@ -891,20 +1182,34 @@ def plans(
                                  intent, moduleIds). (fathom:plan)
       action="add_steps":       append ordered build steps to `plan_id`: steps=[{id,
                                  title, targets?, interface?, dependsOnSteps?, adapters?,
-                                 note?}, ...]. fathom:code executes them in order.
+                                 note?}, ...]. Unknown step keys are REJECTED (not
+                                 silently dropped). fathom:code executes steps in order.
       action="set_step_status": set step `step_id` of `plan_id` to step_status
                                  (todo|in-progress|done|blocked).
       action="update":          patch plan `plan_id` (title/domain/intent/status/
                                  moduleIds/adrRefs); status is draft|active|done|abandoned.
       action="get":             read plan `plan_id`'s full record (read-only)."""
+    call = f"archmap_plans(action='{action}'" + (f", plan_id='{plan_id}'" if plan_id else "") + ")"
+    hint = "Read the plan via archmap_plans(map, action='get', plan_id=...)."
+    return _guard(call, action != "get", hint, lambda: _plans_impl(
+        map, action, plan_id, title, domain, intent, status,
+        moduleIds, adrRefs, steps, step_id, step_status))
+
+
+def _plans_impl(map, action, plan_id, title, domain, intent, status,
+                moduleIds, adrRefs, steps, step_id, step_status) -> dict:
     store = REGISTRY.ensure(map) if action == "create" else REGISTRY.store(map)
     if action == "create":
         store.create_plan(Plan(id=plan_id, title=title, domain=domain or "",
                                intent=intent or "", moduleIds=moduleIds or []))
         return _ack(store)
     if action == "add_steps":
-        store.add_work_steps(plan_id, [WorkStep(**{k: v for k, v in s.items() if k in _WS_FIELDS})
-                                       for s in (steps or [])])
+        bad = [f"step {s.get('id') or '#' + str(i)}: {sorted(set(s) - _WS_FIELDS)}"
+               for i, s in enumerate(steps or []) if set(s) - _WS_FIELDS]
+        if bad:
+            raise ValueError("unknown WorkStep key(s) — " + "; ".join(bad)
+                             + f". Valid keys: {sorted(_WS_FIELDS)}")
+        store.add_work_steps(plan_id, [WorkStep(**s) for s in (steps or [])])
         return _ack(store)
     if action == "set_step_status":
         store.set_step_status(plan_id, step_id, step_status)
@@ -918,14 +1223,39 @@ def plans(
     return store.get_plan(plan_id)                 # get
 
 
-@mcp.tool(**_APP)
+def _scope_from_args(scope_kind: str, scope_ids, scope_domain: str,
+                     query_domain: str, query_plane: str, query_lifecycle: str,
+                     query_depth_gte, query_depth_lte, query_coverage_lte,
+                     query_has_leak, query_has_open_candidate, query_tag: str) -> dict | None:
+    """Assemble a model Scope dict from the flat tool args; None when no scope arg
+    was provided at all (so update leaves the stored scope unchanged)."""
+    predicate = {k: v for k, v in {
+        "domain": query_domain or None, "plane": query_plane or None,
+        "lifecycle": query_lifecycle or None,
+        "depthGte": query_depth_gte, "depthLte": query_depth_lte,
+        "coverageLte": query_coverage_lte,
+        "hasLeak": query_has_leak, "hasOpenCandidate": query_has_open_candidate,
+        "tag": query_tag or None,
+    }.items() if v is not None}
+    if not (scope_kind or scope_ids or scope_domain or predicate):
+        return None
+    kind = scope_kind or ("explicit" if scope_ids else "domain" if scope_domain else "query")
+    if kind == "explicit":
+        return {"kind": "explicit", "ids": scope_ids or []}
+    if kind == "domain":
+        return {"kind": "domain", "domain": scope_domain}
+    if kind == "query":
+        return {"kind": "query", "predicate": predicate}
+    return {"kind": "system"}
+
+
+@mcp.tool(name="archmap_docs", **_APP)
 def docs(
     map: str,
     action: Literal["add", "update", "delete", "list", "get"],
     doc_id: str = "",
     type: Literal["adr", "note", "rule", "rfc", "glossary", ""] = "",
     title: str | None = None,
-    scope: dict | None = None,
     summary: str | None = None,
     body: str | None = None,
     status: str | None = None,
@@ -935,25 +1265,58 @@ def docs(
     author: str | None = None,
     created: str | None = None,
     updated: str | None = None,
+    scope_kind: Literal["system", "explicit", "domain", "query", ""] = "",
+    scope_ids: list[str] | None = None,
+    scope_domain: str = "",
+    query_domain: str = "",
+    query_plane: str = "",
+    query_lifecycle: str = "",
+    query_depth_gte: float | None = None,
+    query_depth_lte: float | None = None,
+    query_coverage_lte: float | None = None,
+    query_has_leak: bool | None = None,
+    query_has_open_candidate: bool | None = None,
+    query_tag: str = "",
+    include_membership: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
     """Manage scoped architecture DOCS in `map`, by `action`. Writes re-render.
 
       action="add":    create doc `doc_id` — needs type (adr|note|rule|rfc|glossary)
-                       and title; optional scope (below), summary, body, status, tags,
-                       supersedes, adrRef, author.
-      action="update": patch doc `doc_id` (any of type/title/scope/summary/body/status/
-                       tags/supersedes/adrRef/author/created/updated; omitted unchanged).
+                       and title; optional summary, body, status, tags, supersedes,
+                       adrRef, author, and a scope (below; defaults to whole-system).
+      action="update": patch doc `doc_id` (any field above; omitted unchanged).
       action="delete": delete doc `doc_id`.
-      action="list":   list docs (paged via limit/offset) with resolved scope +
-                       the moduleId->docIds membership map. Read-only.
+      action="list":   list doc SUMMARIES (id/type/title/summary/status/tags/author/
+                       scopeLabel/drift/moduleCount — no bodies), paged via limit/
+                       offset. Pass include_membership=True for the moduleId->docIds
+                       map. Full body via action="get". Read-only.
       action="get":    read doc `doc_id`'s full record with scope resolved. Read-only.
 
-    scope: {"kind":"system"} | {"kind":"explicit","ids":[...]} |
-           {"kind":"domain","domain":"<d>"} | {"kind":"query","predicate":{domain/plane/
-           lifecycle/depthGte/depthLte/coverageLte/hasLeak/hasOpenCandidate/tag}}
-           (defaults to whole-system)."""
+    Scope is given flat: scope_kind="system" (everything) | "explicit" + scope_ids
+    | "domain" + scope_domain | "query" + any query_* filters (query_domain/
+    query_plane/query_lifecycle/query_depth_gte/query_depth_lte/query_coverage_lte/
+    query_has_leak/query_has_open_candidate/query_tag, ANDed). scope_kind may be
+    omitted when scope_ids or scope_domain or a query_* filter makes it obvious."""
+    call = f"archmap_docs(action='{action}'" + (f", doc_id='{doc_id}'" if doc_id else "") + ")"
+    hint = "List existing docs via archmap_docs(map, action='list')."
+    scope = _scope_from_args(scope_kind, scope_ids, scope_domain,
+                             query_domain, query_plane, query_lifecycle,
+                             query_depth_gte, query_depth_lte, query_coverage_lte,
+                             query_has_leak, query_has_open_candidate, query_tag)
+    return _guard(call, action in ("add", "update", "delete"), hint, lambda: _docs_impl(
+        map, action, doc_id, type, title, scope, summary, body, status, tags,
+        supersedes, adrRef, author, created, updated, include_membership, limit, offset))
+
+
+_DOC_SUMMARY_KEYS = ("id", "type", "title", "summary", "status", "tags",
+                     "author", "scopeLabel", "drift")
+
+
+def _docs_impl(map, action, doc_id, type, title, scope, summary, body, status, tags,
+               supersedes, adrRef, author, created, updated,
+               include_membership, limit, offset) -> dict:
     store = REGISTRY.ensure(map) if action == "add" else REGISTRY.store(map)
     if action == "add":
         if not (doc_id and type and title):
@@ -979,11 +1342,17 @@ def docs(
         return _ack(store, changed=f"deleted doc {doc_id}")
     if action == "list":
         d = store.to_dict()
-        page = d["docs"][offset:offset + limit]
-        return {"map": map, "docs": page, "docMembership": d["docMembership"],
-                "total_count": len(d["docs"]),
-                "has_more": offset + limit < len(d["docs"]),
-                "next_offset": offset + limit if offset + limit < len(d["docs"]) else None}
+        slim = [{**{k: doc.get(k) for k in _DOC_SUMMARY_KEYS},
+                 "moduleCount": len(doc.get("resolvedModuleIds") or [])}
+                for doc in d["docs"]]
+        page = slim[offset:offset + limit]
+        out = {"map": map, "docs": page,
+               "total_count": len(slim),
+               "has_more": offset + limit < len(slim),
+               "next_offset": offset + limit if offset + limit < len(slim) else None}
+        if include_membership:
+            out["docMembership"] = d["docMembership"]
+        return out
     return store.get_doc(doc_id)                   # get
 
 
@@ -1060,6 +1429,16 @@ def _apply_action(store: Store, action: str, body: dict) -> None:
         store.add_module(Module.from_dict(body["module"]))
     elif action == "delete":
         store.delete_module(body["module"])
+    elif action == "flag":
+        # the studio's what-if card flags ONE candidate through the existing FSM;
+        # grilling and deciding stay with fathom:deepen
+        s = body.get("suggestion") or {}
+        if not (body.get("module") and s.get("title") and s.get("strength")):
+            raise ValueError("flag needs module and suggestion {title, strength}")
+        sid = f"{body['module']}-{s['strength']}".lower().replace(" ", "-")
+        store.add_suggestion(body["module"], Suggestion(
+            sid, s["title"], s["strength"], s.get("category", ""),
+            s.get("problem", ""), s.get("solution", ""), s.get("wins") or []))
     else:
         raise ValueError(f"unknown action '{action}'")
 
@@ -1167,6 +1546,19 @@ async def api_view(request):
     return JSONResponse(_build_view(store.to_dict(), parsed))
 
 
+@mcp.custom_route("/api/whatif", ["GET"])
+async def api_whatif(request):
+    """Browser side of archmap_whatif: /api/whatif?map=<id>&ids=a,b,c."""
+    q = request.query_params
+    ids = [s for s in (q.get("ids") or "").split(",") if s]
+    try:
+        store = REGISTRY.resolve(q.get("map"))
+        out = preview_merge(store._load(), ids)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(out)
+
+
 @mcp.custom_route("/api/act", ["POST"])
 async def api_act(request):
     body = await request.json()
@@ -1251,5 +1643,5 @@ def main() -> None:
     mcp.run()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — would start a live stdio server
     main()

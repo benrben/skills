@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light" data-dir="a">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arch-map</title>
+<link rel="stylesheet" href="/assets/shared/ui.css">
+<link rel="stylesheet" href="/assets/shared/components.css">
+<link rel="stylesheet" href="/assets/studio.css">
+<script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
+<style>
+  /* map switcher (named maps, one per project) */
+  .map-switcher { position: relative; display: flex; }
+  .ms-btn { display:inline-flex; align-items:center; gap:7px; background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:4px 9px; color:var(--text); font-size:12.5px; transition:.12s; }
+  .ms-btn:hover { border-color:var(--border-strong); }
+  .ms-btn .ms-name { font-family:var(--font-mono); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px; }
+  .ms-btn .ms-meta { color:var(--text-faint); font-size:11px; font-family:var(--font-mono); white-space:nowrap; }
+  .ms-btn .ms-caret { color:var(--text-faint); flex:0 0 auto; }
+  .ms-pop { position:absolute; top:calc(100% + 7px); left:0; min-width:300px; max-width:440px; background:var(--elev); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-lg); padding:6px; z-index:60; display:none; }
+  .ms-pop.open { display:block; }
+  .ms-pop .ms-hd { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); padding:6px 8px 5px; }
+  .ms-row { display:flex; align-items:center; gap:10px; width:100%; text-align:left; background:transparent; border:0; border-radius:var(--radius-sm); padding:8px; color:var(--text); transition:.1s; }
+  .ms-row:hover { background:var(--panel-2); }
+  .ms-row[aria-current="true"] { background:var(--accent-weak); }
+  .ms-row .rr { display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
+  .ms-row .rr b { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ms-row .rr code { font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint); }
+  .ms-row .rc { font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim); white-space:nowrap; }
+  .ms-new { display:flex; gap:6px; padding:8px 8px 6px; border-top:1px solid var(--border); margin-top:4px; }
+  .ms-new input { flex:1; min-width:0; background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 8px; color:var(--text); font-size:12.5px; }
+  .ms-new input:focus { outline:0; border-color:var(--accent-ring); box-shadow:0 0 0 3px var(--accent-ring); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- header -->
+  <header class="head">
+    <div class="brand">
+      <span class="mark"><span class="am">arch</span>-map</span>
+      <div class="map-switcher" id="mapSwitcher"></div>
+    </div>
+    <div class="subline" id="subline" data-mode="overview">fill <span class="enc">= depth tier</span> · vertical position <span class="enc">= dependency depth</span> · bottom bar <span class="enc">= coverage</span></div>
+    <div class="spacer"></div>
+    <span class="count-pill" id="openCount"><span class="n">0</span> open proposals</span>
+    <button class="help-btn" id="helpBtn" title="What am I looking at?">?</button>
+    <div id="chromeToggles" style="display:flex; gap:8px;"></div>
+  </header>
+
+  <!-- help popover -->
+  <div class="help-pop" id="helpPop">
+    <h4>Reading the graph</h4>
+    <div class="hsec">
+      <h5>Each card is a module</h5>
+      <div class="help-enc"><span class="sw shallow"></span><span class="et"><b>fill</b> = depth tier · how hardened a module is</span></div>
+      <div class="help-enc"><span class="sw deep"></span><span class="et">deep foundations sink to the bottom; entrypoints rise to the top</span></div>
+      <div class="help-enc"><span class="sw cov"></span><span class="et"><b>bottom bar</b> = test coverage</span></div>
+      <div class="help-enc"><span class="sw ring"></span><span class="et"><b>ring + !</b> = the agent has a proposal</span></div>
+      <div class="help-enc"><span class="sw upd"></span><span class="et"><b>blue outline</b> = changed since last scan</span></div>
+      <div class="help-enc"><span class="ln"></span><span class="et"><b>red dashed</b> = a dependency leak</span></div>
+      <div class="help-enc"><span class="sw planned"></span><span class="et"><b>◇ dashed card</b> = planned (intended) module</span></div>
+      <div class="help-enc"><span class="sw building"></span><span class="et"><b>striped</b> = building · under construction</span></div>
+      <div class="help-enc"><span class="line intended"></span><span class="et"><b>dashed violet line</b> = intended dependency</span></div>
+      <div class="help-enc"><span class="cand-status grilling"></span><span class="et"><b>requested · grilling · grilled</b> pills = a candidate being grilled</span></div>
+    </div>
+    <div class="hsec">
+      <h5>What each metric means</h5>
+      <dl class="glossary">
+        <dt>Depth <span class="gl-good">higher = better</span></dt>
+        <dd>How much logic is hidden inside vs leaking out. A deep module does a lot of work behind a small, simple surface — callers don't need to care how it works. A shallow module is basically a wrapper that exposes everything.</dd>
+        <dt>Coverage <span class="gl-good">higher = better</span></dt>
+        <dd>How much of the module is tested. 0% = nothing is tested, 100% = everything is tested. Low coverage on an important module is the most dangerous combination — you can't safely change it.</dd>
+        <dt>Leak <span class="gl-bad">always bad</span></dt>
+        <dd>A module is reaching into something it shouldn't depend on. Like a checkout page importing database internals directly. Every leak is a hidden coupling — change one thing and something far away breaks.</dd>
+        <dt>Proposal</dt>
+        <dd>The agent spotted a way to improve a module — tighten its interface, split it up, or fix a bad dependency. It's not a bug report, it's a suggestion. You decide: accept it, defer it, or reject it.</dd>
+        <dt>Grilling</dt>
+        <dd>Putting a proposal under the microscope. The agent digs into whether it's actually worth doing — cost vs benefit. Ends with a verdict: yes, not now, or no.</dd>
+        <dt>Updated <span class="gl-warn">needs attention</span></dt>
+        <dd>The code changed since the last scan. The module's depth/coverage info might be out of date — worth re-scanning to see if the numbers still hold.</dd>
+        <dt>Orphan <span class="gl-warn">worth investigating</span></dt>
+        <dd>Nothing connects to this module and it connects to nothing. It's either dead code, a very early stub, or something that was added to the map by mistake.</dd>
+        <dt>Planned</dt>
+        <dd>A module that doesn't exist in the code yet — it's the intended future design. Shows as a dashed ghost card. Once it gets built, the ghost becomes a real card.</dd>
+        <dt>Domain</dt>
+        <dd>A group of related modules — like "api", "frontend", "seeds". Just a way to cluster things visually. Cross-domain arrows are the seams between subsystems.</dd>
+      </dl>
+    </div>
+    <div class="hsec">
+      <h5>Legend</h5>
+      <div class="legend">
+        <span class="li"><span class="sw deep"></span>deep</span>
+        <span class="li"><span class="sw mid"></span>mid</span>
+        <span class="li"><span class="sw shallow"></span>shallow</span>
+        <span class="li"><span class="sw cov"></span>coverage</span>
+        <span class="li"><span class="sw planned"></span>planned</span>
+        <span class="li"><span class="line"></span>updated</span>
+        <span class="li"><span class="line leak"></span>leak</span>
+        <span class="li"><span class="line intended"></span>intended</span>
+      </div>
+    </div>
+    <div class="hsec">
+      <h5>Shortcuts</h5>
+      <div class="kbd-row"><span>Proposals · Inspector · Modules</span><span class="kr-keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></span></div>
+      <div class="kbd-row"><span>Plans</span><span class="kr-keys"><kbd>4</kbd></span></div>
+      <div class="kbd-row"><span>Issues panel</span><span class="kr-keys"><kbd>p</kbd></span></div>
+      <div class="kbd-row"><span>Search modules</span><span class="kr-keys"><kbd>/</kbd></span></div>
+      <div class="kbd-row"><span>Deselect / close</span><span class="kr-keys"><kbd>esc</kbd></span></div>
+      <div class="kbd-row"><span>Zoom · pan the canvas</span><span class="kr-keys">scroll · drag</span></div>
+    </div>
+    <div class="hsec">
+      <button class="btn ghost" id="replayTour" style="width:100%;justify-content:center">Replay the intro</button>
+    </div>
+  </div>
+
+  <!-- toolbar -->
+  <div class="toolbar">
+    <div class="chips" id="chips"></div>
+    <div class="tool-sep"></div>
+    <label class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="searchInput" placeholder="Search modules…" autocomplete="off">
+      <kbd>/</kbd>
+    </label>
+    <button class="btn" id="allEdgesBtn" aria-pressed="false">&#x21E2; all edges</button>
+    <button class="btn" id="overviewBtn" aria-pressed="true">&#x25EB; Overview</button>
+    <div class="breadcrumb" id="breadcrumb" aria-label="Current view scope"></div>
+    <button class="btn" id="isolateBtn" aria-pressed="false" aria-label="Isolate the selected module's neighbourhood" disabled>&#x2299; Isolate</button>
+    <div class="spacer" style="flex:1"></div>
+  </div>
+
+  <!-- issues panel (slides from left) -->
+  <aside class="issues-panel" id="issuesPanel" role="region" aria-label="Issues panel">
+    <div class="ip-head">
+      <span class="ip-title">⚠ Issues</span>
+      <span class="ip-counts" id="ipCounts"></span>
+      <button class="ip-close" id="ipClose" title="Close (P)">✕</button>
+    </div>
+    <div class="ip-search">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="ipSearch" placeholder="Search modules…" autocomplete="off">
+    </div>
+    <div class="ip-filters" id="ipFilters"></div>
+    <div class="ip-list" id="ipList"></div>
+  </aside>
+  <!-- issues panel tab (always visible, even when closed) -->
+  <button class="ip-tab" id="ipTab" title="Issues panel (P)" aria-label="Toggle issues panel" aria-expanded="false">
+    <span class="ip-tab-icon">⚠</span>
+    <span class="ip-tab-count" id="ipTabCount">0</span>
+  </button>
+
+  <!-- workspace: graph + agent rail -->
+  <div class="workspace">
+    <div class="canvas-col">
+      <div class="stage-wrap">
+        <div class="stage" id="stage" role="application" aria-label="Architecture dependency graph">
+          <div class="viewport" id="viewport">
+            <svg class="edges" id="edges" xmlns="http://www.w3.org/2000/svg"></svg>
+            <div id="nodeLayer"></div>
+          </div>
+        </div>
+        <div class="stage-loading" id="stageLoading" role="status" aria-live="polite" aria-hidden="true"><div class="agent-orb"></div><span class="sl-label">Laying out modules…</span></div>
+        <button class="rail-toggle" id="railToggle"><span class="lbl">Hide</span> agent <span class="badge" id="openCount2" style="display:none"></span></button>
+        <div class="stage-tools">
+          <button id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+          <button id="fitBtn" title="Fit to view" aria-label="Fit to view">⤢</button>
+        </div>
+        <div class="zoom-ind" id="zoomInd">100%</div>
+        <div class="minimap" id="minimapWrap"><span class="mm-cap">map</span><canvas id="minimap" width="376" height="256"></canvas></div>
+      </div>
+      <div class="orphan-tray">
+        <span class="ot-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></svg>
+          Not connected
+        </span>
+        <div class="ot-items" id="orphanItems"></div>
+      </div>
+    </div>
+
+    <!-- agent rail -->
+    <aside class="rail" id="rail">
+      <div class="rail-resize" id="railResize" title="Drag to resize · double-click to reset"></div>
+      <div class="agent-head">
+        <div class="agent-id">
+          <div class="agent-orb"></div>
+          <div>
+            <div class="agent-name">arch agent <span class="live"><span class="ld"></span>watching</span></div>
+          </div>
+        </div>
+        <div class="agent-sub" id="agentSub"></div>
+        <div class="agent-stats" id="agentStats"></div>
+        <div class="activity-strip" id="activityFeed" role="log" aria-live="polite" aria-label="Agent activity"></div>
+      </div>
+      <div class="rail-tabs" id="railTabs" role="tablist">
+        <button class="rtab" data-tab="agent" role="tab" aria-selected="true">Proposals <span class="tcount">0</span></button>
+        <button class="rtab" data-tab="inspector" role="tab" aria-selected="false">Inspector</button>
+        <button class="rtab" data-tab="modules" role="tab" aria-selected="false">Modules <span class="tcount">0</span></button>
+        <button class="rtab" data-tab="plans" role="tab" aria-selected="false">Plans <span class="tcount">0</span></button>
+        <button class="rtab" data-tab="docs" role="tab" aria-selected="false">Docs <span class="tcount">0</span></button>
+      </div>
+      <div class="rail-body" id="railBody">
+        <div class="rail-pane active" data-pane="agent"><div class="agent-pane" id="agentPane"></div></div>
+        <div class="rail-pane" data-pane="inspector"><div id="inspPane"></div></div>
+        <div class="rail-pane" data-pane="modules"><div class="mods-pane" id="modsPane"></div></div>
+        <div class="rail-pane" data-pane="plans"><div class="plans-pane" id="plansPane"></div></div>
+        <div class="rail-pane" data-pane="docs"><div class="docs-pane" id="docsPane"></div></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast"></div>
+
+<!-- first-run onboarding -->
+<div class="onb" id="onb">
+  <div class="onb-card">
+    <div class="onb-top">
+      <div class="row">
+        <div class="agent-orb"></div>
+        <h3>Work with the agent, not just the code</h3>
+      </div>
+      <p>arch-map shows <b data-repo>your repo</b> as a living dependency graph. An agent watches it and proposes where to deepen, split, or fix the architecture. Your job is to <b>decide</b> — and everything stays in sync as you go.</p>
+    </div>
+    <div class="onb-steps">
+      <div class="onb-step"><div class="num">1</div><div><div class="t">The graph is the map</div><div class="s">Every card is a module. Position and fill show how deep it sits; the bar shows test coverage. Hover to light up its neighbourhood, click to inspect.</div></div></div>
+      <div class="onb-step"><div class="num">2</div><div><div class="t">The rail is the agent</div><div class="s">On the right: its <b>proposals</b> queue. Each one names a problem, a solution, and the wins. Hover a proposal to find it on the graph. The agent also drafts <b>plans</b> — the intended structure — in the Plans tab; planned modules show as dashed ghosts on the graph.</div></div></div>
+      <div class="onb-step"><div class="num">3</div><div><div class="t">You close the loop</div><div class="s">Accept, defer, reject or dismiss — with a reason. The graph, counts and queue update instantly. That's the whole game.</div></div></div>
+      <div class="onb-step" id="onbIssues"><div class="num">4</div><div><div class="t">Find the trouble fast</div><div class="s">The <b>⚠ Issues</b> panel (left edge or <b>p</b>) ranks every structural problem. Toggle <b>Overview ↔ Detail</b> to zoom from domains to modules. Click any card → the Inspector shows its <b>graph metrics</b> and <b>signals</b> (leaky seam, god module, bottleneck…).</div></div></div>
+    </div>
+    <div class="onb-foot">
+      <span class="spacer"></span>
+      <button class="btn ghost skip" id="onbSkip">Skip</button>
+      <button class="btn primary" id="onbStart">Show me the proposals →</button>
+    </div>
+  </div>
+</div>
+
+<script src="/assets/shared/state.js"></script>
+<script src="/assets/shared/focus.js"></script>
+<script src="/assets/shared/doclens.js"></script>
+<script src="/assets/shared/chrome.js"></script>
+<script>renderChromeToggles(document.getElementById("chromeToggles"));</script>
+<script src="/assets/studio-graph.js"></script>
+<script src="/assets/studio-rail.js"></script>
+<script src="/assets/studio-docs.js"></script>
+<script>
+  (function () {
+    function boot() {
+      Studio.bootGraph();
+      Studio.bootRail();
+      Studio.bootDocs && Studio.bootDocs();
+
+      // ---- resizable agent rail (drag its left edge; persisted) ----
+      (function () {
+        const rail = document.getElementById("rail");
+        const handle = document.getElementById("railResize");
+        if (!rail || !handle) return;
+        const KEY = "archmap.railW.v1";
+        const MIN = 300;
+        const maxW = () => Math.min(900, Math.round(window.innerWidth * 0.7));
+        function apply(w) {
+          w = Math.max(MIN, Math.min(maxW(), Math.round(w)));
+          rail.style.setProperty("--rail-w", w + "px");
+          return w;
+        }
+        try { const s = parseInt(localStorage.getItem(KEY), 10); if (s) apply(s); } catch (e) {}
+        let dragging = false, rightEdge = 0;
+        handle.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          dragging = true;
+          rightEdge = rail.getBoundingClientRect().right;   // fixed (rail is right-docked)
+          rail.classList.add("resizing");
+          document.body.style.cursor = "col-resize";
+          document.body.style.userSelect = "none";
+        });
+        window.addEventListener("mousemove", (e) => { if (dragging) apply(rightEdge - e.clientX); });
+        window.addEventListener("mouseup", () => {
+          if (!dragging) return;
+          dragging = false;
+          rail.classList.remove("resizing");
+          document.body.style.cursor = "";
+          document.body.style.userSelect = "";
+          try { localStorage.setItem(KEY, parseInt(rail.style.getPropertyValue("--rail-w"), 10) || 384); } catch (e) {}
+          window.dispatchEvent(new Event("resize"));        // canvas flexed -> re-fit + redraw minimap
+        });
+        handle.addEventListener("dblclick", () => {         // reset to default width
+          rail.style.removeProperty("--rail-w");
+          try { localStorage.removeItem(KEY); } catch (e) {}
+          window.dispatchEvent(new Event("resize"));
+        });
+      })();
+
+      // ---- map switcher (named maps, one per project; shared) ----
+      const Maps = window.Arch.Maps;
+      const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      function reflectRepo() {
+        const me = Maps.list().find((m) => m.id === Maps.current());
+        const label = (me && me.repo) || window.Arch.Store.get().repo || Maps.current() || "your repo";
+        document.title = "arch-map · " + label;
+        document.querySelectorAll("[data-repo]").forEach((e) => e.textContent = label);
+      }
+      function renderMapSwitcher() {
+        const host = document.getElementById("mapSwitcher");
+        const maps = Maps.list(), cur = Maps.current();
+        const me = maps.find((m) => m.id === cur) || {};
+        const meta = me.modules != null ? me.modules + " mod" + (me.modules === 1 ? "" : "s") : "";
+        host.innerHTML = `
+          <button class="ms-btn" id="msBtn" aria-haspopup="true" title="Switch map">
+            <span class="ms-name">${esc(me.repo || cur || "map")}</span>
+            ${meta ? `<span class="ms-meta">${meta}</span>` : ""}
+            <svg class="ms-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="ms-pop" id="msPop">
+            <div class="ms-hd">Projects · one map each</div>
+            ${maps.map((m) => `
+              <button class="ms-row" data-map="${esc(m.id)}" aria-current="${m.id === cur}">
+                <span class="rr"><b>${esc(m.repo || m.id)}</b><code>${esc(m.id)}</code></span>
+                <span class="rc">${m.modules} mod · ${m.openSuggestions}!</span>
+              </button>`).join("") || `<div class="ms-hd" style="padding:8px">no projects yet</div>`}
+            <div class="ms-new"><input id="msNewName" placeholder="+ new project name…" autocomplete="off"><button class="btn primary" id="msCreate">Create</button></div>
+          </div>`;
+        const pop = host.querySelector("#msPop");
+        host.querySelector("#msBtn").onclick = (e) => { e.stopPropagation(); pop.classList.toggle("open"); };
+        host.querySelectorAll("[data-map]").forEach((b) => b.onclick = () => { pop.classList.remove("open"); Maps.switchTo(b.dataset.map); });
+        const newName = host.querySelector("#msNewName");
+        const doCreate = () => { const n = newName.value.trim(); if (n) { pop.classList.remove("open"); Maps.create(n); } };
+        host.querySelector("#msCreate").onclick = doCreate;
+        newName.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") doCreate(); };
+      }
+      let lastMap = Maps.current();
+      Maps.subscribe(() => {
+        renderMapSwitcher(); reflectRepo();
+        if (Maps.current() !== lastMap) {            // an actual switch (not just a count refresh)
+          lastMap = Maps.current();
+          window.Arch.Focus && window.Arch.Focus.deselect();
+          Studio.setTab && Studio.setTab("agent");
+          setTimeout(() => Studio.fit && Studio.fit(true), 60);
+        }
+      });
+      renderMapSwitcher(); reflectRepo();
+      document.addEventListener("click", (e) => {
+        const sw = document.getElementById("mapSwitcher");
+        const p = document.getElementById("msPop");
+        if (p && sw && !sw.contains(e.target)) p.classList.remove("open");
+      });
+
+      // keep the collapsed-toggle badge in sync
+      const upd = () => {
+        const n = window.Arch.openSuggestions(Studio.model).length;
+        const b = document.getElementById("openCount2");
+        b.style.display = (Studio.railCollapsed && n) ? "inline-block" : "none";
+        b.textContent = n;
+      };
+      const t = document.getElementById("railToggle");
+      t.addEventListener("click", () => setTimeout(upd, 10));
+      setInterval(upd, 1500);
+
+      // ---- help popover ----
+      const helpBtn = document.getElementById("helpBtn"), helpPop = document.getElementById("helpPop");
+      helpBtn.onclick = (e) => { e.stopPropagation(); helpPop.classList.toggle("open"); };
+      document.addEventListener("click", (e) => { if (!helpPop.contains(e.target) && e.target !== helpBtn) helpPop.classList.remove("open"); });
+
+      // ---- onboarding (first run) ----
+      const onb = document.getElementById("onb");
+      const ONB_KEY = "archmap.onboarded.v1";
+      const PULSE_KEY = "archmap.ipPulsed.v1";
+      function openOnb() { onb.classList.add("open"); }
+      // #7 first-run pulse: nudge a new user toward the Issues panel exactly once.
+      // Only fires if there are issues to look at, is gated on prefers-reduced-motion
+      // (the CSS keyframe is also neutralized there), and clears on first interaction.
+      function maybePulseIssues() {
+        const ipTab = document.getElementById("ipTab");
+        if (!ipTab) return;
+        let pulsed = false; try { pulsed = !!localStorage.getItem(PULSE_KEY); } catch (e) {}
+        const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const hasIssues = ipTab.classList.contains("has-issues");
+        if (pulsed || reduce || !hasIssues) return;
+        ipTab.classList.add("pulse-once");
+        try { localStorage.setItem(PULSE_KEY, "1"); } catch (e) {}
+        const stop = () => { ipTab.classList.remove("pulse-once"); ipTab.removeEventListener("click", stop); };
+        ipTab.addEventListener("click", stop);
+        // also clear once the animation (1.6s × 2) has run, so it never lingers
+        setTimeout(() => ipTab.classList.remove("pulse-once"), 3600);
+      }
+      function closeOnb(goProposals) {
+        onb.classList.remove("open");
+        try { localStorage.setItem(ONB_KEY, "1"); } catch (e) {}
+        if (goProposals) { Studio.setTab("agent"); Studio.fit(true); }
+        // the issues count is live by now — pulse the tab to point the new user at it.
+        setTimeout(maybePulseIssues, 400);
+      }
+      document.getElementById("onbStart").onclick = () => closeOnb(true);
+      document.getElementById("onbSkip").onclick = () => closeOnb(false);
+      document.getElementById("replayTour").onclick = () => { helpPop.classList.remove("open"); openOnb(); };
+      onb.addEventListener("click", (e) => { if (e.target === onb) closeOnb(false); });
+      let seen = false; try { seen = !!localStorage.getItem(ONB_KEY); } catch (e) {}
+      if (!seen) setTimeout(openOnb, 350);
+      // already-onboarded users (or those who skipped via persisted state) still get the
+      // one-time nudge the first time they load with issues present.
+      else setTimeout(maybePulseIssues, 900);
+
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { helpPop.classList.remove("open"); if (onb.classList.contains("open")) closeOnb(false); }
+      });
+    }
+    // wait for the first /api/model load before rendering the studio
+    function start() { window.Arch.whenReady(boot); }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+  })();
+</script>
+</body>
+</html>
