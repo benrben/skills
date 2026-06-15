@@ -730,6 +730,8 @@ def _compute_signals(m, mx: dict) -> list[str]:
         signals.append("unstable-api")
     if mx["fanOut"] >= 5 and mx["coupling"] >= 3:
         signals.append("split-candidate")
+    if m.size >= 2.0 and m.depth < 0.5:
+        signals.append("bulky-impl")
     if m.leaksTo:
         signals.append("leaky-seam")
     return signals
@@ -756,6 +758,7 @@ def scan_signals(map: str, signal: str | None = None,
       test-first              high blast radius + very low coverage
       unstable-api            high instability + depended-upon
       split-candidate         high fan-out crossing many domains
+      bulky-impl              large implementation mass for little depth (see MINIMALISM.md)
       leaky-seam              has seam violations (leaksTo)
 
     Use `signal=<id>` to focus on one issue type, e.g.

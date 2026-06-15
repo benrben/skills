@@ -10,4 +10,4 @@ The **Fathom** suite — seven skills on the deep-module principle, sharing the 
 - [`review`](./review/SKILL.md) — review a diff/PR through the map: modules touched, seams crossed, danger-zones touched without tests, interface erosion. Read-only; the change gate.
 - [`adr-writer`](./adr-writer/SKILL.md) — record load-bearing decisions as `docs/adr/NNNN-*.md` (general-purpose; the Fathom skills offer it).
 
-> `fathom/` holds the suite's **shared substrate** — the [`arch-map`](./fathom/arch-map/) MCP spine plus the vocabulary/format docs (`LANGUAGE.md`, `DEEPENING.md`, `INTERFACE-DESIGN.md`, `CONTEXT-FORMAT.md`, `ADR-FORMAT.md`, `HTML-REPORT.md`) every skill references. It is not a skill, so it isn't listed above.
+> `fathom/` holds the suite's **shared substrate** — the [`arch-map`](./fathom/arch-map/) MCP spine plus the vocabulary/format docs (`LANGUAGE.md`, `DEEPENING.md`, `MINIMALISM.md`, `INTERFACE-DESIGN.md`, `CONTEXT-FORMAT.md`, `ADR-FORMAT.md`, `HTML-REPORT.md`) every skill references. It is not a skill, so it isn't listed above.

@@ -45,6 +45,7 @@ If you are working without the map at all (no MCP host, one-shot review), use th
 - Where are modules **shallow** — interface nearly as complex as the implementation?
 - Where have pure functions been extracted just for testability, but the real bugs hide in how they're called (no **locality**)?
 - Where do tightly-coupled modules leak across their seams?
+- Where does a module **hand-roll what stdlib or an installed dependency already does** — large implementation mass for little leverage (the `bulky-impl` signal)? The deepening is *delegate behind the seam*, not merge modules — see [../fathom/MINIMALISM.md](../fathom/MINIMALISM.md).
 - Which parts of the codebase are untested, or hard to test through their current interface?
 
 Apply the **deletion test** to anything you suspect is shallow: would deleting it concentrate complexity, or just move it? A "yes, concentrates" is the signal you want.

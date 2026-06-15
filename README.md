@@ -74,6 +74,7 @@ claude mcp add arch-map -- uv run --project /Users/benreich/skills/skills/fathom
 - [`SKILL.md`](./skills/deepen/SKILL.md) — the skill
 - [`LANGUAGE.md`](./skills/fathom/LANGUAGE.md) — the shared vocabulary
 - [`DEEPENING.md`](./skills/fathom/DEEPENING.md) — how to deepen a cluster safely, by dependency category
+- [`MINIMALISM.md`](./skills/fathom/MINIMALISM.md) — write less code without losing the seam (drive `size` down, hold `depth`)
 - [`INTERFACE-DESIGN.md`](./skills/fathom/INTERFACE-DESIGN.md) — exploring alternative interfaces for a deepened module
 - [`HTML-REPORT.md`](./skills/fathom/HTML-REPORT.md) — the one-shot HTML report scaffold
 - [`CONTEXT-FORMAT.md`](./skills/fathom/CONTEXT-FORMAT.md) — the `CONTEXT.md` domain-glossary format

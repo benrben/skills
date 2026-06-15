@@ -73,6 +73,8 @@ Apply the **deletion test** to every proposed module *on paper*, where pass-thro
 
 For every intended module, write down the full interface: type signature, invariants, ordering constraints, error modes, required configuration, performance characteristics. State explicitly that **this is the test surface** — the assertions `fathom:code` will write and the only place its tests cross. If a planned interface forces a test to reach *past* it to assert, the module is the wrong shape; revisit the seam now.
 
+Where an existing deep module — stdlib, the platform, or an installed dependency — already does what sits behind a seam, **name it in the interface spec** so `fathom:code` delegates rather than hand-rolling it ([../fathom/MINIMALISM.md](../fathom/MINIMALISM.md)). Designing the seam to wrap a library you already have keeps `depth` high and the implementation small from line one.
+
 For the **load-bearing module(s)** — the ones the rest of the design pivots on — run **design-it-twice at the interface level** by absorbing [../fathom/INTERFACE-DESIGN.md](../fathom/INTERFACE-DESIGN.md):
 
 1. **Frame the problem space** for the user: the constraints any interface must satisfy, the dependencies it relies on and their category (step 5), and a rough illustrative sketch to ground the constraints (not a proposal).

@@ -76,6 +76,8 @@ Place the seam by the candidate's / WorkStep's category. Use the four [../fathom
 
 Move complexity behind the small interface; merge the pass-throughs; keep observable behaviour identical at every step. Only introduce a port where two adapters are genuinely justified — otherwise it is indirection, not a seam.
 
+Write the **least implementation that still passes the interface tests** — climb the ladder in [../fathom/MINIMALISM.md](../fathom/MINIMALISM.md) *behind* the fixed seam: does it need to exist (YAGNI) → stdlib → native → an installed dep → one line → minimal code. Reaching for stdlib/a dep is consuming an existing deep module — prefer it over hand-rolling. Drive `size` down without touching `depth`; **never** cut code by collapsing the seam (the deletion test catches it). When two implementations both pass the interface tests, the one with less code wins.
+
 ### 6. Migrate the tests: replace, don't layer
 
 - **Delete** the unit tests that exercised the now-absorbed pass-throughs. They are waste once the interface is tested.
