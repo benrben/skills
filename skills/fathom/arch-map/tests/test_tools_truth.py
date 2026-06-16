@@ -51,9 +51,38 @@ def test_ingest_measures_churn_and_records_anchor(truthmap):
     assert out["ok"] and out["churned"] == 2
     assert out["anchor"]["moduleCount"] == 2 and len(out["anchor"]["sha"]) == 40
     assert out["loc"] == {"a": 1, "b": 1}
+    assert out["sized"] == 2                         # measured LOC written to size
     rec = srv.modules(action="get", map="t", id="a")
     assert rec["churn"] == 1.0                      # every window commit touches it
+    assert rec["size"] == 1.0                       # both modules at the median -> 1.0
     assert rec["updated"] is False                  # ingest never flips halos
+
+
+def test_ingest_scales_size_from_loc_and_fires_bulky_impl(reg, tmp_path):
+    # A big shallow module beside a small one: measured LOC should make the big
+    # one's size >= 2x the median and light up the bulky-impl signal end-to-end.
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    _git(root, "init", "-q", "-b", "main")
+    (root / "src" / "big.py").write_text("\n".join(f"x{i} = {i}" for i in range(50)) + "\n")
+    (root / "src" / "s1.py").write_text("\n".join(["a = 1"] * 5) + "\n")
+    (root / "src" / "s2.py").write_text("\n".join(["b = 2"] * 5) + "\n")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "c1")
+    srv.create_project(name="S", map_id="s")
+    srv.modules(action="add", map="s", items=[
+        {"id": "big", "label": "Big", "domain": "d", "files": ["src/big.py"], "depth": 0.2},
+        {"id": "s1", "label": "S1", "domain": "d", "files": ["src/s1.py"], "depth": 0.2},
+        {"id": "s2", "label": "S2", "domain": "d", "files": ["src/s2.py"], "depth": 0.2},
+    ])
+    out = srv.ingest(map="s", root=str(root))
+    assert out["sized"] == 3
+    assert srv.modules(action="get", map="s", id="big")["size"] >= 2.0   # 50 LOC / median 5
+    assert srv.modules(action="get", map="s", id="s1")["size"] == 1.0    # at the median
+    flagged = srv.scan_signals(map="s", signal="bulky-impl")
+    flagged_ids = {r["id"] for r in flagged["modules"]}
+    assert "big" in flagged_ids
+    assert "s1" not in flagged_ids and "s2" not in flagged_ids
 
 
 def test_ingest_patches_coverage_from_report(truthmap, tmp_path):

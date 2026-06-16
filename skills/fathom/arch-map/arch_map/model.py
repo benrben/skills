@@ -85,7 +85,7 @@ class Module:
     label: str
     domain: str
     depth: float
-    size: float                              # relative implementation mass -> node radius
+    size: float                              # relative implementation mass (1.0 == median module); measured from LOC by archmap_ingest; weights whatif merges + fires bulky-impl (node radius is depth, not size)
     seam: str
     iface: str = ""
     coverage: float = 0.0

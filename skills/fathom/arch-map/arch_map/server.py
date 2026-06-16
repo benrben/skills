@@ -819,8 +819,10 @@ def ingest(map: str, root: str = "", coverage_report: str = "",
     `window_days`' commits touching those files (git history — measured, not
     estimated). coverage: only when `coverage_report` names a coverage.py
     XML/JSON or lcov file — line-weighted per module via its files; module
-    halos are NOT flipped (fathom:map owns them). LOC per module is returned
-    but never written. Unless anchor=False, records a reconcile anchor
+    halos are NOT flipped (fathom:map owns them). size: per module, measured
+    LOC normalized to relative implementation mass (1.0 == the median measured
+    module) — what the bulky-impl signal and whatif merge-weighting read. Unless
+    anchor=False, records a reconcile anchor
     (HEAD sha + per-module snapshot) — the baseline archmap_drift and
     archmap_history read. `root` defaults to the server's cwd."""
     call = f"archmap_ingest(map='{map}')"
@@ -836,16 +838,32 @@ def _ingest_impl(map, root, coverage_report, window_days, anchor) -> dict:
     head = g.head_sha()                       # NotARepo/UnknownSha -> guarded
     report = read_report(coverage_report) if coverage_report else None
     out = {"ok": True, "map": map, "sha": head, "churned": 0, "covered": 0,
-           "loc": {}, "anchor": None}
+           "sized": 0, "loc": {}, "anchor": None}
 
     def mutate(m):
         cov = module_coverage(m, report) if report else {}
+        locs: dict[str, int] = {}
         for mid, mod in m.modules.items():
             if mod.plane != "actual" or not mod.files:
                 continue
             mod.churn = max(0.0, min(1.0, g.churn(mod.files, window_days)))
             out["churned"] += 1
-            out["loc"][mid] = g.loc(mod.files)
+            locs[mid] = g.loc(mod.files)
+            out["loc"][mid] = locs[mid]
+        # Relative implementation mass from measured LOC: 1.0 == the median
+        # measured module, so `size` stops being an eyeballed estimate and the
+        # bulky-impl signal / node radius / whatif weighting rest on a real fact.
+        # Median (not mean) keeps one outlier from shrinking everyone else.
+        measured = sorted(n for n in locs.values() if n > 0)
+        if measured:
+            k = len(measured)
+            median = (measured[k // 2] if k % 2
+                      else (measured[k // 2 - 1] + measured[k // 2]) / 2)
+            median = median or 1
+            for mid, n in locs.items():
+                if n > 0:
+                    m.modules[mid].size = round(n / median, 3)
+                    out["sized"] += 1
         for mid, frac in cov.items():
             if mid in m.modules:
                 m.modules[mid].coverage = max(0.0, min(1.0, frac))

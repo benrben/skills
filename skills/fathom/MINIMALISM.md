@@ -48,4 +48,4 @@ When two implementations both satisfy the interface **and** pass its tests, choo
 
 ## The signal
 
-The spine can measure this one (unlike raw YAGNI, which leaves no trace): **`bulky-impl`** fires when a module carries large implementation mass for little leverage — `size` well above baseline while `depth` stays low. It reads "a lot of hand-written code earning little depth": climb the ladder behind the seam, or deepen it. Surfaced by `archmap_scan_signals`.
+The spine can measure this one (unlike raw YAGNI, which leaves no trace): **`bulky-impl`** fires when a module carries large implementation mass for little leverage — `size` ≥ 2× the median module while `depth` stays low. And `size` is a *measured* fact: `archmap_ingest` counts each module's LOC from its files and normalizes it (1.0 == the median measured module), the same pipeline that measures `churn` and `coverage`. So the signal reads "a lot of *real* hand-written code earning little depth": climb the ladder behind the seam, or deepen it. Surfaced by `archmap_scan_signals`.

@@ -82,7 +82,7 @@ Dispatch **Explore subagents** (Agent tool, `subagent_type=Explore`) to walk the
 
 - **depth** (0 = shallow … 1 = deep) — apply the **deletion test**: would deleting this module concentrate complexity behind a small interface (deep, → 1.0) or just shuffle a pass-through around (shallow, → 0.0)?
 - **coverage** (0..1) — how much of the **interface** is exercised by tests (the test surface), not raw line coverage.
-- **size** — relative implementation mass.
+- **size** — relative implementation mass. Set a rough estimate; `archmap_ingest` overwrites it with measured LOC (normalized so 1.0 == the median module), the same way it measures churn.
 - **dependsOn** — real edges only, resolved by module id.
 - **leaksTo** — a judgement call about seam violations (rendered as a red edge).
 - **iface / seam / files / tests** — prose plus the file list. Use [../fathom/DEEPENING.md](../fathom/DEEPENING.md)'s dependency-category vocabulary only to **describe an edge accurately** (in-process, local-substitutable, ports & adapters, true external) — never to propose a fix.
@@ -132,7 +132,7 @@ A reconcile is an explicit re-walk of the parts of the repo that may have change
 - **For files that belong to no module**, decide: do they extend an existing module (add to that module's `files`), or are they a newly-discovered module (`archmap_modules` action="add")?
 - **For modules whose files no longer exist**, `archmap_modules("my-repo", action="delete", ids=[...])` — this prunes dangling edges. If a file merely **moved**, prefer updating `files` over deleting, so hand-curated iface/seam prose isn't lost.
 - **Clear the halos.** Once a module's model matches reality again, `archmap_modules(map, action="update", id=module, updated=False)` so it stops showing the "changed since last scan" halo. To clear a whole reconcile scope in one write, broadcast the patch: `archmap_modules(map, action="update", ids=[...], updated=False)` (`ids=["*"]` hits every module).
-- **Measure, don't estimate, and anchor the reconcile.** Finish every reconcile with `archmap_ingest(map, root=<repo>, coverage_report=<path if available>)`: it computes churn per module from git history (the share of the window's commits touching its files), optionally sets coverage from a real coverage.py/lcov report, and records the reconcile **anchor** (HEAD sha + per-module health snapshot) — the baseline the digest's staleness line, `archmap_drift`, and `archmap_history` all read. Churn feeds the `danger-zone` signal; the anchor is what makes the next reconcile's scope computable instead of guessed.
+- **Measure, don't estimate, and anchor the reconcile.** Finish every reconcile with `archmap_ingest(map, root=<repo>, coverage_report=<path if available>)`: it computes churn per module from git history (the share of the window's commits touching its files), measures size from each module's LOC (normalized so 1.0 == the median module — what `bulky-impl` reads), optionally sets coverage from a real coverage.py/lcov report, and records the reconcile **anchor** (HEAD sha + per-module health snapshot) — the baseline the digest's staleness line, `archmap_drift`, and `archmap_history` all read. Churn feeds the `danger-zone` signal, size feeds `bulky-impl`; the anchor is what makes the next reconcile's scope computable instead of guessed.
 
 ```
 archmap_modules("my-repo", action="get", ids=["order-intake", "pricing"])

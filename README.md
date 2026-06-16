@@ -26,7 +26,7 @@ The suite ships a [FastMCP](https://github.com/jlowin/fastmcp) server at [`arch-
 
 ## Keep the map true: measured facts, drift, and the weekly pulse
 
-The spine measures its own facts instead of trusting estimates. `archmap_ingest(map, root=…)` computes **churn** from git history and **coverage** from a real test report (coverage.py XML/JSON or lcov), and records a reconcile **anchor** (git sha + per-module health snapshot). From there:
+The spine measures its own facts instead of trusting estimates. `archmap_ingest(map, root=…)` computes **churn** from git history, **coverage** from a real test report (coverage.py XML/JSON or lcov), and **size** (implementation mass) from each module's measured LOC — normalized so 1.0 is the median module, which is what the `bulky-impl` signal reads — and records a reconcile **anchor** (git sha + per-module health snapshot). From there:
 
 - `archmap_drift(map)` — what changed since the last anchor; the map digest (`archmap_show_map`) opens with the same staleness line ("3 files changed, 2 modules touched since `a1b2c3d`").
 - `archmap_history(map)` — health/depth/coverage trends across anchors, per module or per domain.
