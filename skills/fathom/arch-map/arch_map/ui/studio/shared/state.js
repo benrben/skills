@@ -178,6 +178,7 @@
         domain: m.domain,
         depth: Math.round((m.depth || 0) * 100),
         coverage: Math.round((m.coverage || 0) * 100),
+        size: m.size || 1,                 // relative impl mass (ratio, NOT 0..100) — feeds bulky-impl
         updated: !!m.updated,
         plane: m.plane || "actual",
         lifecycle: m.lifecycle || "built",

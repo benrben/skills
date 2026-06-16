@@ -243,6 +243,16 @@ window.Studio = window.Studio || {};
       how: "Group the dependencies by domain. Each group is probably a separate responsibility that deserves its own module.",
     },
     {
+      id: "bulky-impl",
+      sev: "warn",
+      label: "Bulky implementation",
+      icon: "▦",
+      check: (m) => (m.size || 1) >= 2 && m.depth < 50,
+      why: "A lot of hand-written code for little leverage — large implementation mass behind a shallow interface.",
+      how: "Climb the ladder behind the seam: delegate to stdlib or a dependency you already have, or deepen it. See MINIMALISM.md.",
+      dynamic: (m) => `Roughly ${(m.size || 1).toFixed(1)}× the median module's code, but shallow — large mass for little leverage.`,
+    },
+    {
       id: "leaky-seam",
       sev: "warn",
       label: "Leaky seam",

@@ -12,7 +12,7 @@ Interface (the test surface):
   commits_since(since_sha)        -> int   commit count since_sha..HEAD
   churn(paths, window_days=90)    -> float 0..1 — share of the window's commits
                                            that touch any of `paths`
-  loc(paths)                      -> int   total lines across the existing text files
+  loc(paths)                      -> int   total non-blank lines across the text files
 
 Error modes: NotARepo when root isn't a git work tree (or git is missing);
 UnknownSha when a revision can't be resolved (bad sha, empty repo's HEAD).
@@ -73,9 +73,11 @@ class GitFacts:
         return min(1.0, touching / total)
 
     def loc(self, paths: list[str]) -> int:
-        """Total line count across the given paths' existing text files; directory
-        entries are counted recursively. Missing paths and binary files are
-        skipped, never raised on."""
+        """Total NON-BLANK line count across the given paths' existing text files;
+        directory entries are counted recursively. Whitespace-only lines are skipped
+        (they aren't implementation mass); comments are kept (stripping them is
+        language-specific and not worth the fragility). Missing paths and binary
+        files are skipped, never raised on."""
         n = 0
         for rel in paths:
             p = self.root / rel
@@ -84,7 +86,8 @@ class GitFacts:
                        if p.is_dir() else [])
             for t in targets:
                 try:
-                    n += len(t.read_text(encoding="utf-8").splitlines())
+                    n += sum(1 for ln in t.read_text(encoding="utf-8").splitlines()
+                             if ln.strip())
                 except (UnicodeDecodeError, OSError):
                     continue
         return n

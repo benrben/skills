@@ -81,6 +81,12 @@ def test_loc_counts_existing_text_files_and_skips_missing(repo):
     assert g.loc(["lib"]) == 3                       # directories count recursively
 
 
+def test_loc_skips_blank_lines(repo):
+    # whitespace-only lines aren't implementation mass; comments are kept
+    (repo / "padded.py").write_text("x = 1\n\n   \n# note\ny = 2\n")
+    assert GitFacts(repo).loc(["padded.py"]) == 3    # x=1, # note, y=2 — blanks skipped
+
+
 def test_not_a_repo_raises_typed_error(tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
