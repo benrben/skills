@@ -182,6 +182,25 @@ def test_pages_serve_studio_and_view(client):
     assert client.get("/map").status_code == 200      # back-compat alias -> studio
     assert client.get("/view").status_code == 200
 
+
+# ---- /api/dispatch guards (CSRF + enable gate) — neither path spawns an agent ----
+
+def test_api_dispatch_cross_origin_refused(reg, client):
+    # a foreign web page must NOT be able to drive the loopback agent button
+    r = client.post("/api/dispatch", json={"map": "m1", "kind": "rescan", "module": "a"},
+                    headers={"origin": "http://evil.example"})
+    assert r.status_code == 403
+    assert "cross-origin" in r.json()["error"]
+
+def test_api_dispatch_disabled_falls_back(reg, client, monkeypatch):
+    # ARCH_MAP_ALLOW_DISPATCH=0 turns the default-on bridge off -> 503 + copy-paste prompt
+    monkeypatch.setenv("ARCH_MAP_ALLOW_DISPATCH", "0")
+    reg.create("m1", "M1")
+    r = client.post("/api/dispatch", json={"map": "m1", "kind": "rescan", "module": "a"})
+    assert r.status_code == 503
+    body = r.json()
+    assert body["fallback"] is True and body["reason"] == "dispatch-disabled" and "Re-scan" in body["prompt"]
+
 def test_assets_served_with_content_type_and_traversal_refused(client):
     ok = client.get("/assets/shared/ui.css")
     assert ok.status_code == 200

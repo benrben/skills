@@ -1618,11 +1618,16 @@ async def api_grill(request):
 
 
 # --- /api/dispatch: run a studio agent-button action via headless `claude -p` ---
-# OFF by default — set ARCH_MAP_ALLOW_DISPATCH=1 to enable. Loopback only. When
-# disabled / no `claude` on PATH it returns 503 {fallback:true,...} so the browser
-# keeps its existing copy-paste path (no regression). The spawned agent reaches the
-# SAME arch-map MCP over http://127.0.0.1:<PORT>/mcp, so its writes land in the store
-# the studio already polls; source edits land in the working tree for human review.
+# ON by default (ARCH_MAP_ALLOW_DISPATCH defaults to "1") — set ARCH_MAP_ALLOW_DISPATCH=0
+# to turn it off. Two guards make a
+# default-on agent button safe enough for a loopback dev server: (1) a same-origin
+# check so only the studio's own page can trigger a run (no cross-site/CSRF POST can
+# drive the agent), and (2) the server's 127.0.0.1 bind. The spawned agent runs
+# `claude -p` with acceptEdits (NOT bypass) + deny rules (no rm / git push / network).
+# When disabled / no `claude` on PATH it returns 503 {fallback:true,...} so the
+# browser falls back to copy-paste. The agent reaches the SAME arch-map MCP over
+# http://127.0.0.1:<PORT>/mcp, so its writes land in the store the studio polls;
+# source edits land in the working tree for human review (nothing is committed).
 _DISPATCH_RUNNING: set = set()        # (map, kind, module) -> single-writer guard
 _DISPATCH_TOOLS = {                    # per-kind tool allowlist; only fix/realize edit
     "fix":     "Read,Edit,Bash(git *),mcp__arch-map__*",
@@ -1680,12 +1685,30 @@ def _dispatch_line(line: str) -> str:
     return ""
 
 
+def _dispatch_same_origin(request) -> bool:
+    """CSRF guard: only the studio's own page may trigger a dispatch. Reject explicit
+    cross-site fetches (Sec-Fetch-Site) and Origin/Host mismatches. Header-less callers
+    (curl, tests, same-origin XHR) are allowed — the point is to block a foreign web
+    page from POSTing to the loopback agent button."""
+    site = request.headers.get("sec-fetch-site")
+    if site and site not in ("same-origin", "same-site", "none"):
+        return False
+    origin = request.headers.get("origin")
+    if origin:
+        from urllib.parse import urlparse
+        if urlparse(origin).netloc != request.headers.get("host", ""):
+            return False
+    return True
+
+
 @mcp.custom_route("/api/dispatch", ["POST"])
 async def api_dispatch(request):
     """Run a studio agent-button action by spawning headless `claude -p` in the repo
     with the arch-map MCP attached, streaming progress back as SSE. OFF unless
     ARCH_MAP_ALLOW_DISPATCH is set; degrades to 503 {fallback} so the browser keeps
     its copy-paste path."""
+    if not _dispatch_same_origin(request):
+        return JSONResponse({"error": "cross-origin dispatch refused"}, status_code=403)
     body = await request.json()
     map_id = body.get("map") or REGISTRY.default_id()
     kind = body.get("kind", "")
@@ -1698,7 +1721,8 @@ async def api_dispatch(request):
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
-    if not os.environ.get("ARCH_MAP_ALLOW_DISPATCH"):
+    # ON by default; ARCH_MAP_ALLOW_DISPATCH=0 (or false/no/off) turns it off.
+    if os.environ.get("ARCH_MAP_ALLOW_DISPATCH", "1").strip().lower() in ("0", "false", "no", "off"):
         return JSONResponse({"fallback": True, "reason": "dispatch-disabled", "prompt": prompt}, status_code=503)
     claude = shutil.which("claude")
     if not claude:
