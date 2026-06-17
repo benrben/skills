@@ -12,7 +12,7 @@ Interface (the test surface):
   commits_since(since_sha)        -> int   commit count since_sha..HEAD
   churn(paths, window_days=90)    -> float 0..1 — share of the window's commits
                                            that touch any of `paths`
-  loc(paths)                      -> int   total non-blank lines across the text files
+  loc(paths)                      -> int   total non-blank lines (comments kept) across the text files
 
 Error modes: NotARepo when root isn't a git work tree (or git is missing);
 UnknownSha when a revision can't be resolved (bad sha, empty repo's HEAD).

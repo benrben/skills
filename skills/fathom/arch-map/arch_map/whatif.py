@@ -16,6 +16,10 @@ Interface (the test surface):
       "externalEdges": {"in": [ids depending on the merge],
                         "out": [ids the merge depends on]}}
   ValueError on fewer than 2 distinct ids or any unknown id.
+
+  Note: the merged depth/coverage are size-weighted; if a member is an intended
+  (not-yet-built) module its size is an estimate, so the weights mix measured and
+  estimated mass.
 """
 from __future__ import annotations
 

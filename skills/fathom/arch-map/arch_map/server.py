@@ -819,9 +819,10 @@ def ingest(map: str, root: str = "", coverage_report: str = "",
     `window_days`' commits touching those files (git history — measured, not
     estimated). coverage: only when `coverage_report` names a coverage.py
     XML/JSON or lcov file — line-weighted per module via its files; module
-    halos are NOT flipped (fathom:map owns them). size: per module, measured
-    LOC normalized to relative implementation mass (1.0 == the median measured
-    module) — what the bulky-impl signal and whatif merge-weighting read. Unless
+    halos are NOT flipped (fathom:map owns them). size: per actual-plane module
+    with files, measured LOC normalized to relative implementation mass (1.0 ==
+    the median measured module) — what the bulky-impl signal and whatif
+    merge-weighting read; intended/file-less modules keep their estimate. Unless
     anchor=False, records a reconcile anchor
     (HEAD sha + per-module snapshot) — the baseline archmap_drift and
     archmap_history read. `root` defaults to the server's cwd."""
@@ -852,7 +853,7 @@ def _ingest_impl(map, root, coverage_report, window_days, anchor) -> dict:
             out["loc"][mid] = locs[mid]
         # Relative implementation mass from measured LOC: 1.0 == the median
         # measured module, so `size` stops being an eyeballed estimate and the
-        # bulky-impl signal / node radius / whatif weighting rest on a real fact.
+        # bulky-impl signal / whatif weighting rest on a real fact.
         # Median (not mean) keeps one outlier from shrinking everyone else.
         measured = sorted(n for n in locs.values() if n > 0)
         if measured:
@@ -987,7 +988,9 @@ def modules(
                         depth/size/seam/iface/coverage/churn/files/dependsOn/leaksTo/
                         intendsToDependOn/supersedes/tests/tags). Bulk: items=[{...}, ...].
       action="update":  patch module `id` with any field above (depth/coverage/churn
-                        0..1, clamped; omitted fields unchanged). Edge edits without
+                        0..1, clamped; size is a LOC-ratio where 1.0 == the median
+                        module, normally set by archmap_ingest, not clamped; omitted
+                        fields unchanged). Edge edits without
                         resending the whole list: dependsOnAdd/dependsOnRemove and
                         leaksToAdd/leaksToRemove merge server-side. Broadcast: pass
                         ids=[...] (or ids=["*"] for every module) to apply ONE shared

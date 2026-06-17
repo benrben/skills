@@ -9,7 +9,7 @@ Two good instincts pull opposite ways. *Minimalism* (YAGNI, "the best code is th
 The spine already separates the two instincts into two fields on every `Module`:
 
 - **`depth`** — leverage at the interface (the seam). Keep it **high**.
-- **`size`** — implementation mass behind the seam (measured from LOC by `archmap_ingest`; 1.0 == the median module). Drive it **down**.
+- **`size`** — implementation mass behind the seam (measured from LOC by `archmap_ingest` for actual-plane modules with files; 1.0 == the median module). Drive it **down**.
 
 They are different fields. "Write less code" means **lower `size`**; "keep the seam" means **hold `depth`**. They only conflict when you cut `size` by touching the interface — so don't.
 
@@ -75,4 +75,4 @@ When two implementations both satisfy the interface **and** pass its tests, choo
 
 ## The signal
 
-The spine can measure this one (unlike raw YAGNI, which leaves no trace): **`bulky-impl`** fires when a module carries large implementation mass for little leverage — `size` ≥ 2× the median module while `depth` stays low. `size` is a **measured** fact: `archmap_ingest` counts each module's non-blank LOC from its files and normalizes it (median == 1.0), the same pipeline that measures `churn` and `coverage`. LOC is a deliberately boring proxy — empirically it tracks implementation complexity at least as well as cyclomatic complexity, which only sees control flow — so the signal reads "a lot of *real* hand-written code earning little depth": climb the ladder behind the seam, or deepen it. Surfaced by `archmap_scan_signals`.
+The spine can measure this one (unlike raw YAGNI, which leaves no trace): **`bulky-impl`** fires when a module carries large implementation mass for little leverage — `size` ≥ 2× the median module while `depth` stays low (< 0.5). `size` is a **measured** fact: `archmap_ingest` counts each actual-plane module's non-blank LOC from its files and normalizes it (median == 1.0; intended modules keep their estimate), the same pipeline that measures `churn` and `coverage`. LOC is a deliberately boring proxy — empirically it tracks implementation complexity at least as well as cyclomatic complexity, which only sees control flow — so the signal reads "a lot of *real* hand-written code earning little depth": climb the ladder behind the seam, or deepen it. Surfaced by `archmap_scan_signals`.

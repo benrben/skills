@@ -67,6 +67,11 @@ def test_bulky_impl_quiet_at_baseline_size():
     assert "bulky-impl" not in srv._compute_signals(mod(size=1.0, depth=0.2), mx())
     assert "bulky-impl" not in srv._compute_signals(mod(size=3.0, depth=0.8), mx())
 
+def test_bulky_impl_at_exact_boundary():
+    # size >= 2.0 is inclusive; depth < 0.5 is the exclusive cutoff
+    assert "bulky-impl" in srv._compute_signals(mod(size=2.0, depth=0.49), mx())
+    assert "bulky-impl" not in srv._compute_signals(mod(size=2.0, depth=0.5), mx())
+
 
 # ---- scan_signals -----------------------------------------------------------
 

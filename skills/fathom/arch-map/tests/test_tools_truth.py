@@ -85,6 +85,26 @@ def test_ingest_scales_size_from_loc_and_fires_bulky_impl(reg, tmp_path):
     assert "s1" not in flagged_ids and "s2" not in flagged_ids
 
 
+def test_ingest_leaves_intended_and_fileless_modules_unsized(reg, tmp_path):
+    # ingest measures only actual-plane modules with files; an intended module
+    # (no files) keeps the size it was given and never enters out["sized"].
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    _git(root, "init", "-q", "-b", "main")
+    (root / "src" / "real.py").write_text("\n".join(f"x{i} = {i}" for i in range(10)) + "\n")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "c1")
+    srv.create_project(name="P", map_id="p")
+    srv.modules(action="add", map="p", items=[
+        {"id": "real", "label": "Real", "domain": "d", "files": ["src/real.py"], "depth": 0.2},
+        {"id": "planned", "label": "Planned", "domain": "d", "plane": "intended", "size": 1.5, "depth": 0.2},
+    ])
+    out = srv.ingest(map="p", root=str(root))
+    assert out["sized"] == 1                               # only the actual module with files
+    assert srv.modules(action="get", map="p", id="real")["size"] == 1.0     # self-normalized
+    assert srv.modules(action="get", map="p", id="planned")["size"] == 1.5  # estimate untouched
+
+
 def test_ingest_patches_coverage_from_report(truthmap, tmp_path):
     (tmp_path / "cov.info").write_text(
         "SF:src/a.py\nLF:10\nLH:9\nend_of_record\n")
