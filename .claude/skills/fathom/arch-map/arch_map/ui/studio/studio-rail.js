@@ -848,6 +848,28 @@ window.Studio = window.Studio || {};
     try { console.info("[arch-map dispatch]\n" + prompt + (resume ? "\n" + resume : "")); } catch (e) {}
   };
 
+  // Live progress from a browser /api/dispatch run (headless `claude -p` streamed
+  // over SSE). Routes each phase to the Agent-tab activity feed so the agent's work
+  // shows in the UI as it happens; the model re-syncs when the run ends.
+  S.dispatchProgress = function (ev) {
+    if (!ev) return;
+    const mod = ev.req && ev.req.module;
+    if (ev.phase === "start") {
+      setTab("agent");                                 // surface the feed so the work is visible
+      S.toast("Agent working" + (mod ? " on " + mod : "") + "…", "var(--accent)");
+      S.pushActivity({ text: "agent: started " + (ev.req ? ev.req.kind : "") + (mod ? " " + mod : ""), module: mod });
+    } else if (ev.phase === "progress" && ev.data && ev.data.text) {
+      S.pushActivity({ text: "agent: " + ev.data.text, module: mod });
+    } else if (ev.phase === "done") {
+      const ok = ev.data && ev.data.ok;
+      S.pushActivity({ text: ok ? "agent: finished — re-syncing" : "agent: exited (code " + (ev.data ? ev.data.code : "?") + ")", module: mod });
+      S.toast(ok ? "Agent finished — re-syncing map" : "Agent run ended with errors", ok ? "var(--strong)" : "var(--bad, #c55)");
+    } else if (ev.phase === "error" && ev.data) {
+      S.pushActivity({ text: "agent: error — " + (ev.data.error || "failed"), module: mod });
+      S.toast("Agent error: " + (ev.data.error || "failed"), "var(--bad, #c55)");
+    }
+  };
+
   /* ============ #10 agent narration: activity feed ============ */
   // canonical verb map (1.5) — phrases a single diff entry into a human line.
   function activityVerb(d) {

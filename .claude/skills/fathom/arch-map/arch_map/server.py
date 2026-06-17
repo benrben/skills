@@ -36,13 +36,15 @@ from pathlib import Path
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Literal
+import asyncio
 import fcntl
 import json
 import os
 import re
+import shutil
 
 from fastmcp import FastMCP
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 try:  # Lane 1 — the custom MCP-App network-graph link — needs fastmcp.apps.AppConfig.
     from fastmcp.apps import AppConfig, ResourceCSP
@@ -1613,6 +1615,150 @@ async def api_grill(request):
     return JSONResponse({"ok": True, "prompt": prompt,
                          "resume": f"/deepen resume {map_id}",
                          "model": store.to_dict()})
+
+
+# --- /api/dispatch: run a studio agent-button action via headless `claude -p` ---
+# OFF by default — set ARCH_MAP_ALLOW_DISPATCH=1 to enable. Loopback only. When
+# disabled / no `claude` on PATH it returns 503 {fallback:true,...} so the browser
+# keeps its existing copy-paste path (no regression). The spawned agent reaches the
+# SAME arch-map MCP over http://127.0.0.1:<PORT>/mcp, so its writes land in the store
+# the studio already polls; source edits land in the working tree for human review.
+_DISPATCH_RUNNING: set = set()        # (map, kind, module) -> single-writer guard
+_DISPATCH_TOOLS = {                    # per-kind tool allowlist; only fix/realize edit
+    "fix":     "Read,Edit,Bash(git *),mcp__arch-map__*",
+    "realize": "Read,Edit,Bash(git *),mcp__arch-map__*",
+    "grill":   "Read,mcp__arch-map__*",
+    "rescan":  "Read,mcp__arch-map__*",
+    "triage":  "Read,mcp__arch-map__*",
+}
+
+
+def _dispatch_prompt(store: Store, map_id: str, kind: str, module: str = "",
+                     modules: list | None = None, suggestion_id: str = "") -> str:
+    """The per-kind agent instruction — mirrors the studio's client-side dispatchPrompt
+    so host and browser send identical wording."""
+    m = store.modules.get(module) if module else None
+    if kind == "fix":
+        s = _first_open(m) if m else None
+        lines = [f"Fix module '{module}'" + (f" ({m.label}, domain '{m.domain}')" if m else "") + "."]
+        if s and getattr(s, "problem", ""):
+            lines.append("Why: " + s.problem)
+        if s and getattr(s, "solution", ""):
+            lines.append("How: " + s.solution)
+        return "\n".join(lines)
+    if kind == "rescan":
+        return f"Re-scan module '{module}' for fresh signals."
+    if kind == "realize":
+        return f"Realize planned module '{module}' — build it to its intended interface."
+    if kind == "triage":
+        ids = ", ".join(modules or [])
+        return "Triage the top critical modules: " + (ids or "(none)") + "."
+    if kind == "grill":
+        return _grill_prompt(store, map_id, module)
+    return f"Agent request ({kind})" + (f" for module '{module}'" if module else "") + "."
+
+
+def _dispatch_line(line: str) -> str:
+    """Condense one stream-json event into a short human progress line (or '')."""
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return ""
+    t = ev.get("type")
+    if t == "system" and ev.get("subtype") == "init":
+        return "agent started"
+    if t == "assistant":
+        for b in (ev.get("message", {}).get("content") or []):
+            if b.get("type") == "tool_use":
+                inp = b.get("input") or {}
+                target = inp.get("file_path") or inp.get("command") or inp.get("id") or inp.get("pattern") or ""
+                return (f"{b.get('name', 'tool')} {target}").strip()
+            if b.get("type") == "text" and (b.get("text") or "").strip():
+                return b["text"].strip()[:140]
+    if t == "result":
+        return "finished"
+    return ""
+
+
+@mcp.custom_route("/api/dispatch", ["POST"])
+async def api_dispatch(request):
+    """Run a studio agent-button action by spawning headless `claude -p` in the repo
+    with the arch-map MCP attached, streaming progress back as SSE. OFF unless
+    ARCH_MAP_ALLOW_DISPATCH is set; degrades to 503 {fallback} so the browser keeps
+    its copy-paste path."""
+    body = await request.json()
+    map_id = body.get("map") or REGISTRY.default_id()
+    kind = body.get("kind", "")
+    module = body.get("module", "")
+    modules = body.get("modules") or []
+    sid = body.get("suggestion_id", "")
+    try:
+        store = REGISTRY.resolve(body.get("map"))
+        prompt = _dispatch_prompt(store, map_id, kind, module, modules, sid)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    if not os.environ.get("ARCH_MAP_ALLOW_DISPATCH"):
+        return JSONResponse({"fallback": True, "reason": "dispatch-disabled", "prompt": prompt}, status_code=503)
+    claude = shutil.which("claude")
+    if not claude:
+        return JSONResponse({"fallback": True, "reason": "no-agent-binary", "prompt": prompt}, status_code=503)
+
+    # best-effort instant feedback, mirroring the MCP-App host pre-calls
+    try:
+        if kind == "rescan" and module:
+            store.update_module(module, updated=False)
+        elif kind == "grill" and module:
+            s = _first_open(store.modules[module])
+            if s:
+                store.request_grilling(s.id)
+    except (KeyError, ValueError):
+        pass
+
+    key = (map_id, kind, module)
+    if key in _DISPATCH_RUNNING:
+        return JSONResponse({"error": "already-running", "kind": kind, "module": module}, status_code=409)
+
+    port = os.environ.get("ARCH_MAP_PORT", "8800")
+    mcp_cfg = json.dumps({"mcpServers": {"arch-map": {"type": "http", "url": f"http://127.0.0.1:{port}/mcp"}}})
+    argv = [
+        claude, "-p", prompt,
+        "--add-dir", os.getcwd(),
+        "--permission-mode", "acceptEdits",
+        "--allowedTools", _DISPATCH_TOOLS.get(kind, "Read,mcp__arch-map__*"),
+        "--disallowedTools", "Bash(rm *),Bash(git push *),WebFetch,WebSearch",
+        "--mcp-config", mcp_cfg,
+        "--output-format", "stream-json", "--verbose",
+        "--append-system-prompt",
+        ("You are running headless from an arch-map studio button. Make the smallest "
+         "change that satisfies the request, then reconcile the modules you touched on "
+         "the arch-map spine via the arch-map MCP tools. Do not commit, push, or touch "
+         "files outside the repo."),
+    ]
+
+    async def stream():
+        def sse(event, data):
+            return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+        _DISPATCH_RUNNING.add(key)
+        yield sse("start", {"kind": kind, "module": module, "prompt": prompt})
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, cwd=os.getcwd(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT)
+            async for raw in proc.stdout:
+                msg = _dispatch_line(raw.decode("utf-8", "replace").strip())
+                if msg:
+                    yield sse("progress", {"text": msg})
+            await proc.wait()
+            yield sse("done", {"ok": proc.returncode == 0, "code": proc.returncode})
+        except Exception as e:                      # noqa: BLE001 — surface, never crash the server
+            yield sse("error", {"error": str(e)})
+        finally:
+            _DISPATCH_RUNNING.discard(key)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 # The graph UI (network.html) calls tools by their MCP name; dispatch them here

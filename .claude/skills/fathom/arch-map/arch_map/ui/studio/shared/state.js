@@ -559,16 +559,55 @@
     return { triggered: !(sent && sent.isError), prompt: body };
   }
 
+  // Stream an /api/dispatch SSE run, forwarding each frame to Studio.dispatchProgress
+  // (the rail renders it as a live activity feed). On stream end, re-sync the model.
+  async function consumeDispatchStream(res, req) {
+    const progress = (window.Studio && window.Studio.dispatchProgress) || null;
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+          const ev = frame.match(/^event: (.*)$/m);
+          const da = frame.match(/^data: (.*)$/m);
+          if (!da) continue;
+          let data; try { data = JSON.parse(da[1]); } catch (e) { continue; }
+          if (progress) progress({ phase: ev ? ev[1] : "progress", data, req });
+        }
+      }
+    } finally {
+      if (progress) progress({ phase: "end", req });
+      if (req.module && window.Studio && window.Studio.onModelMutated) window.Studio.onModelMutated(req.module);
+      refetch(true);                                   // pull the agent's map/source changes now
+    }
+  }
+
   async function browserDispatch(map, req) {
     if (req.kind === "grill") {
       const d = await browserGrill(map, req.module);   // proven /api/grill path
       showGrillFallback(d.prompt, d.resume);
       return d;
     }
-    // No generic /api/dispatch backend (assumption 1): surface the prompt to paste.
+    // Try the live agent bridge (/api/dispatch streams SSE). If it's disabled (503),
+    // unreachable, or errors, fall back to surfacing the prompt for copy-paste.
     const prompt = dispatchPrompt(req);
-    showGrillFallback(prompt, null);
-    return { prompt };
+    let res;
+    try {
+      res = await fetch(apiUrl("api/dispatch"), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ map, kind: req.kind, module: req.module,
+                               modules: req.modules, suggestion_id: req.suggestion_id }),
+      });
+    } catch (e) { showGrillFallback(prompt, null); return { prompt }; }
+    if (!res.ok || !res.body) { showGrillFallback(prompt, null); return { prompt }; }
+    await consumeDispatchStream(res, req);
+    return { prompt, streamed: true };
   }
 
   // POST an action; reconcile the cache from the authoritative response.
