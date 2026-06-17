@@ -58,7 +58,7 @@ archmap_show_map(map)                 # digest: module/domain counts, orphans, o
 archmap_show_map(map, domain="<d>")   # full view records (edges, metrics) for one domain slice
 ```
 
-Inside a UI-capable MCP host this renders the network graph inline (node size = size, ring = coverage, halo = updated, ⚠ ring = open candidate, red edge = leak, orphan tray = **not connected**) and your narration rides alongside it. In a terminal you get the same data as structured text and you narrate from it. Either way, start with the shape of the whole before zooming in:
+Inside a UI-capable MCP host this renders the network graph inline (fill = depth, ring = coverage, halo = updated, ⚠ ring = open candidate, red edge = leak, orphan tray = **not connected**) and your narration rides alongside it. In a terminal you get the same data as structured text and you narrate from it. Either way, start with the shape of the whole before zooming in:
 
 - How many modules, grouped into which **domains**? Read the domains aloud — they are the chapters of the tour.
 - Which plane are you touring? Stay on `plane="actual"`, `lifecycle="built"` unless the user asks where the design is going.

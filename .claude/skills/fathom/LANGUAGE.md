@@ -18,6 +18,10 @@ What's inside a module — its body of code. Distinct from **Adapter**: a thing 
 **Depth**
 Leverage at the interface — the amount of behaviour a caller (or test) can exercise per unit of interface they have to learn. A module is **deep** when a large amount of behaviour sits behind a small interface. A module is **shallow** when the interface is nearly as complex as the implementation.
 
+**Size**
+Implementation mass behind the seam — measured from non-blank LOC by `archmap_ingest` and normalized so 1.0 == the median module. Distinct from **Depth**: depth is a property of the interface, size of the implementation. The minimalism move is to drive **size** down while holding **depth** (see [MINIMALISM.md](MINIMALISM.md)); the `bulky-impl` signal fires when size ≥ 2× the median while depth stays low.
+_Avoid_: conflating with depth — a deep module is allowed to be large.
+
 **Seam** _(from Michael Feathers)_
 A place where you can alter behaviour without editing in that place. The *location* at which a module's interface lives. Choosing where to put the seam is its own design decision, distinct from what goes behind it.
 _Avoid_: boundary (overloaded with DDD's bounded context).
@@ -41,7 +45,7 @@ What maintainers get from depth. Change, bugs, knowledge, and verification conce
 ## Relationships
 
 - A **Module** has exactly one **Interface** (the surface it presents to callers and tests).
-- **Depth** is a property of a **Module**, measured against its **Interface**.
+- **Depth** is a property of a **Module**, measured against its **Interface**. **Size** is a property of the same **Module**, measured against its **Implementation** — the two move independently.
 - A **Seam** is where a **Module**'s **Interface** lives.
 - An **Adapter** sits at a **Seam** and satisfies the **Interface**.
 - **Depth** produces **Leverage** for callers and **Locality** for maintainers.

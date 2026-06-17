@@ -180,12 +180,40 @@ def test_set_coverage_clamps_and_marks_updated():
     assert m.modules["a"].coverage == 0.0
     assert m.modules["a"].updated is True
 
+def test_set_plane_sets_and_marks_updated():
+    m = model(mod("a"))
+    m.modules["a"].updated = False
+    m.set_plane("a", "intended")
+    assert m.modules["a"].plane == "intended"
+    assert m.modules["a"].updated is True
+
+def test_set_lifecycle_sets_and_marks_updated():
+    m = model(mod("a"))
+    m.modules["a"].updated = False
+    m.set_lifecycle("a", "building")
+    assert m.modules["a"].lifecycle == "building"
+    assert m.modules["a"].updated is True
+
+def test_superseded_by_lists_intended_replacements():
+    m = model(mod("a"), mod("b", supersedes=["a"]))
+    assert m.get_module("a")["supersededBy"] == ["b"]
+    assert m.get_module("b")["supersededBy"] == []
+
 def test_mark_updated_toggles():
     m = model(mod("a"))
     m.mark_updated("a", False)
     assert m.modules["a"].updated is False
     m.mark_updated("a", True)
     assert m.modules["a"].updated is True
+
+def test_realize_module_without_optionals_keeps_scores():
+    m = model(mod("a", depth=0.3, coverage=0.2))
+    m.modules["a"].plane = "intended"
+    m.modules["a"].lifecycle = "planned"
+    m.realize_module("a")                     # no depth/coverage/files given
+    rec = m.modules["a"]
+    assert rec.plane == "actual" and rec.lifecycle == "built"
+    assert rec.depth == 0.3 and rec.coverage == 0.2   # untouched
 
 def test_realize_module_flips_plane_and_lifecycle():
     m = model(mod("a"))

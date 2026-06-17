@@ -20,8 +20,18 @@ PORT = int(os.environ.get("ARCH_MAP_PORT", "8800"))
 
 
 def main() -> None:
+    # FastMCP's own banner advertises the MCP protocol endpoint (…/PORT/mcp),
+    # which returns 406 to a plain browser GET. The STUDIO is at the root path —
+    # print it unmistakably so nobody opens /mcp (or `localhost`, which can resolve
+    # to IPv6 ::1 while we bind IPv4 127.0.0.1) and concludes "the web is broke".
+    studio = f"http://{HOST}:{PORT}/"
+    bar = "─" * 56
+    print(f"\n┌{bar}┐", flush=True)
+    print(f"│  arch-map studio →  {studio:<34}│", flush=True)
+    print(f"│  open THAT in your browser (not the /mcp URL below).   │", flush=True)
+    print(f"└{bar}┘\n", flush=True)
     mcp.run(transport="http", host=HOST, port=PORT)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — would start a live HTTP server
     main()

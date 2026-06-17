@@ -49,8 +49,10 @@ def test_decide_records_verdict(deepmap):
 
 def test_start_grilling_requests_and_returns_prompt(deepmap):
     mp, sid = deepmap
-    prompt = srv.grilling(action="start", map=mp, module="a")
-    assert isinstance(prompt, str) and "grilling" in prompt.lower()
+    out = srv.grilling(action="start", map=mp, module="a")
+    assert out["map"] == mp and out["module"] == "a"
+    assert out["suggestion_id"] == sid
+    assert "grilling" in out["prompt"].lower()
     queued = srv.grilling(action="queue", map=mp)["queued"]
     assert [q["suggestion_id"] for q in queued] == [sid]
 
@@ -68,3 +70,23 @@ def test_grilling_done_couples_grilled_and_decision(deepmap):
     assert s["status"] == "grilled"
     assert s["decision"] == "accepted"
     assert s["note"] == "ship it"
+
+
+# ---- grilling argument contract ------------------------------------------------
+
+def test_grilling_start_requires_module(deepmap):
+    mp, _ = deepmap
+    with pytest.raises(ValueError, match="needs module"):
+        srv.grilling(action="start", map=mp)
+
+def test_grilling_mark_requires_suggestion_id(deepmap):
+    mp, _ = deepmap
+    with pytest.raises(ValueError, match="needs suggestion_id"):
+        srv.grilling(action="mark", map=mp)
+
+def test_grilling_start_without_open_candidate_still_returns_prompt(reg):
+    srv.create_project(name="M", map_id="m", repo="M")
+    srv.modules(action="add", map="m", id="b", label="B", domain="d")
+    out = srv.grilling(action="start", map="m", module="b")
+    assert out["suggestion_id"] is None            # nothing to flag as requested
+    assert "B" in out["prompt"]                    # prompt still names the module

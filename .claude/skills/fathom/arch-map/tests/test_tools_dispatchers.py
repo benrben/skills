@@ -21,7 +21,7 @@ def test_modules_single_and_bulk_roundtrip(reg):
     srv.modules(action="update", map="m", id="a", depth=0.9)
     assert srv.modules(action="get", map="m", id="a")["depth"] == 0.9
     srv.modules(action="delete", map="m", ids=["a", "b"])
-    assert srv.show_map(map="m")["modules"] == []
+    assert srv.show_map(map="m")["moduleCount"] == 0
 
 
 def test_modules_realize_flips_plane(reg):
@@ -68,8 +68,8 @@ def test_grilling_lifecycle(reg):
     srv.modules(action="add", map="m", id="a", label="A", domain="d")
     srv.suggestions(action="flag", map="m", module="a", title="T", strength="Strong",
                     category="in-process", problem="p", solution="s", wins=[])
-    prompt = srv.grilling(action="start", map="m", module="a")
-    assert isinstance(prompt, str) and "grilling" in prompt.lower()
+    out = srv.grilling(action="start", map="m", module="a")
+    assert out["suggestion_id"] == "a-strong" and "grilling" in out["prompt"].lower()
     assert srv.grilling(action="queue", map="m")["queued"]       # the candidate is requested
     srv.grilling(action="mark", map="m", suggestion_id="a-strong")
     srv.grilling(action="finish", map="m", suggestion_id="a-strong", decision="rejected", note="no")

@@ -22,8 +22,7 @@ The agent never writes HTML. It calls `archmap_suggestions(action="flag", ...)`,
 
 | Visual | Meaning |
 |---|---|
-| node **size** | depth — bigger = deeper (more behaviour behind a small interface) |
-| node **fill** | dark = deep · slate = mid · amber = shallow |
+| node **fill** | depth — dark = deep · slate = mid · amber = shallow (more behaviour behind a small interface) |
 | green **ring** | test coverage at the interface (arc length = %) |
 | blue pulsing **halo** | updated since the last scan |
 | coloured **ring + ⚠** | open deepening suggestion (emerald = Strong, amber = Worth exploring, slate = Speculative) |

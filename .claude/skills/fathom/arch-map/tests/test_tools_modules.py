@@ -52,7 +52,7 @@ def test_bulk_add_get_update_delete(reg):
     srv.modules(action="update", map="m", items=[{"id": "a", "depth": 0.95}])
     assert srv.modules(action="get", map="m", id="a")["depth"] == 0.95
     srv.modules(action="delete", map="m", ids=["a", "b"])
-    assert srv.show_map(map="m")["modules"] == []
+    assert srv.show_map(map="m")["moduleCount"] == 0
 
 
 def test_store_tool_on_missing_map_raises(reg):

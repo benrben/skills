@@ -84,6 +84,10 @@ def test_query_by_domain_plane_lifecycle():
     assert resolve(scope("query", predicate={"domain": "ui"}), m).ids == ["a", "c"]
     assert resolve(scope("query", predicate={"plane": "intended"}), m).ids == ["b"]
 
+def test_query_lifecycle_rejects_mismatch():
+    m = model(mod("a", lifecycle="built"), mod("b", lifecycle="planned"))
+    assert resolve(scope("query", predicate={"lifecycle": "planned"}), m).ids == ["b"]
+
 def test_query_depth_thresholds_are_and():
     m = model(mod("a", depth=0.2), mod("b", depth=0.5), mod("c", depth=0.9))
     r = resolve(scope("query", predicate={"depthGte": 0.4, "depthLte": 0.7}), m)

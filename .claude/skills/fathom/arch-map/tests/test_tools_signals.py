@@ -12,7 +12,7 @@ from arch_map.model import Module
 
 def mod(**kw):
     return Module(id=kw.pop("id", "a"), label="A", domain="d",
-                  depth=kw.pop("depth", 0.8), size=1.0, seam="",
+                  depth=kw.pop("depth", 0.8), size=kw.pop("size", 1.0), seam="",
                   coverage=kw.pop("coverage", 0.9), leaksTo=kw.pop("leaksTo", []))
 
 
@@ -57,6 +57,20 @@ def test_split_candidate():
 
 def test_leaky_seam():
     assert "leaky-seam" in srv._compute_signals(mod(leaksTo=["x"]), mx())
+
+def test_bulky_impl():
+    # large implementation mass for little leverage -> climb the ladder behind the seam
+    assert "bulky-impl" in srv._compute_signals(mod(size=3.0, depth=0.2), mx())
+
+def test_bulky_impl_quiet_at_baseline_size():
+    # a deep module is allowed to be large; the default size never fires it
+    assert "bulky-impl" not in srv._compute_signals(mod(size=1.0, depth=0.2), mx())
+    assert "bulky-impl" not in srv._compute_signals(mod(size=3.0, depth=0.8), mx())
+
+def test_bulky_impl_at_exact_boundary():
+    # size >= 2.0 is inclusive; depth < 0.5 is the exclusive cutoff
+    assert "bulky-impl" in srv._compute_signals(mod(size=2.0, depth=0.49), mx())
+    assert "bulky-impl" not in srv._compute_signals(mod(size=2.0, depth=0.5), mx())
 
 
 # ---- scan_signals -----------------------------------------------------------

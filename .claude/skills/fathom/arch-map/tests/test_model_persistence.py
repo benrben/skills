@@ -161,3 +161,34 @@ def test_store_set_coverage_persists(tmp_path):
     store.set_coverage("a", 0.75)
     reloaded = Store(p).get_module("a")
     assert reloaded["coverage"] == 0.75
+
+
+# ---- Store delegation surface ------------------------------------------------
+
+def test_store_delegates_reads_and_writes(tmp_path):
+    """Every Store method is a locked load->mutate->save (or lock-free read)
+    delegation to the same-named ArchModel method; cross the ones no other
+    test reaches so the whole delegation surface stays wired."""
+    from arch_map.model import Doc
+    s = Store(tmp_path / "m.json")
+    s.add_module(mod("a"))
+    assert s.orphans() == ["a"]
+
+    s.mark_updated("a", False)
+    assert s.modules["a"].updated is False
+    s.set_plane("a", "intended")
+    s.set_lifecycle("a", "planned")
+    s.update_module("a", label="A2")
+    rec = s.get_module("a")
+    assert rec["plane"] == "intended"
+    assert rec["lifecycle"] == "planned"
+    assert rec["label"] == "A2"
+
+    s.create_plan(Plan(id="p1", title="P"))
+    assert "p1" in s.plans
+    s.delete_plan("p1")
+    assert "p1" not in s.plans
+
+    s.add_doc(Doc(id="d1", type="note", title="D"))
+    assert "d1" in s.docs
+    assert [d["id"] for d in s.get_docs(["d1"])] == ["d1"]

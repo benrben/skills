@@ -8,6 +8,8 @@ window.Studio = window.Studio || {};
   const els = {};
   let activeTab = "agent";   // agent | inspector | modules | plans
   let modSearch = "";
+  let wiSel = new Set();      // what-if: module ids picked for a merge preview
+  let wiResult = null;        // last archmap_whatif payload (or null)
 
   const VERDICT = {
     accept: { badge: "accepted", cls: "accepted", verb: "Accepted" },
@@ -241,6 +243,16 @@ window.Studio = window.Studio || {};
       how: "Group the dependencies by domain. Each group is probably a separate responsibility that deserves its own module.",
     },
     {
+      id: "bulky-impl",
+      sev: "warn",
+      label: "Bulky implementation",
+      icon: "▦",
+      check: (m) => (m.size || 1) >= 2 && m.depth < 50,
+      why: "A lot of hand-written code for little leverage — large implementation mass behind a shallow interface.",
+      how: "Climb the ladder behind the seam: delegate to stdlib or a dependency you already have, or deepen it. See MINIMALISM.md.",
+      dynamic: (m) => `Roughly ${(m.size || 1).toFixed(1)}× the median module's code, but shallow — large mass for little leverage.`,
+    },
+    {
       id: "leaky-seam",
       sev: "warn",
       label: "Leaky seam",
@@ -465,6 +477,7 @@ window.Studio = window.Studio || {};
 
     const list = rows.length ? rows.map((m) => `
       <div class="mrow" data-row="${m.id}">
+        <input type="checkbox" class="mr-wi" data-wi="${m.id}" title="pick for what-if merge" ${wiSel.has(m.id) ? "checked" : ""} style="margin:0 6px 0 2px">
         <div class="mr-main" data-open="${m.id}">
           <div class="mr-id">${m.id}</div>
           <div class="mr-meta"><span class="dom">${m.domain}</span><span>${m.label}</span></div>
@@ -476,8 +489,30 @@ window.Studio = window.Studio || {};
         <button class="mr-del" data-del="${m.id}" title="delete">✕</button>
       </div>`).join("") : `<div class="no-sug" style="padding:18px;border:0">no matches</div>`;
 
+    // what-if: bar shown once 1+ modules are picked; card shows the server's
+    // preview (the math lives in archmap_whatif — the rail only renders it)
+    const wiIds = [...wiSel];
+    const wiBar = wiIds.length ? `
+      <div class="wi-bar" style="display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line)">
+        <span style="font-size:11px;color:var(--text-faint)">what-if: ${wiIds.map(esc).join(" + ")}</span>
+        <button class="btn" id="wiPreview" ${wiIds.length < 2 ? "disabled" : ""} style="margin-left:auto">Preview merge</button>
+        <button class="btn" id="wiClear">✕</button>
+      </div>` : "";
+    const r = wiResult;
+    const wiCard = (r && wiIds.length >= 2) ? `
+      <div class="wi-card" style="padding:10px 12px;border-bottom:1px solid var(--line);font-size:12px">
+        <b>If merged:</b>
+        fan-in ${r.merged.fanIn} · fan-out ${r.merged.fanOut} · blast ${r.merged.blastRadius}
+        · health ${r.merged.health} · depth ${Math.round(r.merged.depth * 100)} · cov ${Math.round(r.merged.coverage * 100)}%
+        <div style="color:var(--text-faint);margin-top:4px">
+          absorbs ${r.absorbedEdges.length ? esc(r.absorbedEdges.join(", ")) : "no internal edges"}
+        </div>
+        <button class="btn primary" id="wiFlag" style="margin-top:8px">Flag as candidate</button>
+      </div>` : "";
+
     els.modsPane.innerHTML = `
       <div class="mods-search"><label class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><input id="modSearch" placeholder="Filter modules…" value="${esc(modSearch)}" autocomplete="off"></label></div>
+      ${wiBar}${wiCard}
       <div class="mlist">${list}</div>
       <div class="mods-add">
         <h5>Add module</h5>
@@ -492,6 +527,38 @@ window.Studio = window.Studio || {};
     const sb = els.modsPane.querySelector("#modSearch");
     sb.oninput = () => { modSearch = sb.value.trim().toLowerCase(); const pos = sb.selectionStart; renderModules(); const nb = els.modsPane.querySelector("#modSearch"); nb.focus(); nb.setSelectionRange(pos, pos); };
 
+    // what-if wiring: picking modules, previewing the merge, flagging a candidate
+    els.modsPane.querySelectorAll("[data-wi]").forEach((cb) => cb.onchange = () => {
+      if (cb.checked) wiSel.add(cb.dataset.wi); else wiSel.delete(cb.dataset.wi);
+      wiResult = null;                              // selection changed: stale preview
+      renderModules();
+    });
+    const wiClear = els.modsPane.querySelector("#wiClear");
+    if (wiClear) wiClear.onclick = () => { wiSel.clear(); wiResult = null; renderModules(); };
+    const wiPreview = els.modsPane.querySelector("#wiPreview");
+    if (wiPreview) wiPreview.onclick = () => {
+      Store.whatif([...wiSel])
+        .then((res) => { wiResult = res; renderModules(); })
+        .catch((e) => S.toast(String(e.message || e), "var(--leak)"));
+    };
+    const wiFlag = els.modsPane.querySelector("#wiFlag");
+    if (wiFlag) wiFlag.onclick = () => {
+      const ids = [...wiSel];
+      const merged = (wiResult && wiResult.merged) || {};
+      S.model = Store.flagCandidate(ids[0], {
+        title: "Merge " + ids.join(" + ") + " into one deep module",
+        strength: "Worth exploring",
+        category: "in-process",
+        problem: "What-if preview: " + ids.length + " modules whose seams may not earn their keep.",
+        solution: "Merged metrics — fan-in " + (merged.fanIn ?? "?") + ", fan-out " + (merged.fanOut ?? "?")
+          + ", blast " + (merged.blastRadius ?? "?") + ", health " + (merged.health ?? "?")
+          + ". Absorbs: " + (((wiResult || {}).absorbedEdges || []).join(", ") || "no internal edges") + ".",
+        wins: ["Flagged from the studio what-if preview — grill via /deepen before acting."],
+      });
+      wiSel.clear(); wiResult = null;
+      S.renderRail(); setTab("agent"); flashProp(ids[0]);
+      S.toast("Candidate flagged on " + ids[0] + " — grilling stays with /deepen", "var(--accent)");
+    };
     els.modsPane.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { Focus.select(b.dataset.open); S.reveal(b.dataset.open, {}); });   // #9
     els.modsPane.querySelectorAll(".mrow").forEach((r) => {
       const id = r.dataset.row;

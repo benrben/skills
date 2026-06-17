@@ -69,11 +69,26 @@ def test_delete_map_returns_remaining(reg):
     assert "a" not in out["maps"] and "b" in out["maps"]
 
 
-def test_show_map_returns_view_with_map_id(reg):
+def test_show_map_returns_digest_with_map_id(reg):
     srv.modules(action="add", map="m", id="a", label="A", domain="d")
     v = srv.show_map(map="m")
     assert v["map"] == "m"
-    assert [mod["id"] for mod in v["modules"]] == ["a"]
+    assert v["moduleCount"] == 1
+    assert v["domains"] == {"d": 1}
+    assert "modules" not in v                       # digest, not the full record list
+    assert [w["id"] for w in v["worstHealth"]] == ["a"]
+
+
+def test_show_map_domain_and_ids_filters_return_records(reg):
+    srv.modules(action="add", map="m", items=[
+        {"id": "a", "label": "A", "domain": "d1"},
+        {"id": "b", "label": "B", "domain": "d2"},
+    ])
+    by_domain = srv.show_map(map="m", domain="d1")
+    assert [mod["id"] for mod in by_domain["modules"]] == ["a"]
+    by_ids = srv.show_map(map="m", ids=["b"])
+    assert [mod["id"] for mod in by_ids["modules"]] == ["b"]
+    assert by_ids["count"] == 1
 
 
 def test_get_model_returns_full_dict(reg):

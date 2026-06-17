@@ -85,7 +85,7 @@ class Module:
     label: str
     domain: str
     depth: float
-    size: float                              # relative implementation mass -> node radius
+    size: float                              # relative implementation mass (1.0 == median module); measured from LOC by archmap_ingest; weights whatif merges + fires bulky-impl. Non-visual: node size is a constant, depth drives node fill colour.
     seam: str
     iface: str = ""
     coverage: float = 0.0
@@ -323,6 +323,9 @@ class ArchModel:
         self.modules: dict[str, Module] = {m.id: m for m in modules}
         self.plans: dict[str, Plan] = {p.id: p for p in (plans or [])}
         self.docs: dict[str, Doc] = {d.id: d for d in (docs or [])}
+        # Reconcile anchors (ledger.py owns their shape). The model carries them
+        # as opaque dicts so they ride to_dict/save/from_json with everything else.
+        self.anchors: list[dict] = []
 
     # ---- queries ----------------------------------------------------------
     def orphans(self) -> list[str]:
@@ -336,6 +339,25 @@ class ArchModel:
                 connected.add(m.id)
                 connected.update(edges)
         return [mid for mid in self.modules if mid not in connected]
+
+    def owners_of(self, paths: list[str]) -> dict[str, list[str]]:
+        """Map repo-relative paths to the modules that own them. The ownership rule
+        (the contract, not the algorithm): a path belongs to module m iff it equals
+        an entry of m.files, or sits under a directory entry of m.files. A path may
+        belong to several modules; paths owned by none are silently omitted. Keys
+        sorted, file lists sorted + deduplicated. Pure and deterministic."""
+        def norm(p: str) -> str:
+            p = str(p).replace("\\", "/")
+            return p[2:] if p.startswith("./") else p
+        wanted = [norm(p) for p in paths]
+        out: dict[str, list[str]] = {}
+        for mid in sorted(self.modules):
+            entries = [norm(e).rstrip("/") for e in self.modules[mid].files if e]
+            owned = sorted({p for p in wanted
+                            if any(p == e or p.startswith(e + "/") for e in entries)})
+            if owned:
+                out[mid] = owned
+        return out
 
     # ---- computed graph metrics (all read-only, derived from edges) ----------
     def _fan_in(self) -> dict[str, int]:
@@ -375,22 +397,22 @@ class ArchModel:
         in_cycle: set[str] = set()
         stack: list[str] = []
 
-        def dfs(node: str) -> bool:
+        def dfs(node: str) -> None:
             color[node] = GRAY
             stack.append(node)
             for dep in self.modules[node].dependsOn:
                 if dep not in color:
                     continue
                 if color[dep] == GRAY:
-                    # found cycle — mark everything in stack from dep onward
-                    idx = stack.index(dep)
-                    in_cycle.update(stack[idx:])
-                    return True
-                if color[dep] == WHITE:
+                    # back edge — everything from dep to here is on a cycle.
+                    # GRAY means "on the stack", so index() is safe; keep
+                    # scanning the remaining deps (a node can sit on several
+                    # cycles) and always fall through to the pop below.
+                    in_cycle.update(stack[stack.index(dep):])
+                elif color[dep] == WHITE:
                     dfs(dep)
             stack.pop()
             color[node] = BLACK
-            return False
 
         for mid in list(self.modules):
             if color[mid] == WHITE:
@@ -772,6 +794,7 @@ class ArchModel:
             "docMembership": res["membership"].as_dict(),
             "orphans": sorted(orphans),
             "openSuggestions": self._open_suggestion_ids(),
+            "anchors": self.anchors,
         }
 
     def save(self, path: str | Path) -> None:
@@ -850,4 +873,7 @@ class ArchModel:
             doc = Doc(**_only_known(Doc, entry))
             doc.scope = scope
             docs.append(doc)
-        return cls(raw["repo"], modules, plans, docs)
+        model = cls(raw["repo"], modules, plans, docs)
+        # tolerant reader: non-dict anchor entries are dropped, the rest survive
+        model.anchors = [a for a in raw.get("anchors", []) if isinstance(a, dict)]
+        return model

@@ -65,6 +65,33 @@ def test_cycle_membership():
     assert cyc["c"]["inCycle"] is False
 
 
+def test_mutual_cycle_with_later_dependent_does_not_crash():
+    # regression: the DFS early-returned on a back edge without popping,
+    # leaving "b" GRAY on a corrupted stack; visiting c -> b then raised
+    # ValueError("'b' is not in list") from stack.index(b)
+    mx = ArchModel("r", [
+        mod("a", dependsOn=["b"]),
+        mod("b", dependsOn=["a"]),
+        mod("c", dependsOn=["b"]),
+    ]).compute_metrics()
+    assert mx["a"]["inCycle"] is True
+    assert mx["b"]["inCycle"] is True
+    assert mx["c"]["inCycle"] is False
+
+
+def test_node_on_two_cycles_marks_both():
+    # the early return also stopped scanning a node's remaining deps after
+    # the first back edge, so a second cycle through the same node was missed
+    mx = ArchModel("r", [
+        mod("d", dependsOn=["e", "f"]),
+        mod("e", dependsOn=["d"]),
+        mod("f", dependsOn=["d"]),
+    ]).compute_metrics()
+    assert mx["d"]["inCycle"] is True
+    assert mx["e"]["inCycle"] is True
+    assert mx["f"]["inCycle"] is True
+
+
 def test_health_formula_and_bounds():
     mx = ArchModel("r", [
         mod("full", depth=1.0, coverage=1.0),                 # 40 + 40

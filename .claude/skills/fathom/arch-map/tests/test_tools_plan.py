@@ -17,15 +17,19 @@ def test_create_and_get_plan(reg):
     assert plan["moduleIds"] == ["a"]
 
 
-def test_add_work_steps_drops_unknown_keys(reg):
+def test_add_work_steps_rejects_unknown_keys(reg):
     srv.plans(action="create", map="m", plan_id="p1", title="P")
+    with pytest.raises(ValueError, match="bogus"):
+        srv.plans(action="add_steps", map="m", plan_id="p1", steps=[
+            {"id": "s1", "title": "Step one", "targets": ["a"], "bogus": "ignored"},
+        ])
+    assert srv.plans(action="get", map="m", plan_id="p1")["steps"] == []  # nothing written
     srv.plans(action="add_steps", map="m", plan_id="p1", steps=[
-        {"id": "s1", "title": "Step one", "targets": ["a"], "bogus": "ignored"},
+        {"id": "s1", "title": "Step one", "targets": ["a"]},
     ])
     step = srv.plans(action="get", map="m", plan_id="p1")["steps"][0]
     assert step["id"] == "s1"
     assert step["targets"] == ["a"]
-    assert "bogus" not in step
 
 
 def test_set_step_status_advances(reg):
