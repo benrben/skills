@@ -1,6 +1,6 @@
 ---
 name: understand
-description: Read-only guided tour of an existing arch-map — entry interfaces, the deepest modules, leak/drift hot-spots, and the recorded docs (glossary, adr, spec, risk, runbook, diagram...) scoped to the modules it covers — so a newcomer (human or agent) can comprehend a codebase's deep structure before touching it. The front door of the Fathom suite — use when onboarding a repo that ALREADY has a map; an unmapped repo goes to fathom:map first. Do NOT use for changing the map (that is fathom:map, which seeds and reconciles), for improving shallow modules or designing new structure (that is fathom:design), or for editing source (that is fathom:code) — understand writes NOTHING, to the spine or to disk; if the user wants the tour saved it hands off to fathom:map to record it as a note or diagram doc on the spine.
+description: Read-only guided tour of an existing arch-map — entry interfaces, the deepest modules, leak/drift hot-spots, the recorded docs (glossary, adr, spec, risk, runbook, diagram...) scoped to the modules it covers, AND the work in flight on the skill-cycle task board (which tasks sit in which column, which agents and worktrees are active) — so a newcomer (human or agent) can comprehend a codebase's deep structure and its live work before touching it. The front door of the Fathom suite, and the explainer of the "understand" board column. Use when onboarding a repo that ALREADY has a map; an unmapped repo goes to fathom:map first. Do NOT use for changing the map (that is fathom:map, which seeds and reconciles), for improving shallow modules or designing new structure (that is fathom:design), or for editing source (that is fathom:code) — understand writes NOTHING, to the spine or to disk; if the user wants the tour saved it hands off to fathom:map to record it as a note or diagram doc on the spine.
 allowed-tools: Read Grep Glob Bash mcp__arch-map__*
 ---
 
@@ -111,6 +111,18 @@ You may also use `archmap_get_metrics(map, module)` to pull a single module's ra
 
 Scope each lens to what the user asked for. "Give me a tour" earns all three across all domains; "what does the billing area do?" earns all three filtered to that domain (`archmap_render_view(map, of="<domain>")` or `archmap_show_map(map, domain="<domain>")`, then `archmap_modules` with `action="get"` for the bodies).
 
+### 3a. Lens D — Work in flight: "what's being worked on right now?"
+
+A tour isn't only the static structure — it's the **live work** on the skill-cycle task board ([../../fathom/BOARD.md](../../fathom/BOARD.md)). Read it and narrate it:
+
+```
+archmap_board(map)                       # cards by cycle column (todo·understand·plan·in-progress·review·done),
+                                         # grouped into agent swimlanes, each with its worktree
+archmap_worktrees(map, action="list")    # the per-task isolated branches + the live git worktree list
+```
+
+Report, briefly: which tasks sit in which column (where the work *is* in the cycle), which **agents** are carrying them (and any running right now), which tasks have their own **worktree branch**, and anything `blocked`. This is the part of comprehension a static map can't give — a newcomer learns not just *what the code is* but *what's moving and who's moving it*. understand explains the **understand** column itself: a card here is a task being comprehended before it's touched. Surface the board as part of the story; never move a card (that's the acting skills' job).
+
 ### 4. Narrate the tour
 
 Tell the story in the project's own domain vocabulary (the `domain` and `label` fields, set from the spine's `glossary` docs) and the architecture vocabulary from [../../fathom/LANGUAGE.md](../../fathom/LANGUAGE.md). Talk about "the Order intake module," not "the OrderHandler" and not "the Order service."
@@ -121,7 +133,8 @@ Structure a full tour as:
 2. **Come in here** — the entry interfaces (Lens A), each with the facts a caller must know.
 3. **The deep core** — the highest-leverage modules (Lens B) and what each hides behind its interface, with a coverage read on how safely you can lean on it.
 4. **Mind these** — the hot-spots (Lens C): leaks, not-connected modules, shallow clusters, any candidates already flagged, and the docs that explain them (a `risk` or `adr` scoped to a module you just walked).
-5. **Where you'd go next** — end with a **named next action and its specific target**, without doing it yourself. Name the skill *and* the thing it acts on: e.g. "the billing-intake module is a danger-zone → **fathom:design** (improve mode) on `billing-intake`", "the new payouts feature is greenfield → **fathom:design** (new mode) for payouts", or "you've got a diff ready → **fathom:review** on that branch". A vague "you could refactor this" is not a hand-off; the named skill + target is.
+5. **Work in flight** — the board (Lens D): which tasks sit in which cycle column, the agents carrying them, the active worktree branches, anything `blocked`.
+6. **Where you'd go next** — end with a **named next action and its specific target**, without doing it yourself. Name the skill *and* the thing it acts on: e.g. "the billing-intake module is a danger-zone → **fathom:design** (improve mode) on `billing-intake`", "the new payouts feature is greenfield → **fathom:design** (new mode) for payouts", or "you've got a diff ready → **fathom:review** on that branch". When there's a board task, frame it as the next **board move**: "task `s4` is in `review` on its `feat/intake` worktree → **fathom:review** to gate it to done." A vague "you could refactor this" is not a hand-off; the named skill + target (or board move) is.
 
 Be honest about confidence. If a module's `iface` text is thin or its `depth`/`coverage` look stale, say "the map records X here, but it may be out of date — [fathom:map](#hand-offs) can reconcile it." You are reporting the map's account of the codebase, not certifying it.
 

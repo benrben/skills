@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review a diff, PR, or branch THROUGH the architecture map — which modules the change touches, whether it crosses a seam it shouldn't (new edges not on the map), whether it touches a danger-zone module without adding tests, and whether it erodes a deep module's interface. Use when asked to review a change, check a PR against the architecture, gate a merge, or answer "is this change safe / does it respect the seams." Read-only against the source and the module graph: it reports findings and routes them — stale-map findings to fathom:map, structural work to fathom:design, the fix to fathom:code. Its one permitted spine write is recording a risk or postmortem doc when a finding is worth keeping as durable truth. Do NOT use to find general bugs or style issues (use a code-review tool), to reconcile the map (fathom:map), or to edit source (fathom:code).
+description: Review a diff, PR, or branch THROUGH the architecture map — which modules the change touches, whether it crosses a seam it shouldn't (new edges not on the map), whether it touches a danger-zone module without adding tests, and whether it erodes a deep module's interface. Often the branch is a board task's own git worktree — review OWNS the "review" column and is the final gate before a task merges to done. Use when asked to review a change, check a PR against the architecture, gate a merge, or answer "is this change safe / does it respect the seams." Read-only against the source and the module graph: it reports findings and routes them — stale-map findings to fathom:map, structural work to fathom:design, the fix to fathom:code; it moves the board card to done (clean) or back to plan/in-progress (findings). Its one permitted spine write is recording a risk or postmortem doc when a finding is worth keeping as durable truth, plus the board-column move. Do NOT use to find general bugs or style issues (use a code-review tool), to reconcile the map (fathom:map), or to edit source (fathom:code).
 allowed-tools: Read Grep Glob Bash mcp__arch-map__*
 ---
 
@@ -21,7 +21,12 @@ Speak the [../../fathom/LANGUAGE.md](../../fathom/LANGUAGE.md) vocabulary exactl
 
 review never writes the source, never writes modules, candidates, or halos. Its entire output is the report and the hand-offs. If you find yourself wanting to fix what you found, you have left this skill — route it (see [Hand-offs](#hand-offs)).
 
-The **one** permitted spine write: when a finding is worth keeping as durable recorded truth — a seam crossing you had to wave through, an incident pattern this change repeats — record it as a `risk` or `postmortem` doc via `archmap_docs` (typed; see [../../fathom/DOC-TYPES.md](../../fathom/DOC-TYPES.md)). That is the only write review may make: no other doc type, no modules, no candidates, no halos, no source.
+Two carved spine writes, nothing more:
+
+1. When a finding is worth keeping as durable recorded truth — a seam crossing you had to wave through, an incident pattern this change repeats — record it as a `risk` or `postmortem` doc via `archmap_docs` (typed; see [../../fathom/DOC-TYPES.md](../../fathom/DOC-TYPES.md)).
+2. When the change under review **is a board task** (a WorkStep in the `review` column — [../../fathom/BOARD.md](../../fathom/BOARD.md)), move its card: `archmap_plans(map, action="set_step_status", step_status="done")` when the change is clean, or back to `plan`/`in-progress` when there are findings to address. review is the gate that closes a task to done.
+
+Those are the only writes review may make: no other doc type, no modules, no candidates, no halos, no source.
 
 ## Process
 
@@ -29,6 +34,7 @@ The **one** permitted spine write: when a finding is worth keeping as durable re
 
 - `archmap_list_maps()` → this repo's map id. No map → STOP; hand to **fathom:map** to seed one (a review without a map is just a generic code review — say so).
 - Identify the change under review: a PR (use `gh pr diff` / `gh pr view`), a branch (`git diff <base>...HEAD`), or the working tree (`git diff`). Establish the **base sha** the change builds on.
+- **If the change is a board task** (a card sitting in the `review` column — [../../fathom/BOARD.md](../../fathom/BOARD.md)), resolve its worktree: `archmap_board(map)` (or `archmap_worktrees(map, action="list")`) gives the card's `worktree` — its `branch`, `path`, and `base`. Review **that branch**: `git diff <base>...<branch>` (run it in the worktree `path`), and use the recorded `base` as the baseline `since_sha` in step 2. This is the per-task isolation the cycle runs on — fathom:code built it there, you gate it before it merges.
 
 ### 2. Which modules does this change touch?
 
@@ -83,10 +89,11 @@ Be honest about confidence: if the map's record looks stale for a touched module
 - **The change needs new intended structure** → **fathom:design** (new mode).
 - **The fix itself** → **fathom:code**, only after design has decided a target.
 - **A load-bearing decision surfaced** (e.g. an accepted seam crossing) → record it as an `adr` doc on the spine: fathom:design writes it when it's a decision being made, fathom:map when it's already in the code. (review itself only records `risk` / `postmortem` — see [Strictly read-only](#strictly-read-only--one-carved-exception).)
+- **The change is a board task** → after reporting, move its card ([../../fathom/BOARD.md](../../fathom/BOARD.md)): `archmap_plans(action="set_step_status", step_status="done")` when clean, or back to `in-progress` (more build needed) / `plan` (needs a redesign — route to fathom:design) with the findings attached. Once the task merges, **fathom:map** runs `archmap_worktrees(action="sync")` to retire its worktree and reconcile the branch.
 
 ## What review does NOT do
 
-- Does NOT write modules, candidates, halos, or edges, and does NOT touch the source — its only spine write is a `risk` / `postmortem` doc (see [Strictly read-only](#strictly-read-only--one-carved-exception)).
+- Does NOT write modules, candidates, halos, or edges, and does NOT touch the source — its only spine writes are a `risk` / `postmortem` doc and the **board-column move** on the task it gates (see [Strictly read-only](#strictly-read-only--one-carved-exception)).
 - Does NOT do generic code review (bugs, style, naming) — it reviews **against the map** only.
 - Does NOT decide whether a flagged friction gets fixed — fathom:design grills, the user decides.
 - Does NOT reconcile drift it discovers — it reports the gap and routes to fathom:map.

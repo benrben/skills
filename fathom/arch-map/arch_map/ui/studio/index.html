@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/assets/shared/ui.css">
 <link rel="stylesheet" href="/assets/shared/components.css">
 <link rel="stylesheet" href="/assets/studio.css">
+<link rel="stylesheet" href="/assets/board.css">
 <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
 <style>
   /* map switcher (named maps, one per project) */
@@ -41,6 +42,10 @@
     </div>
     <div class="subline" id="subline" data-mode="overview">fill <span class="enc">= depth tier</span> · vertical position <span class="enc">= dependency depth</span> · bottom bar <span class="enc">= coverage</span></div>
     <div class="spacer"></div>
+    <div class="seg view-seg" role="group" aria-label="View" title="Graph ↔ Board (b)">
+      <button data-view-btn="graph" aria-pressed="true">&#x25A6; Graph</button>
+      <button data-view-btn="board" aria-pressed="false">&#x25A4; Board</button>
+    </div>
     <span class="count-pill" id="openCount"><span class="n">0</span> open proposals</span>
     <button class="help-btn" id="helpBtn" title="What am I looking at?">?</button>
     <div id="chromeToggles" style="display:flex; gap:8px;"></div>
@@ -102,6 +107,7 @@
       <h5>Shortcuts</h5>
       <div class="kbd-row"><span>Proposals · Inspector · Modules</span><span class="kr-keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></span></div>
       <div class="kbd-row"><span>Plans</span><span class="kr-keys"><kbd>4</kbd></span></div>
+      <div class="kbd-row"><span>Graph &harr; Board</span><span class="kr-keys"><kbd>b</kbd></span></div>
       <div class="kbd-row"><span>Issues panel</span><span class="kr-keys"><kbd>p</kbd></span></div>
       <div class="kbd-row"><span>Search modules</span><span class="kr-keys"><kbd>/</kbd></span></div>
       <div class="kbd-row"><span>Deselect / close</span><span class="kr-keys"><kbd>esc</kbd></span></div>
@@ -207,6 +213,22 @@
       </div>
     </aside>
   </div>
+
+  <!-- task board (skill-cycle Kanban) — swaps with the graph via the header toggle / `b` -->
+  <section id="boardSurface" aria-label="Task board">
+    <div class="board-bar">
+      <span class="bb-title">Task board</span>
+      <span class="bb-sub">columns = the skill cycle · rows = agents · cards = tasks · each task gets its own worktree</span>
+      <span class="spacer"></span>
+      <span class="bb-summary" id="boardSummary"></span>
+      <select id="boardFilter" title="Filter by plan"></select>
+      <button class="bb-btn" id="boardSync" title="Reconcile worktrees against git worktree list">&#x27F3; sync worktrees</button>
+    </div>
+    <div class="board-scroll">
+      <div class="board-grid" id="boardGrid"></div>
+      <div class="board-empty" id="boardEmpty"></div>
+    </div>
+  </section>
 </div>
 
 <div class="toast-wrap" id="toast"></div>
@@ -243,12 +265,14 @@
 <script src="/assets/studio-graph.js"></script>
 <script src="/assets/studio-rail.js"></script>
 <script src="/assets/studio-docs.js"></script>
+<script src="/assets/studio-board.js"></script>
 <script>
   (function () {
     function boot() {
       Studio.bootGraph();
       Studio.bootRail();
       Studio.bootDocs && Studio.bootDocs();
+      Studio.bootBoard && Studio.bootBoard();
 
       // ---- resizable agent rail (drag its left edge; persisted) ----
       (function () {

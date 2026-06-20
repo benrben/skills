@@ -1,6 +1,6 @@
 ---
 name: map
-description: Build and keep honest the model of what a codebase IS — its modules, their depth, edges, leaks, and interface coverage — AND capture the recorded truth around it as spine docs of every type (glossary, note, risk, runbook, postmortem, diagram, and the adr for a decision baked into the code). Finds all structural indicators (signals). The doc REGISTRAR of the suite. Use when onboarding a repo, running an architecture health check, reconciling drift after a merge, capturing decisions/notes/diagrams, or asking "what does this codebase actually look like." This skill models what EXISTS and records the truth about it — it never proposes deepenings or designs intended structure (that is fathom:design), and never edits source (fathom:code).
+description: Build and keep honest the model of what a codebase IS — its modules, their depth, edges, leaks, and interface coverage — AND capture the recorded truth around it as spine docs of every type (glossary, note, risk, runbook, postmortem, diagram, and the adr for a decision baked into the code). Finds all structural indicators (signals). The doc REGISTRAR of the suite, and the keeper of worktree truth — it syncs the task board's per-task git worktrees against real git on every reconcile. Use when onboarding a repo, running an architecture health check, reconciling drift after a merge, capturing decisions/notes/diagrams, or asking "what does this codebase actually look like." This skill models what EXISTS and records the truth about it — it never proposes deepenings or designs intended structure (that is fathom:design), and never edits source (fathom:code).
 allowed-tools: Read Grep Glob Bash mcp__arch-map__*
 ---
 
@@ -105,6 +105,7 @@ Start with the drift report: `archmap_drift(map, root=<repo>)` names changed fil
 - **Unowned files** — extend a module's `files` or add a new module.
 - **Vanished files** — `action="delete"` (prunes edges); if a file merely moved, update `files` so hand-curated prose survives.
 - **Clear the halos** — `archmap_modules(map, action="update", ids=["*"], updated=False)` once the scope matches reality.
+- **Sync the worktrees** — `archmap_worktrees(map, action="sync", root=<repo>)` reconciles the task board's per-task branches against real `git worktree list`: refreshes each worktree's HEAD, and marks a vanished/merged one `status="removed"`. A drift that came in from a merged task branch is reconciled like any other (the worktree's recorded `base` is the `since_sha`); then retire the worktree (`action="remove"` or `prune`). map is the keeper of worktree truth — see [../../fathom/BOARD.md](../../fathom/BOARD.md).
 - **Measure and anchor** — finish with `archmap_ingest(map, root=<repo>, coverage_report=<path if available>)`: churn from git, size from LOC, optional coverage, and the reconcile **anchor** (HEAD sha + snapshot) that drift and history read against.
 
 ### 7. Capture the docs — the registrar's job

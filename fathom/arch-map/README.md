@@ -70,6 +70,9 @@ All take `map` — the project map to act on (see above).
 | `archmap_modules` with `action="add"` / `"update"` / `"delete"` (+ bulk via `items=`/`ids=`) | module CRUD on `map` |
 | `archmap_render_view(map, kind=, of=, ...)` | on-brand ad-hoc **view** — a table or bar chart of the map, drawn with the studio's design (the on-brand answer to "chart depth", "table of orphans"). Browser: `/view?map=…&kind=bar&metric=coverage&groupBy=domain` |
 | `archmap_grilling(map, action="start", module=)` | UI callback → hands off to the grilling loop |
+| `archmap_board(map)` | the **task board** — every WorkStep projected into the skill-cycle Kanban (columns todo·understand·plan·in-progress·review·done, lanes by agent, cards with their worktree). Browser: `GET /api/board?map=…` |
+| `archmap_plans(map, action="set_step_status"\|"set_step", ...)` | move a board task across the cycle, or patch its priority/agent/worktree/blocked |
+| `archmap_worktrees(map, action="create"\|"attach"\|"remove"\|"prune"\|"sync"\|"list", ...)` | per-task git **worktrees** (isolated branches); real `git worktree` when allowed, else a copy-paste command. Browser: `/api/worktrees` |
 
 ## Run
 
@@ -111,8 +114,14 @@ decide.*
   reason), **Inspector** (interface, depth/coverage steppers, depends-on /
   used-by pills, files, tests, and the proposal in context), and **Modules** (a
   filterable list with add/delete).
+- **The task board** — a header **Graph ↔ Board** toggle (`b`) swaps the graph for a
+  full-width Kanban of the cycle: columns `todo · understand · plan · in-progress ·
+  review · done` (each owned by a skill), swimlanes by agent, cards = WorkSteps. Drag a
+  card to move its stage / assign its agent, set priority, block, and per card **＋ a git
+  worktree** (an isolated branch) or **▶ dispatch an agent** to build it inside that
+  worktree (live ⚙). See [`../../fathom/BOARD.md`](../../fathom/BOARD.md).
 - Two aesthetic directions × light/dark (top-right), keyboard shortcuts
-  (`1/2/3` tabs, `/` search, `Esc` deselect), and a first-run intro + a `?`
+  (`1/2/3` tabs, `b` board, `/` search, `Esc` deselect), and a first-run intro + a `?`
   legend. Collapse the rail with **Hide agent** to go full-graph.
 
 The studio is served from `arch_map/ui/studio/` (`index.html` + `/assets/*`). Its

@@ -1,6 +1,6 @@
 ---
 name: code
-description: Execute an already-chosen deepening into source — refactor a shallow cluster into one deep module, build new code to a planned interface so it is deep from the start, or write interface tests for a test-first target the signal scan named. Use when the user says "refactor this into a deep module", "implement this interface", "merge these pass-throughs", "execute the accepted candidate", "build this work step", or "write the tests for this module". This is the ONLY Fathom skill that edits source; it reconciles the modules it touched on the arch-map spine. Do NOT use to decide WHETHER to deepen, grill a candidate, or design a target structure from scratch (that is fathom:design) — code executes a target the spine already holds. Skip for read-only mapping (fathom:map).
+description: Execute an already-chosen deepening into source — refactor a shallow cluster into one deep module, build new code to a planned interface so it is deep from the start, or write interface tests for a test-first target the signal scan named. Use when the user says "refactor this into a deep module", "implement this interface", "merge these pass-throughs", "execute the accepted candidate", "build this work step", or "write the tests for this module". This is the ONLY Fathom skill that edits source; it builds a board task INSIDE that task's own git worktree (an isolated branch) — code OWNS the "in-progress" column — and reconciles the modules it touched on the arch-map spine. Do NOT use to decide WHETHER to deepen, grill a candidate, or design a target structure from scratch (that is fathom:design) — code executes a target the spine already holds. Skip for read-only mapping (fathom:map).
 disable-model-invocation: true
 ---
 
@@ -45,6 +45,24 @@ Then read the target the spine holds — never invent one:
 - **Mode (c) TEST-FIRST** — a module the signal scan names and the user asks to see tested: `archmap_scan_signals(map, "test-first")` returns them worst-first. The target is the module's recorded `iface` — write interface tests ONLY, no refactor in the same pass (a refactor needs its own grilled candidate). The recorded interface is the contract to assert: types, invariants, ordering, error modes. If the interface prose is too thin to test against, that is itself the finding — hand to **fathom:map** to sharpen the record first.
 
 If there is **no** accepted candidate, **no** planned WorkStep, and **no** explicit test-first ask, STOP. Hand back to **fathom:design** (to grill and accept a candidate, or to design and sequence one). fathom:code chooses nothing.
+
+### 1a. Enter the task's worktree and claim its board column
+
+A WorkStep is a **task on the skill-cycle board** ([../../fathom/BOARD.md](../../fathom/BOARD.md)); fathom:code owns its **in-progress** column and builds the task **inside that task's own git worktree** — an isolated branch — so parallel builds never collide in the shared working tree.
+
+- **Get into the worktree.** If the step already carries a `worktree`, work in it; if not, provision one (or `attach` an existing branch), then `cd` into its `path` and make **every edit on that branch**:
+  ```
+  archmap_worktrees(map, action="create", branch="feat/<task>", plan_id=<plan>, step_id=<step>, agent="fathom:code")
+  ```
+  (When real provisioning is off, the call returns the `git worktree add …` command to run, then `attach` it — see [../../fathom/BOARD.md](../../fathom/BOARD.md).)
+- **Claim the column.** Move the card into in-progress and record who's on it:
+  ```
+  archmap_plans(map, action="set_step_status", plan_id=<plan>, step_id=<step>, step_status="in-progress")
+  archmap_plans(map, action="set_step", plan_id=<plan>, step_id=<step>, agent="fathom:code")
+  ```
+  If you hit a wall you can't pass, set `blocked=true` (`action="set_step"`) rather than leaving the card silently stalled.
+
+For a one-off accepted candidate with no Plan, a worktree is optional (recommended for a risky refactor) and there's no card to move.
 
 ### 2. Read the constraints that bound the execution
 
@@ -103,7 +121,7 @@ fathom:code persists what *it* changed; it does not re-derive the whole graph. T
 
 **Mode (b) — build:**
 - `archmap_modules(map, action="realize", id=module, depth=<achieved>, coverage=<fraction>, files=[...])` — flips the intended module from `plane="intended"`/`lifecycle="planned"` to `plane="actual"`/`lifecycle="built"` and records what landed. This is the single legible "it's real now" transition; fathom:code owns it.
-- `archmap_plans(map, action="set_step_status", plan_id=, step_id=, step_status="done")` to close the WorkStep (use `"in-progress"` when you start, `"blocked"` if it can't proceed).
+- `archmap_plans(map, action="set_step_status", plan_id=, step_id=, step_status="review")` — move the card **out of in-progress into review** (you claimed in-progress back in step 1a). fathom:code does not close a task to `done`; the worktree branch is now ready for **fathom:review** to gate before it merges. (Use `"blocked"` via `action="set_step"` if it can't proceed.)
 
 **Mode (c) — test-first:**
 - `archmap_modules(map, action="update", id=module, coverage=<fraction>, tests="<where the new interface tests live>")` on the tested module — and nothing else. Depth, edges, and files are untouched; only the coverage fact changed.
@@ -120,8 +138,9 @@ All docs live on the spine, typed — write them with `archmap_docs(map, action=
 
 ### 10. Hand off
 
-Report what landed: the files changed, the new depth/coverage on the map, and which candidate or WorkStep is now resolved.
+Report what landed: the files changed, the new depth/coverage on the map, which candidate or WorkStep is now resolved, and **the worktree branch** the work sits on (the card is now in **review**).
 
+- The built task's worktree branch goes to **fathom:review** (the review column) to gate before merge; after it merges, **fathom:map** runs `archmap_worktrees(action="sync")` to mark the worktree merged/removed and reconcile its branch into the map. fathom:code does not merge, push, or remove the worktree itself.
 - After a large change, point to **fathom:map** to re-verify the whole model is still accurate (you reconciled only your nodes; the broad sweep is its job).
 - If verification revealed the **chosen target was wrong** — the seam leaks, the interface forces tests past it — hand back to **fathom:design** (system-level redesign, re-grill, or explore alternative interfaces) rather than redesigning here.
 - A load-bearing deviation or a deliberate simplification is recorded by fathom:code itself — an `adr` doc or a `ceiling` doc on the spine (step 9), no hand-off.

@@ -11,3 +11,6 @@ __pycache__/
 
 # Node
 node_modules/
+
+# Fathom per-task worktrees (default ARCH_MAP_WORKTREE_DIR location)
+.fathom-worktrees/

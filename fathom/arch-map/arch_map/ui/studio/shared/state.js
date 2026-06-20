@@ -61,7 +61,7 @@
   // expects an immediate model back, so we keep a live normalized cache here.
   // Reads return it; writes update it optimistically, then a background POST
   // reconciles against the authoritative server response.
-  let cur = { repo: "", modules: [], plans: [], docs: [], docMembership: {}, decisions: {}, seq: 0 };
+  let cur = { repo: "", modules: [], plans: [], docs: [], worktrees: [], board: null, docMembership: {}, decisions: {}, seq: 0 };
   let lastServerJson = "";       // raw JSON of the last authoritative model
   let pendingWrites = 0;         // in-flight POSTs (gates poll-reconcile)
   let writeGen = 0;              // bumps per optimistic write; gates stale server snapshots
@@ -132,7 +132,18 @@
         targets: st.targets || [], interface: st.interface || "",
         dependsOnSteps: st.dependsOnSteps || [], adapters: st.adapters || [],
         note: st.note || "",
+        // board fields: priority (ordering), agent (swimlane), worktree (isolation), blocked (flag)
+        priority: st.priority || "normal", agent: st.agent || "",
+        worktree: st.worktree || "", blocked: !!st.blocked,
       })),
+    };
+  }
+  // worktrees: per-task isolated branches, passed through with array-safe defaults.
+  function normWorktree(w) {
+    return {
+      id: w.id, branch: w.branch || "", path: w.path || "", base: w.base || "",
+      status: w.status || "active", planId: w.planId || "", stepId: w.stepId || "",
+      agent: w.agent || "", head: w.head || "", created: w.created || "", note: w.note || "",
     };
   }
   // docs are projected (resolvedModuleIds / drift / scopeLabel baked by the server);
@@ -206,7 +217,10 @@
     });
     const plans = (raw.plans || []).map(normPlan);
     const docs = Array.isArray(raw.docs) ? raw.docs.map(normDoc) : [];
-    return { repo: raw.repo || "", modules, plans, docs,
+    const worktrees = Array.isArray(raw.worktrees) ? raw.worktrees.map(normWorktree) : [];
+    // `board` is the server-computed skill-cycle projection (single source of truth —
+    // the board UI renders it rather than recomputing lanes/columns client-side).
+    return { repo: raw.repo || "", modules, plans, docs, worktrees, board: raw.board || null,
              docMembership: raw.docMembership || {}, decisions, seq: (cur.seq || 0) + 1 };
   }
 
@@ -398,6 +412,16 @@
       case "update": return ["archmap_modules", Object.assign({ map, action: "update", id: a.module }, denormFields(a.fields || {}))];
       case "add": return ["archmap_modules", Object.assign({ map, action: "add" }, a.module)];
       case "set_step_status": return ["archmap_plans", { map, action: "set_step_status", plan_id: a.plan_id, step_id: a.step_id, step_status: a.status }];
+      case "set_step_fields": {
+        const f = a.fields || {};
+        const args = { map, action: "set_step", plan_id: a.plan_id, step_id: a.step_id };
+        if (f.status != null) args.step_status = f.status;   // model field `status` -> tool arg `step_status`
+        if (f.priority != null) args.priority = f.priority;
+        if (f.agent != null) args.agent = f.agent;
+        if (f.worktree != null) args.worktree = f.worktree;
+        if (f.blocked != null) args.blocked = f.blocked;
+        return ["archmap_plans", args];
+      }
       case "flag": {
         const s = a.suggestion || {};
         return ["archmap_suggestions", { map, action: "flag", module: a.module,
@@ -522,6 +546,19 @@
         return "Triage the top critical modules: " + (ids || "(none)") + ".";
       }
       case "grill": return grillBody(m);
+      case "task": {
+        const plan = (cur.plans || []).find((p) => p.id === req.plan);
+        const st = plan && (plan.steps || []).find((s) => s.id === req.step);
+        const wt = st && st.worktree ? (cur.worktrees || []).find((w) => w.id === st.worktree) : null;
+        return [
+          "Build task '" + (req.step || "") + "'" + (st ? " — " + st.title : "")
+            + " (plan '" + (req.plan || "") + "'). This is a fathom:code build step.",
+          st && st.interface ? "Interface (the test surface): " + st.interface : "",
+          st && st.targets && st.targets.length ? "Target module(s): " + st.targets.join(", ") : "",
+          wt && wt.path ? "Work INSIDE this task's worktree at " + wt.path + " (branch '" + wt.branch + "') — make all edits there." : "",
+          "When the interface tests pass, move the card to 'review' and reconcile the modules you touched on the spine.",
+        ].filter(Boolean).join("\n");
+      }
       default: return "Agent request (" + req.kind + ")" + (id ? " for module '" + id + "'" : "") + ".";
     }
   }
@@ -602,7 +639,8 @@
       res = await fetch(apiUrl("api/dispatch"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ map, kind: req.kind, module: req.module,
-                               modules: req.modules, suggestion_id: req.suggestion_id }),
+                               modules: req.modules, suggestion_id: req.suggestion_id,
+                               plan: req.plan, step: req.step }),
       });
     } catch (e) { showGrillFallback(prompt, null); return { prompt }; }
     if (!res.ok || !res.body) { showGrillFallback(prompt, null); return { prompt }; }
@@ -703,6 +741,55 @@
         throw new Error(msg);
       }
       const txt = await res.text();
+      if (myGen === writeGen && applyServerModel(txt)) broadcast(cur);
+    } finally { pendingWrites--; }
+  }
+
+  // ---- worktrees: mutate via /api/worktrees (browser) or archmap_worktrees (host) ---
+  // Same "one dispatch, two surfaces" shape as docAct: the op returns the full model
+  // so the cache reconciles from server truth, and the writeGen/pendingWrites discipline
+  // keeps polls from clobbering an in-flight write. When real git provisioning is off,
+  // the server returns a copy-paste `command` (fallback) — surfaced as a toast.
+  function _wtToolFor(map, body) {
+    const a = { map, action: body.op };
+    ["branch", "path", "base", "plan_id", "step_id", "agent", "note"].forEach((k) => { if (body[k] != null) a[k] = body[k]; });
+    if (body.id != null) a.id = body.id;
+    if (body.force != null) a.force = body.force;
+    return ["archmap_worktrees", a];
+  }
+  function _showWtFallback(result) {
+    if (result && result.fallback && result.command && window.Studio && window.Studio.toast) {
+      window.Studio.toast("Worktree not auto-created — run: " + result.command, "var(--accent)");
+    }
+  }
+  async function wtAct(body) {
+    if (HOST) {
+      const myGen = ++writeGen; pendingWrites++; const map = currentMap;
+      try {
+        const [name, args] = _wtToolFor(map, body);
+        _showWtFallback(await hostCall(name, args));
+        const full = await hostCall("archmap_get_full_model", { map });
+        if (myGen === writeGen && full && adoptModelObject(full)) broadcast(cur);
+      } catch (e) {
+        if (myGen === writeGen) { try { const f = await hostCall("archmap_get_full_model", { map }); if (f && adoptModelObject(f)) broadcast(cur); } catch (_) {} }
+        throw e;
+      } finally { pendingWrites--; }
+      return;
+    }
+    const myGen = ++writeGen; pendingWrites++;
+    try {
+      const res = await fetch(apiUrl("api/worktrees"), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(currentMap ? Object.assign({ map: currentMap }, body) : body),
+      });
+      if (!res.ok) {
+        let msg = "worktree action failed";
+        try { msg = (await res.json()).error || msg; } catch (e) {}
+        if (myGen === writeGen) { try { adoptServer(await fetchModel()); } catch (e) {} }
+        throw new Error(msg);
+      }
+      const txt = await res.text();
+      try { _showWtFallback(JSON.parse(txt)._worktreeResult); } catch (e) {}
       if (myGen === writeGen && applyServerModel(txt)) broadcast(cur);
     } finally { pendingWrites--; }
   }
@@ -850,6 +937,25 @@
       act({ action: "set_step_status", plan_id: planId, step_id: stepId, status }).catch(reportErr);
       return cur;
     },
+    // patch a board card's fields (priority/agent/worktree/blocked/status) in one write
+    setStepFields(planId, stepId, fields) {
+      const plan = (cur.plans || []).find((p) => p.id === planId);
+      if (plan) {
+        const step = (plan.steps || []).find((s) => s.id === stepId);
+        if (step) { Object.assign(step, fields); bump(); }
+      }
+      act({ action: "set_step_fields", plan_id: planId, step_id: stepId, fields }).catch(reportErr);
+      return cur;
+    },
+    assignStep(planId, stepId, agent) { return Store.setStepFields(planId, stepId, { agent }); },
+
+    // ---- worktrees: per-task isolated branches (real git, server-side + guarded) ----
+    // Non-optimistic: the op returns the full refreshed model (the worktree's git
+    // state baked in), so the cache reconciles from server truth. Mirrors docAct.
+    createWorktree(opts) { wtAct(Object.assign({ op: "create" }, opts || {})).catch(reportErr); return cur; },
+    attachWorktree(opts) { wtAct(Object.assign({ op: "attach" }, opts || {})).catch(reportErr); return cur; },
+    removeWorktree(id, force) { wtAct({ op: "remove", id, force: !!force }).catch(reportErr); return cur; },
+    syncWorktrees() { wtAct({ op: "sync" }).catch(reportErr); return cur; },
     dispatch(req) {
       // Generalized "ask the agent to X" router (item 11). Routes fix / rescan /
       // realize / triage / grill through the same host grill bridge (MCP-App

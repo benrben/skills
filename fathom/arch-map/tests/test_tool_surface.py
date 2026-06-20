@@ -17,8 +17,9 @@ def test_tools_are_registered_with_archmap_prefix():
         "archmap_list_maps", "archmap_create_map", "archmap_rename_map",
         "archmap_delete_map", "archmap_show_map", "archmap_get_full_model",
         "archmap_render_view", "archmap_get_metrics", "archmap_scan_signals",
+        "archmap_board",
         "archmap_modules", "archmap_suggestions", "archmap_grilling",
-        "archmap_plans", "archmap_docs",
+        "archmap_plans", "archmap_docs", "archmap_worktrees",
         "archmap_ingest", "archmap_drift", "archmap_history",
         "archmap_verify_edges", "archmap_whatif",
     }

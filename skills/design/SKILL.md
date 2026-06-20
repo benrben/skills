@@ -1,6 +1,6 @@
 ---
 name: design
-description: Decide the deep-module structure for a change — in ONE skill, two modes by request. IMPROVE mode finds friction in EXISTING shallow modules, flags a deepening candidate, and grills it to accepted/deferred/rejected. NEW mode designs the intended deep-module graph for new or changing work (seams, interfaces design-it-twice, dependency categories) and sequences it into build steps. Records the decision on the spine as docs (rfc → adr · spec · diagram), candidates, intended modules, and Plans — all spine-only, no files. Use when the user wants to improve architecture, consolidate shallow modules, design a new feature's structure, or compare interface options before code. Do NOT use to seed or reconcile the map of what IS (fathom:map), to edit source (fathom:code), or to gate a diff (fathom:review). design decides WHAT should exist and grills HOW; it never writes source.
+description: Decide the deep-module structure for a change — in ONE skill, two modes by request. IMPROVE mode finds friction in EXISTING shallow modules, flags a deepening candidate, and grills it to accepted/deferred/rejected. NEW mode designs the intended deep-module graph for new or changing work (seams, interfaces design-it-twice, dependency categories) and sequences it into build steps — each step is a TASK on the skill-cycle board (design OWNS the "plan" column), carrying a priority, an assigned agent, and its own per-task git worktree for fathom:code to build in. Records the decision on the spine as docs (rfc → adr · spec · diagram), candidates, intended modules, and Plans — all spine-only, no files. Use when the user wants to improve architecture, consolidate shallow modules, design a new feature's structure, or compare interface options before code. Do NOT use to seed or reconcile the map of what IS (fathom:map), to edit source (fathom:code), or to gate a diff (fathom:review). design decides WHAT should exist and grills HOW; it never writes source.
 ---
 
 # Design — Decide the Deep Structure
@@ -135,21 +135,28 @@ Leave `coverage` 0 and never mark an intended node `updated` — those are claim
 
 ## Both modes — sequence, record the decision, hand off
 
-### Sequence the work into ordered steps
+### Sequence the work into ordered steps — each step is a board task
 
-Each step hands **one** target module to `fathom:code` — its interface (test surface), seam, dependency category — in dependency order (leaf/deepest first, ports before adapters):
+Each step hands **one** target module to `fathom:code` — its interface (test surface), seam, dependency category — in dependency order (leaf/deepest first, ports before adapters). A step is also a **task on the skill-cycle board** ([../../fathom/BOARD.md](../../fathom/BOARD.md)): set its `priority`, optionally assign an `agent` (the board swimlane), and it lands in the **plan/todo** columns ready to walk the cycle.
 
 ```
 archmap_plans(map, action="add_steps", plan_id="orders-rework", steps=[
   {"id": "s1", "title": "Build pricing-engine port + adapters", "targets": ["pricing-engine"],
    "interface": "<test surface>", "adapters": "ports & adapters — in-memory for tests, HTTP for prod",
-   "dependsOnSteps": []},
+   "dependsOnSteps": [], "priority": "high", "agent": "fathom:code"},
   {"id": "s2", "title": "Build order-intake on pricing-engine", "targets": ["order-intake"],
-   "interface": "...", "dependsOnSteps": ["s1"]}
+   "interface": "...", "dependsOnSteps": ["s1"], "priority": "normal"}
 ])
 ```
 
-(For IMPROVE mode a single accepted candidate is often the whole step — the `module`, its grilled interface, and category are the hand-off.)
+Then **provision a per-task worktree** so `fathom:code` builds each task on its own isolated branch, in parallel, without colliding — design owns the create, code owns the build:
+
+```
+archmap_worktrees(map, action="create", branch="feat/pricing-engine",
+                  plan_id="orders-rework", step_id="s1", agent="fathom:code")
+```
+
+(Real `git worktree add` when allowed; otherwise it records the worktree and returns the command — [../../fathom/BOARD.md](../../fathom/BOARD.md). For IMPROVE mode a single accepted candidate is often the whole task — the `module`, its grilled interface, and category are the hand-off; a worktree is optional but recommended for a risky refactor.)
 
 ### Record the decision as docs (spine-only)
 

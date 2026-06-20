@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Literal
 import asyncio
@@ -58,12 +58,13 @@ try:  # Lane 2 — Generative/Prefab UI — needs the prefab-ui extra ON TOP of 
 except Exception:  # pragma: no cover
     _HAS_PREFAB = False
 
-from .model import ArchModel, Module, Suggestion, Plan, WorkStep, Doc
+from .model import ArchModel, Module, Suggestion, Plan, WorkStep, Doc, Worktree
 from . import ledger
 from .coverage_ingest import module_coverage, read_report
-from .git_facts import GitFacts
+from .git_facts import GitFacts, NotARepo, UnknownSha
 from .import_graph import verify as verify_imports
 from .whatif import preview_merge
+from .worktrees import Worktrees, WorktreeError, slug as _wt_slug, default_path as _wt_default_path
 
 HERE = Path(__file__).parent
 # The unified **studio** — one workspace combining the dependency graph (canvas)
@@ -91,14 +92,17 @@ mcp = FastMCP(
         "Persistent, file-backed architecture maps — one named map per project; every "
         "tool takes an explicit `map` id and maps are shared (no per-agent access). "
         "READ the model: archmap_show_map, archmap_get_full_model, archmap_get_metrics, "
-        "archmap_render_view. MEASURE facts: archmap_ingest (churn from git, coverage from a "
-        "test report, size from LOC) and archmap_scan_signals. TRACK change: archmap_drift, "
-        "archmap_history, archmap_verify_edges, archmap_whatif. MUTATE through five "
-        "action-dispatchers — archmap_modules, archmap_suggestions, archmap_grilling, "
-        "archmap_plans, archmap_docs (each takes action=add|update|delete|...). "
+        "archmap_render_view, archmap_board (the skill-cycle task Kanban). MEASURE facts: "
+        "archmap_ingest (churn from git, coverage from a test report, size from LOC) and "
+        "archmap_scan_signals. TRACK change: archmap_drift, archmap_history, "
+        "archmap_verify_edges, archmap_whatif. MUTATE through action-dispatchers — "
+        "archmap_modules, archmap_suggestions, archmap_grilling, archmap_plans (its steps are "
+        "board tasks), archmap_docs, archmap_worktrees (per-task isolated git branches) — each "
+        "takes action=add|update|delete|... . "
         "Vocabulary: module (interface + implementation), depth (much behaviour behind a small "
         "interface), seam, leak, coverage, candidate (a proposed deepening) and its grilling, "
-        "Plan/WorkStep, and doc types (glossary/note/adr/spec/risk/runbook/postmortem/diagram)."
+        "Plan/WorkStep (a task on the board), worktree (a task's isolated branch), and doc types "
+        "(glossary/note/adr/spec/risk/runbook/postmortem/diagram)."
     ),
 )
 
@@ -145,6 +149,8 @@ class Store:
     def get_plan(self, pid): return self._load().get_plan(pid)
     def get_doc(self, did): return self._load().get_doc(did)
     def get_docs(self, ids): return self._load().get_docs(ids)
+    def get_worktree(self, wid): return self._load().get_worktree(wid)
+    def board(self, running=None): return self._load().board(running)
     def queued_for_grilling(self): return self._load().queued_for_grilling()
     @property
     def modules(self): return self._load().modules
@@ -152,6 +158,8 @@ class Store:
     def plans(self): return self._load().plans
     @property
     def docs(self): return self._load().docs
+    @property
+    def worktrees(self): return self._load().worktrees
 
     # writes (load -> mutate -> save)
     def set_depth(self, mid, s): self._write(lambda m: m.set_depth(mid, s))
@@ -178,7 +186,12 @@ class Store:
     def update_plan(self, pid, **ch): self._write(lambda m: m.update_plan(pid, **ch))
     def add_work_steps(self, pid, steps): self._write(lambda m: m.add_work_steps(pid, steps))
     def set_step_status(self, pid, sid, st): self._write(lambda m: m.set_step_status(pid, sid, st))
+    def set_step_fields(self, pid, sid, **ch): self._write(lambda m: m.set_step_fields(pid, sid, **ch))
     def delete_plan(self, pid): self._write(lambda m: m.delete_plan(pid))
+    def add_worktree(self, wt): self._write(lambda m: m.add_worktree(wt))
+    def update_worktree(self, wid, **ch): self._write(lambda m: m.update_worktree(wid, **ch))
+    def delete_worktree(self, wid): self._write(lambda m: m.delete_worktree(wid))
+    def link_step_worktree(self, pid, sid, wid): self._write(lambda m: m.link_step_worktree(pid, sid, wid))
     def add_doc(self, doc): self._write(lambda m: m.add_doc(doc))
     def update_doc(self, did, **ch): self._write(lambda m: m.update_doc(did, **ch))
     def delete_doc(self, did): self._write(lambda m: m.delete_doc(did))
@@ -837,6 +850,44 @@ def _repo_root(root: str) -> str:
     return root or os.getcwd()
 
 
+# --- worktrees: per-task isolated branches (the board's isolation unit) -------
+# Real `git worktree` work lives in worktrees.py; here we guard it (default ON,
+# same gate philosophy as /api/dispatch) and pick a default location OUTSIDE the
+# main working tree so the checkout never nests in the repo it forks from.
+_BOARD_RUNNING: set = set()        # (map, planId, stepId) — a task agent is live in its worktree
+
+
+def _running_keys(map_id: str) -> set:
+    """The (planId, stepId) pairs a task agent is actively dispatched on, for `map`
+    — the board's ⚙ live marker. Ephemeral per-process state, never persisted."""
+    return {(p, s) for (m, p, s) in _BOARD_RUNNING if m == map_id}
+
+
+def _worktree_exec_allowed() -> bool:
+    """Real `git worktree` provisioning is ON unless ARCH_MAP_ALLOW_WORKTREE is
+    0/false/no/off — then create/remove degrade to a copy-paste command (fallback),
+    mirroring /api/dispatch's disabled path."""
+    return os.environ.get("ARCH_MAP_ALLOW_WORKTREE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _worktree_base(root: str) -> "Path":
+    """Where task worktrees are checked out: $ARCH_MAP_WORKTREE_DIR if set, else a
+    `.fathom-worktrees/` sibling of the repo (kept out of the main working tree)."""
+    env = os.environ.get("ARCH_MAP_WORKTREE_DIR")
+    if env:
+        return Path(env).expanduser()
+    return Path(_repo_root(root)).resolve().parent / ".fathom-worktrees"
+
+
+def _safe_git_worktrees(wm: "Worktrees") -> list[dict]:
+    """`git worktree list`, or [] when there's no repo/git — sync/list never error
+    just because the server isn't running inside a git work tree."""
+    try:
+        return wm.list()
+    except (NotARepo, UnknownSha, WorktreeError):
+        return []
+
+
 @mcp.tool(name="archmap_ingest")
 def ingest(map: str, root: str = "", coverage_report: str = "",
            window_days: int = 90, anchor: bool = True) -> dict:
@@ -1214,7 +1265,7 @@ def _grilling_impl(map, action, module, suggestion_id, decision, note, adr):
 @mcp.tool(name="archmap_plans", **_APP)
 def plans(
     map: str,
-    action: Literal["create", "add_steps", "set_step_status", "update", "get"],
+    action: Literal["create", "add_steps", "set_step_status", "set_step", "update", "get"],
     plan_id: str = "",
     title: str = "",
     domain: str | None = None,
@@ -1224,19 +1275,29 @@ def plans(
     adrRefs: list[str] | None = None,
     steps: list[dict] | None = None,
     step_id: str = "",
-    step_status: Literal["todo", "in-progress", "done", "blocked", ""] = "",
+    step_status: Literal["todo", "understand", "plan", "in-progress",
+                         "review", "done", "blocked", ""] = "",
+    priority: Literal["low", "normal", "high", "urgent", ""] = "",
+    agent: str | None = None,
+    worktree: str | None = None,
+    blocked: bool | None = None,
 ) -> dict:
     """Manage PLANS (intended deep structure) and their work steps in `map`, by `action`.
-    Writes re-render and return the compact ack; get returns the plan record.
+    Writes re-render and return the compact ack; get returns the plan record. A step is
+    a TASK on the board (archmap_board) — its `status` is the skill-cycle column and its
+    `agent` is the swimlane.
 
       action="create":          create plan `plan_id` (needs title; optional domain,
-                                 intent, moduleIds). (fathom:plan)
+                                 intent, moduleIds). (fathom:design)
       action="add_steps":       append ordered build steps to `plan_id`: steps=[{id,
                                  title, targets?, interface?, dependsOnSteps?, adapters?,
-                                 note?}, ...]. Unknown step keys are REJECTED (not
-                                 silently dropped). fathom:code executes steps in order.
-      action="set_step_status": set step `step_id` of `plan_id` to step_status
-                                 (todo|in-progress|done|blocked).
+                                 note?, priority?, agent?, worktree?}, ...]. Unknown step
+                                 keys are REJECTED. fathom:code executes steps in order.
+      action="set_step_status": move step `step_id` of `plan_id` across the board — its
+                                 status is one of todo|understand|plan|in-progress|review|done.
+      action="set_step":        patch a step's board fields without moving columns —
+                                 step_status and/or priority (low|normal|high|urgent),
+                                 agent (swimlane), worktree (id), blocked (true|false).
       action="update":          patch plan `plan_id` (title/domain/intent/status/
                                  moduleIds/adrRefs); status is draft|active|done|abandoned.
       action="get":             read plan `plan_id`'s full record (read-only)."""
@@ -1244,11 +1305,13 @@ def plans(
     hint = "Read the plan via archmap_plans(map, action='get', plan_id=...)."
     return _guard(call, action != "get", hint, lambda: _plans_impl(
         map, action, plan_id, title, domain, intent, status,
-        moduleIds, adrRefs, steps, step_id, step_status))
+        moduleIds, adrRefs, steps, step_id, step_status,
+        priority, agent, worktree, blocked))
 
 
 def _plans_impl(map, action, plan_id, title, domain, intent, status,
-                moduleIds, adrRefs, steps, step_id, step_status) -> dict:
+                moduleIds, adrRefs, steps, step_id, step_status,
+                priority="", agent=None, worktree=None, blocked=None) -> dict:
     store = REGISTRY.ensure(map) if action == "create" else REGISTRY.store(map)
     if action == "create":
         store.create_plan(Plan(id=plan_id, title=title, domain=domain or "",
@@ -1265,6 +1328,15 @@ def _plans_impl(map, action, plan_id, title, domain, intent, status,
     if action == "set_step_status":
         store.set_step_status(plan_id, step_id, step_status)
         return _ack(store)
+    if action == "set_step":
+        ch = {k: v for k, v in dict(
+            status=(step_status or None), priority=(priority or None),
+            agent=agent, worktree=worktree, blocked=blocked).items() if v is not None}
+        if not ch:
+            raise ValueError("plans(action='set_step') needs at least one of "
+                             "step_status/priority/agent/worktree/blocked")
+        store.set_step_fields(plan_id, step_id, **ch)
+        return _ack(store)
     if action == "update":
         ch = {k: v for k, v in dict(title=(title or None), domain=domain, intent=intent,
                                     status=(status or None), moduleIds=moduleIds,
@@ -1272,6 +1344,178 @@ def _plans_impl(map, action, plan_id, title, domain, intent, status,
         store.update_plan(plan_id, **ch)
         return _ack(store)
     return store.get_plan(plan_id)                 # get
+
+
+@mcp.tool(name="archmap_board", meta=_MAX_RESULT, **_APP)
+def board(map: str) -> dict:
+    """The TASK BOARD: every WorkStep projected into the skill-cycle Kanban — columns
+    `todo | understand | plan | in-progress | review | done` (each column owned by a
+    Fathom skill: understand→understand, plan→design, in-progress→code, review→review),
+    swimlanes grouped by the agent handling each task, and the per-task git worktree
+    each card is built in. Read-only; the SAME projection the studio board renders.
+
+    Returns {columns, counts (per column), lanes:[{agent, cards}], cards, worktrees}.
+    Each card carries planId/stepId/title/column/blocked/priority/agent/targets and its
+    worktree (branch + path) or null, plus a `running` flag when a task agent is live in
+    its worktree. Use to see/track work across the cycle from a terminal agent — moves
+    are made with archmap_plans(action='set_step'|'set_step_status') and worktrees with
+    archmap_worktrees."""
+    model = REGISTRY.ensure(map)._load()
+    out = model.board(running=_running_keys(map))
+    out["map"] = map
+    return out
+
+
+@mcp.tool(name="archmap_worktrees", **_APP)
+def worktrees(
+    map: str,
+    action: Literal["list", "create", "remove", "prune", "attach", "sync"],
+    branch: str = "",
+    path: str = "",
+    base: str = "",
+    plan_id: str = "",
+    step_id: str = "",
+    agent: str = "",
+    id: str = "",
+    force: bool = False,
+    root: str = "",
+    note: str = "",
+) -> dict:
+    """Manage per-task git WORKTREES on `map`, by `action` — the board's isolation
+    unit: one branch + checkout per WorkStep so an agent builds a task without
+    colliding in the shared working tree. The spine RECORDS each worktree (the board
+    shows the branch + agent); real `git worktree` runs when allowed (ON unless
+    ARCH_MAP_ALLOW_WORKTREE is off) — otherwise it degrades to a copy-paste command.
+
+      action="create": provision a worktree for a task — needs branch (or a step_id/
+                       title to derive one); optional base (fork point), plan_id/step_id
+                       (links + back-references the card), agent, path. Records it and
+                       (when allowed) runs `git worktree add -b <branch>`; returns the
+                       worktree + provisioned flag (and a `command` fallback if not).
+      action="attach": record an EXISTING branch/worktree as a task's worktree (no git
+                       mutation) — branch (+ optional path/plan_id/step_id/agent).
+      action="remove": drop worktree `id` — removes the checkout (best-effort) and the
+                       spine record. force=true discards local changes.
+      action="prune":  `git worktree prune` (forget vanished checkouts).
+      action="sync":   reconcile spine worktrees against `git worktree list` — refresh
+                       HEAD shas, mark vanished ones status='removed'. fathom:map runs this.
+      action="list":   spine worktrees + the live `git worktree list`. Read-only."""
+    call = f"archmap_worktrees(action='{action}')"
+    hint = "List worktrees via archmap_worktrees(map, action='list')."
+    return _guard(call, action not in ("list",), hint, lambda: _worktrees_impl(
+        map, action, branch=branch, path=path, base=base, plan_id=plan_id,
+        step_id=step_id, agent=agent, wt_id=id, force=force, root=root, note=note))
+
+
+def _worktrees_impl(map, action, *, branch="", path="", base="", plan_id="",
+                    step_id="", agent="", wt_id="", force=False, root="", note=""):
+    store = REGISTRY.ensure(map) if action in ("create", "attach") else REGISTRY.store(map)
+    repo = _repo_root(root)
+    wm = Worktrees(repo)
+
+    if action == "list":
+        model = store._load()
+        return {"map": map, "worktrees": [asdict(w) for w in model.worktrees.values()],
+                "gitWorktrees": _safe_git_worktrees(wm)}
+
+    if action == "create":
+        # derive a branch from the step/title when not given (feat/<slug>)
+        if not branch:
+            seed = step_id or note
+            if not seed:
+                raise ValueError("worktrees(action='create') needs branch (or step_id/note to derive one)")
+            branch = "feat/" + _wt_slug(seed)
+        wid = wt_id or _wt_slug(branch)
+        wt_path = path or _wt_default_path(_worktree_base(root), branch)
+        provisioned, head = False, ""
+        fallback_cmd = f"git worktree add -b {branch} {wt_path}" + (f" {base}" if base else "")
+        if _worktree_exec_allowed() and shutil.which("git"):
+            try:
+                e = wm.add(wt_path, branch, base=base, new_branch=True)
+                head, wt_path, provisioned = e.get("head", ""), e.get("path", wt_path), True
+            except (NotARepo, UnknownSha, WorktreeError) as ex:
+                note = (note + " — " if note else "") + f"not provisioned: {ex}"
+        created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        store.add_worktree(Worktree(id=wid, branch=branch, path=wt_path, base=base,
+                                    planId=plan_id, stepId=step_id, agent=agent,
+                                    head=head, created=created, note=note))
+        out = _ack(store, changed=f"created worktree {wid}")
+        out.update({"worktree": store.get_worktree(wid), "provisioned": provisioned})
+        if not provisioned:
+            out.update({"fallback": True, "command": fallback_cmd})
+        return out
+
+    if action == "attach":
+        if not branch:
+            raise ValueError("worktrees(action='attach') needs branch")
+        wid = wt_id or _wt_slug(branch)
+        wt_path = path
+        if not wt_path:                       # find the checkout git already has for this branch
+            wt_path = next((e["path"] for e in _safe_git_worktrees(wm) if e["branch"] == branch), "")
+        created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        store.add_worktree(Worktree(id=wid, branch=branch, path=wt_path, base=base,
+                                    planId=plan_id, stepId=step_id, agent=agent,
+                                    created=created, note=note))
+        out = _ack(store, changed=f"attached worktree {wid}")
+        out["worktree"] = store.get_worktree(wid)
+        return out
+
+    if action == "remove":
+        if not wt_id:
+            raise ValueError("worktrees(action='remove') needs id")
+        rec = store.get_worktree(wt_id)       # KeyError if absent
+        git_removed = False
+        if rec.get("path") and _worktree_exec_allowed() and shutil.which("git"):
+            try:
+                wm.remove(rec["path"], force=force)
+                git_removed = True
+            except (NotARepo, UnknownSha, WorktreeError):
+                pass
+        store.delete_worktree(wt_id)
+        out = _ack(store, changed=f"removed worktree {wt_id}")
+        out["gitRemoved"] = git_removed
+        return out
+
+    if action == "prune":
+        if _worktree_exec_allowed() and shutil.which("git"):
+            try:
+                wm.prune()
+            except (NotARepo, WorktreeError):
+                pass
+        return _worktrees_sync(store, map, wm)
+
+    # action == "sync"
+    return _worktrees_sync(store, map, wm)
+
+
+def _worktrees_sync(store: Store, map: str, wm: Worktrees) -> dict:
+    """Reconcile spine worktrees against the live `git worktree list`: refresh each
+    one's HEAD sha, and mark a worktree whose checkout has vanished status='removed'
+    (and re-activate one that came back). The honesty pass fathom:map runs."""
+    git_list = _safe_git_worktrees(wm)
+    by_path = {os.path.realpath(e["path"]): e for e in git_list if e.get("path")}
+    by_branch = {e["branch"]: e for e in git_list if e.get("branch")}
+    updated = []
+    for w in list(store.worktrees.values()):
+        git_entry = (by_path.get(os.path.realpath(w.path)) if w.path else None) or by_branch.get(w.branch)
+        # A worktree whose checkout dir is gone is dead even if git hasn't pruned its
+        # admin entry yet — the honest signal is the directory on disk, not git's list.
+        path_gone = bool(w.path) and not os.path.isdir(w.path)
+        live = git_entry is not None and not path_gone
+        ch = {}
+        if live:
+            if git_entry.get("head") and git_entry["head"] != w.head:
+                ch["head"] = git_entry["head"]
+            if w.status == "removed":
+                ch["status"] = "active"
+        elif w.status != "removed":
+            ch["status"] = "removed"
+        if ch:
+            store.update_worktree(w.id, **ch)
+            updated.append(w.id)
+    out = _ack(store, changed="synced worktrees")
+    out.update({"updated": updated, "gitWorktrees": git_list})
+    return out
 
 
 def _scope_from_args(scope_kind: str, scope_ids, scope_domain: str,
@@ -1472,6 +1716,8 @@ def _apply_action(store: Store, action: str, body: dict) -> None:
         store.request_grilling(body["suggestion_id"])
     elif action == "set_step_status":
         store.set_step_status(body["plan_id"], body["step_id"], body["status"])
+    elif action == "set_step_fields":
+        store.set_step_fields(body["plan_id"], body["step_id"], **body.get("fields", {}))
     elif action == "update_plan":
         store.update_plan(body["plan_id"], **body.get("fields", {}))
     elif action == "set_depth":
@@ -1544,13 +1790,28 @@ async def api_maps(request):
     return JSONResponse({"maps": REGISTRY.list(), "default": REGISTRY.default_id(), "created": created})
 
 
+def _overlay_running(model_dict: dict, map_id: str) -> None:
+    """Stamp the board cards a task agent is live on with running=True. The board in
+    to_dict() is computed without the ephemeral run set (model.py stays pure); this
+    overlays it per request so every polling studio tab shows the ⚙ marker."""
+    keys = _running_keys(map_id)
+    if not keys:
+        return
+    for c in (model_dict.get("board") or {}).get("cards", []):
+        if (c.get("planId"), c.get("stepId")) in keys:
+            c["running"] = True            # cards are shared refs with lanes -> both update
+
+
 @mcp.custom_route("/api/model", ["GET"])
 async def api_model(request):
+    map_id = request.query_params.get("map")
     try:
-        store = REGISTRY.resolve(request.query_params.get("map"))
+        store = REGISTRY.resolve(map_id)
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=404)
-    return JSONResponse(store.to_dict())
+    d = store.to_dict()
+    _overlay_running(d, map_id or REGISTRY.default_id())
+    return JSONResponse(d)
 
 
 @mcp.custom_route("/api/docs", ["GET", "POST"])
@@ -1572,6 +1833,55 @@ async def api_docs(request):
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(store.to_dict())
+
+
+@mcp.custom_route("/api/board", ["GET"])
+async def api_board(request):
+    """GET -> the task board projection (skill-cycle columns × agent swimlanes) with
+    the live ⚙ run markers for this map. The studio also gets `board` inside /api/model
+    (to_dict), so this is mainly for parity + cross-tool reads."""
+    map_id = request.query_params.get("map")
+    try:
+        store = REGISTRY.resolve(map_id)
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return JSONResponse(store.board(running=_running_keys(map_id or REGISTRY.default_id())))
+
+
+@mcp.custom_route("/api/worktrees", ["GET", "POST"])
+async def api_worktrees(request):
+    """GET -> the map's worktrees + the live `git worktree list`. POST {op|action, ...}
+    -> create/attach/remove/prune/sync via the SAME _worktrees_impl the archmap_worktrees
+    tool uses (one dispatch, two surfaces). POST returns the refreshed full model (so the
+    studio reconciles like /api/act), with the op's result stashed under `_worktreeResult`
+    (carries the fallback `command` when real provisioning is off)."""
+    if request.method == "GET":
+        map_id = request.query_params.get("map")
+        try:
+            store = REGISTRY.resolve(map_id)
+        except (KeyError, ValueError) as e:
+            return JSONResponse({"error": str(e)}, status_code=404)
+        model = store._load()
+        wm = Worktrees(_repo_root(""))
+        return JSONResponse({"worktrees": [asdict(w) for w in model.worktrees.values()],
+                             "gitWorktrees": _safe_git_worktrees(wm)})
+    # POST: a browser worktree op — same-origin guarded like /api/dispatch (it shells git)
+    if not _dispatch_same_origin(request):
+        return JSONResponse({"error": "cross-origin worktree op refused"}, status_code=403)
+    body = await request.json()
+    map_id = body.get("map") or REGISTRY.default_id()
+    try:
+        result = _worktrees_impl(
+            map_id, body.get("op") or body.get("action", ""),
+            branch=body.get("branch", ""), path=body.get("path", ""), base=body.get("base", ""),
+            plan_id=body.get("plan_id", ""), step_id=body.get("step_id", ""),
+            agent=body.get("agent", ""), wt_id=body.get("id", ""),
+            force=bool(body.get("force")), root=body.get("root", ""), note=body.get("note", ""))
+    except (KeyError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    model = REGISTRY.resolve(map_id).to_dict()
+    model["_worktreeResult"] = result
+    return JSONResponse(model)
 
 
 @mcp.custom_route("/view", ["GET"])
@@ -1658,17 +1968,25 @@ async def api_grill(request):
 # http://127.0.0.1:<PORT>/mcp, so its writes land in the store the studio polls;
 # source edits land in the working tree for human review (nothing is committed).
 _DISPATCH_RUNNING: set = set()        # (map, kind, module) -> single-writer guard
-_DISPATCH_TOOLS = {                    # per-kind tool allowlist; only fix/realize edit
+_DISPATCH_TOOLS = {                    # per-kind tool allowlist; only fix/realize/task edit
     "fix":     "Read,Edit,Bash(git *),mcp__arch-map__*",
     "realize": "Read,Edit,Bash(git *),mcp__arch-map__*",
+    "task":    "Read,Edit,Bash(git *),mcp__arch-map__*",
     "grill":   "Read,mcp__arch-map__*",
     "rescan":  "Read,mcp__arch-map__*",
     "triage":  "Read,mcp__arch-map__*",
 }
 
 
+def _step_of(store: Store, plan_id: str, step_id: str):
+    """The WorkStep (plan_id, step_id) or None — no raise (a dispatch must degrade)."""
+    p = store.plans.get(plan_id) if plan_id else None
+    return next((s for s in p.steps if s.id == step_id), None) if p else None
+
+
 def _dispatch_prompt(store: Store, map_id: str, kind: str, module: str = "",
-                     modules: list | None = None, suggestion_id: str = "") -> str:
+                     modules: list | None = None, suggestion_id: str = "",
+                     plan_id: str = "", step_id: str = "") -> str:
     """The per-kind agent instruction — mirrors the studio's client-side dispatchPrompt
     so host and browser send identical wording."""
     m = store.modules.get(module) if module else None
@@ -1689,6 +2007,24 @@ def _dispatch_prompt(store: Store, map_id: str, kind: str, module: str = "",
         return "Triage the top critical modules: " + (ids or "(none)") + "."
     if kind == "grill":
         return _grill_prompt(store, map_id, module)
+    if kind == "task":
+        st = _step_of(store, plan_id, step_id)
+        wt = store.worktrees.get(st.worktree) if (st and st.worktree) else None
+        lines = [f"Build task '{step_id}'" + (f" — {st.title}" if st else "")
+                 + f" (plan '{plan_id}', map '{map_id}'). This is a fathom:code build step."]
+        if st and st.interface:
+            lines.append("Interface (the test surface to build to): " + st.interface)
+        if st and st.targets:
+            lines.append("Target module(s): " + ", ".join(st.targets))
+        if st and st.adapters:
+            lines.append("Dependency category / adapters: " + ", ".join(st.adapters))
+        if wt and wt.path:
+            lines.append(f"You are running INSIDE this task's worktree at {wt.path} "
+                         f"(branch '{wt.branch}'). Make ALL edits here, on this branch.")
+        lines.append("When the interface tests pass, reconcile the modules you touched on "
+                     "the arch-map spine and move the card to the 'review' column "
+                     "(archmap_plans set_step_status). Do not commit or push.")
+        return "\n".join(lines)
     return f"Agent request ({kind})" + (f" for module '{module}'" if module else "") + "."
 
 
@@ -1744,9 +2080,11 @@ async def api_dispatch(request):
     module = body.get("module", "")
     modules = body.get("modules") or []
     sid = body.get("suggestion_id", "")
+    plan_id = body.get("plan") or body.get("plan_id") or ""
+    step_id = body.get("step") or body.get("step_id") or ""
     try:
         store = REGISTRY.resolve(body.get("map"))
-        prompt = _dispatch_prompt(store, map_id, kind, module, modules, sid)
+        prompt = _dispatch_prompt(store, map_id, kind, module, modules, sid, plan_id, step_id)
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -1756,6 +2094,24 @@ async def api_dispatch(request):
     claude = shutil.which("claude")
     if not claude:
         return JSONResponse({"fallback": True, "reason": "no-agent-binary", "prompt": prompt}, status_code=503)
+
+    # A 'task' build runs INSIDE its WorkStep's worktree (the board's isolation unit):
+    # cwd = the worktree checkout, the card flips to in-progress + records its agent,
+    # and the board shows the ⚙ live marker for every surface watching this map.
+    run_dir = os.getcwd()
+    board_key = None
+    label = module or (f"{plan_id}/{step_id}" if step_id else "")
+    if kind == "task" and plan_id and step_id:
+        st = _step_of(store, plan_id, step_id)
+        wt = store.worktrees.get(st.worktree) if (st and st.worktree) else None
+        if wt and wt.path and os.path.isdir(wt.path):
+            run_dir = wt.path
+        try:
+            store.set_step_fields(plan_id, step_id, status="in-progress",
+                                  agent=(st.agent if (st and st.agent) else "fathom:code"))
+        except (KeyError, ValueError):
+            pass
+        board_key = (map_id, plan_id, step_id)
 
     # best-effort instant feedback, mirroring the MCP-App host pre-calls
     try:
@@ -1768,15 +2124,15 @@ async def api_dispatch(request):
     except (KeyError, ValueError):
         pass
 
-    key = (map_id, kind, module)
+    key = (map_id, kind, label)
     if key in _DISPATCH_RUNNING:
-        return JSONResponse({"error": "already-running", "kind": kind, "module": module}, status_code=409)
+        return JSONResponse({"error": "already-running", "kind": kind, "module": label}, status_code=409)
 
     port = os.environ.get("ARCH_MAP_PORT", "8800")
     mcp_cfg = json.dumps({"mcpServers": {"arch-map": {"type": "http", "url": f"http://127.0.0.1:{port}/mcp"}}})
     argv = [
         claude, "-p", prompt,
-        "--add-dir", os.getcwd(),
+        "--add-dir", run_dir,
         "--permission-mode", "acceptEdits",
         "--allowedTools", _DISPATCH_TOOLS.get(kind, "Read,mcp__arch-map__*"),
         "--disallowedTools", "Bash(rm *),Bash(git push *),WebFetch,WebSearch",
@@ -1786,17 +2142,20 @@ async def api_dispatch(request):
         ("You are running headless from an arch-map studio button. Make the smallest "
          "change that satisfies the request, then reconcile the modules you touched on "
          "the arch-map spine via the arch-map MCP tools. Do not commit, push, or touch "
-         "files outside the repo."),
+         "files outside the worktree / repo you were launched in."),
     ]
 
     async def stream():
         def sse(event, data):
             return f"event: {event}\ndata: {json.dumps(data)}\n\n"
         _DISPATCH_RUNNING.add(key)
-        yield sse("start", {"kind": kind, "module": module, "prompt": prompt})
+        if board_key:
+            _BOARD_RUNNING.add(board_key)
+        yield sse("start", {"kind": kind, "module": module, "step": step_id,
+                            "plan": plan_id, "cwd": run_dir, "prompt": prompt})
         try:
             proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=os.getcwd(),
+                *argv, cwd=run_dir,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT)
@@ -1810,6 +2169,8 @@ async def api_dispatch(request):
             yield sse("error", {"error": str(e)})
         finally:
             _DISPATCH_RUNNING.discard(key)
+            if board_key:
+                _BOARD_RUNNING.discard(board_key)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

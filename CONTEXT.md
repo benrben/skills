@@ -43,8 +43,20 @@ Whether a module on the map records what exists (`actual`) or what is designed t
 _Avoid_: layer, status
 
 **Studio**:
-The browser/MCP-App UI for a map (graph canvas, rail panels, doc browser), served by the spine over HTTP or inlined into an MCP-App host.
+The browser/MCP-App UI for a map (graph canvas, rail panels, doc browser, and the task board), served by the spine over HTTP or inlined into an MCP-App host.
 _Avoid_: dashboard, frontend, viewer
+
+**Task board** (Board):
+The skill-cycle Kanban projection of a map's WorkSteps — columns are the cycle (todo · understand · plan · in-progress · review · done, each owned by a skill), rows are agents, cards are tasks. Spine state (`model.board`) rendered in the studio; swaps with the graph. See [fathom/BOARD.md](fathom/BOARD.md).
+_Avoid_: kanban (the shape, not the name), tracker, backlog tool
+
+**Task**:
+A WorkStep seen as a board card — it carries a cycle column (`status`), a `priority`, an assigned `agent` (its swimlane), and its own `worktree`; sequenced by fathom:design, built by fathom:code, gated by fathom:review.
+_Avoid_: ticket, issue, story
+
+**Worktree**:
+A task's isolated git branch + checkout (one `git worktree` per WorkStep) where an agent builds it in parallel without colliding in the shared tree; recorded on the spine, provisioned for real by `worktrees.py`, surfaced on the board.
+_Avoid_: branch (one part of it), sandbox, clone
 
 **Halo**:
 The "changed since last scan" marker (`updated`) on a module; cleared by fathom:map once the module's record matches reality again.

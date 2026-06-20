@@ -55,16 +55,29 @@ class Suggestion:
 _OPEN = lambda s: s.decision == "" and s.status != "done"
 
 
+# The six task-board columns ARE the Fathom skill cycle — a card flows left->right
+# through them: todo -> understand (fathom:understand) -> plan (fathom:design) ->
+# in-progress (fathom:code) -> review (fathom:review) -> done. Legacy maps stored
+# 'blocked' as a status; it is NOT a column — board() projects it onto the `blocked`
+# flag, so old data renders with no migration.
+WORKSTEP_STAGES = ("todo", "understand", "plan", "in-progress", "review", "done")
+
+
 @dataclass
 class WorkStep:
     id: str
     title: str
-    status: str = "todo"                                  # todo | in-progress | done | blocked
+    status: str = "todo"           # the board column / skill-cycle stage (WORKSTEP_STAGES);
+                                   # legacy 'blocked' still loads -> projected to `blocked`
     targets: list[str] = field(default_factory=list)      # module ids this step builds/deepens
     interface: str = ""                                   # the interface (test surface) to build to
     dependsOnSteps: list[str] = field(default_factory=list)
     adapters: list[str] = field(default_factory=list)     # DEEPENING.md category + which adapters
     note: str = ""
+    priority: str = "normal"       # low | normal | high | urgent — ordering within a board column
+    agent: str = ""                # the handler this task is assigned to — the board's swimlane row
+    worktree: str = ""             # id of the Worktree this task is isolated in (per-task branch)
+    blocked: bool = False          # orthogonal flag — a card can be blocked in any column
 
 
 @dataclass
@@ -77,6 +90,35 @@ class Plan:
     moduleIds: list[str] = field(default_factory=list)    # the intended modules it introduces
     adrRefs: list[str] = field(default_factory=list)
     steps: list[WorkStep] = field(default_factory=list)   # ordered build steps fathom:code executes
+
+
+@dataclass
+class Worktree:
+    """A git worktree: an isolated branch + checkout where ONE task (a WorkStep) is
+    built by an agent, in parallel with the others. The spine RECORDS it (the studio
+    board shows the branch + which agent is working it); worktrees.py does the real
+    `git worktree` work. Per-task isolation is the parallel-development unit — a card
+    on the board carries its worktree id, so the work, the branch, and the agent
+    travel together through the skill cycle."""
+    id: str
+    branch: str
+    path: str = ""                 # filesystem path of the worktree checkout
+    base: str = ""                 # the ref/sha the branch forked from (review diffs against this)
+    status: str = "active"         # active | merged | removed
+    planId: str = ""               # the Plan this task belongs to
+    stepId: str = ""               # the WorkStep this worktree isolates
+    agent: str = ""                # the handler running in this worktree (the board swimlane)
+    head: str = ""                 # last-known HEAD sha of the branch
+    created: str = ""
+    note: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Worktree":
+        d = _only_known(cls, data)
+        for req in ("id", "branch"):
+            if not d.get(req):
+                raise ValueError(f"worktree needs '{req}'")
+        return cls(**d)
 
 
 @dataclass
@@ -326,11 +368,13 @@ class ArchModel:
     """In-memory architecture model. The MCP tools mutate it; the UI renders it."""
 
     def __init__(self, repo: str, modules: list[Module], plans: list[Plan] | None = None,
-                 docs: list[Doc] | None = None):
+                 docs: list[Doc] | None = None, worktrees: list[Worktree] | None = None):
         self.repo = repo
         self.modules: dict[str, Module] = {m.id: m for m in modules}
         self.plans: dict[str, Plan] = {p.id: p for p in (plans or [])}
         self.docs: dict[str, Doc] = {d.id: d for d in (docs or [])}
+        # Worktrees: per-task isolated branches (one per WorkStep). The board shows them.
+        self.worktrees: dict[str, Worktree] = {w.id: w for w in (worktrees or [])}
         # Reconcile anchors (ledger.py owns their shape). The model carries them
         # as opaque dicts so they ride to_dict/save/from_json with everything else.
         self.anchors: list[dict] = []
@@ -708,18 +752,141 @@ class ArchModel:
             raise KeyError(f"steps already exist in plan '{plan_id}': {clash}")
         p.steps.extend(steps)
 
-    def set_step_status(self, plan_id: str, step_id: str, status: str) -> None:
+    def _find_step(self, plan_id: str, step_id: str) -> WorkStep:
         p = self.plans[plan_id]                      # KeyError if absent
         for s in p.steps:
             if s.id == step_id:
-                s.status = status
-                return
+                return s
         raise KeyError(f"no step '{step_id}' in plan '{plan_id}'")
+
+    def set_step_status(self, plan_id: str, step_id: str, status: str) -> None:
+        self._find_step(plan_id, step_id).status = status
+
+    _STEP_FIELD_EDITABLE = frozenset({"status", "priority", "agent", "worktree", "blocked",
+                                      "title", "interface", "note", "targets", "adapters",
+                                      "dependsOnSteps"})
+
+    def set_step_fields(self, plan_id: str, step_id: str, **changes) -> None:
+        """Patch a WorkStep's board fields (agent/priority/worktree/blocked/status/...)
+        in place — the board's assign / prioritise / block / move controls. Rejects
+        keys outside the editable whitelist (id is immutable) with ValueError."""
+        unknown = set(changes) - self._STEP_FIELD_EDITABLE
+        if unknown:
+            raise ValueError(f"cannot update step {sorted(unknown)}; "
+                             f"editable: {sorted(self._STEP_FIELD_EDITABLE)}")
+        s = self._find_step(plan_id, step_id)        # KeyError if absent
+        for k, v in changes.items():
+            setattr(s, k, v)
 
     def delete_plan(self, plan_id: str) -> None:
         if plan_id not in self.plans:
             raise KeyError(f"no plan '{plan_id}'")
         del self.plans[plan_id]
+
+    # ---- worktrees (per-task isolated branches; worktrees.py does the git) -----
+    # The spine RECORDS worktrees; the studio board renders them and worktrees.py
+    # runs the real `git worktree`. fathom:design creates one per task, fathom:code
+    # builds in it, fathom:review diffs its branch, fathom:map syncs them.
+    _WT_EDITABLE = frozenset({"branch", "path", "base", "status", "planId", "stepId",
+                              "agent", "head", "created", "note"})
+
+    def add_worktree(self, wt: Worktree) -> None:
+        if wt.id in self.worktrees:
+            raise KeyError(f"worktree '{wt.id}' already exists")
+        self.worktrees[wt.id] = wt
+        # keep the owning step's back-reference in sync, so a card knows its worktree
+        if wt.planId and wt.stepId:
+            try:
+                self._find_step(wt.planId, wt.stepId).worktree = wt.id
+            except KeyError:
+                pass
+
+    def get_worktree(self, wt_id: str) -> dict:
+        if wt_id not in self.worktrees:
+            raise KeyError(f"no worktree '{wt_id}'. Call worktrees(action='list') to "
+                           f"list them, or worktrees(action='create') to make one.")
+        return asdict(self.worktrees[wt_id])
+
+    def update_worktree(self, wt_id: str, **changes) -> None:
+        w = self.worktrees[wt_id]                    # KeyError if absent
+        unknown = set(changes) - self._WT_EDITABLE
+        if unknown:
+            raise ValueError(f"cannot update {sorted(unknown)}; editable: {sorted(self._WT_EDITABLE)}")
+        for k, v in changes.items():
+            setattr(w, k, v)
+        if w.planId and w.stepId:
+            try:
+                self._find_step(w.planId, w.stepId).worktree = w.id
+            except KeyError:
+                pass
+
+    def delete_worktree(self, wt_id: str) -> None:
+        if wt_id not in self.worktrees:
+            raise KeyError(f"no worktree '{wt_id}'")
+        w = self.worktrees.pop(wt_id)
+        # drop the back-reference from any step that pointed at it
+        for p in self.plans.values():
+            for s in p.steps:
+                if s.worktree == wt_id:
+                    s.worktree = ""
+
+    def link_step_worktree(self, plan_id: str, step_id: str, wt_id: str) -> None:
+        """Attach an existing worktree to a step (and the step's back-reference)."""
+        if wt_id not in self.worktrees:
+            raise KeyError(f"no worktree '{wt_id}'")
+        s = self._find_step(plan_id, step_id)        # KeyError if absent
+        s.worktree = wt_id
+        w = self.worktrees[wt_id]
+        w.planId, w.stepId = plan_id, step_id
+
+    # ---- the board: the skill-cycle Kanban projection -------------------------
+    def board(self, running: set | None = None) -> dict:
+        """Project every WorkStep into the task board: columns are the skill cycle
+        (WORKSTEP_STAGES), rows are agents (swimlanes). Pure read, one pass over
+        plans[*].steps. `running` is the set of (planId, stepId) an agent is actively
+        dispatched on (the ⚙ live marker); it is data, never stored. A step whose
+        status is the legacy 'blocked' lands in the `todo` column with blocked=True,
+        so old maps need no migration."""
+        running = running or set()
+        cards: list[dict] = []
+        lanes: dict[str, list[dict]] = {}
+        for p in self.plans.values():
+            for s in p.steps:
+                column = s.status if s.status in WORKSTEP_STAGES else "todo"
+                wt = self.worktrees.get(s.worktree) if s.worktree else None
+                agent = s.agent or "unassigned"
+                card = {
+                    "planId": p.id, "planTitle": p.title,
+                    "stepId": s.id, "title": s.title,
+                    "column": column,
+                    "blocked": bool(s.blocked) or s.status == "blocked",
+                    "priority": s.priority or "normal",
+                    "agent": agent,
+                    "targets": list(s.targets or []),
+                    "interface": s.interface or "",
+                    "dependsOnSteps": list(s.dependsOnSteps or []),
+                    "running": (p.id, s.id) in running,
+                    "worktree": ({"id": wt.id, "branch": wt.branch, "path": wt.path,
+                                  "status": wt.status, "base": wt.base, "agent": wt.agent}
+                                 if wt else None),
+                }
+                cards.append(card)
+                lanes.setdefault(agent, []).append(card)
+        # priority ordering within a column/lane: urgent -> high -> normal -> low
+        rank = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+        cards.sort(key=lambda c: (rank.get(c["priority"], 2), c["planId"], c["stepId"]))
+        counts = {stage: 0 for stage in WORKSTEP_STAGES}
+        for c in cards:
+            counts[c["column"]] += 1
+        lane_list = [{"agent": a, "cards": sorted(cs, key=lambda c: (rank.get(c["priority"], 2), c["stepId"]))}
+                     for a, cs in sorted(lanes.items(), key=lambda kv: (kv[0] == "unassigned", kv[0]))]
+        return {
+            "columns": list(WORKSTEP_STAGES),
+            "counts": counts,
+            "lanes": lane_list,
+            "cards": cards,
+            "worktrees": [asdict(w) for w in self.worktrees.values()],
+        }
 
     # ---- docs (fathom skills + the UI author; the resolver computes scope) -
     _DOC_EDITABLE = frozenset({
@@ -800,6 +967,8 @@ class ArchModel:
             "plans": [asdict(p) for p in self.plans.values()],
             "docs": docs,
             "docMembership": res["membership"].as_dict(),
+            "worktrees": [asdict(w) for w in self.worktrees.values()],
+            "board": self.board(),
             "orphans": sorted(orphans),
             "openSuggestions": self._open_suggestion_ids(),
             "anchors": self.anchors,
@@ -846,6 +1015,9 @@ class ArchModel:
             "docs": [{"id": d.id, "type": d.type, "title": d.title,
                       "status": d.status, "scopeKind": d.scope.kind}
                      for d in self.docs.values()],
+            "worktrees": [{"id": w.id, "branch": w.branch, "status": w.status,
+                           "stepId": w.stepId, "agent": w.agent}
+                          for w in self.worktrees.values()],
             "orphans": sorted(orphans),
             "openSuggestions": self._open_suggestion_ids(),
         }
@@ -881,7 +1053,10 @@ class ArchModel:
             doc = Doc(**_only_known(Doc, entry))
             doc.scope = scope
             docs.append(doc)
-        model = cls(raw["repo"], modules, plans, docs)
+        worktrees: list[Worktree] = []
+        for entry in raw.get("worktrees", []):          # absent on pre-worktree maps -> []
+            worktrees.append(Worktree(**_only_known(Worktree, entry)))
+        model = cls(raw["repo"], modules, plans, docs, worktrees)
         # tolerant reader: non-dict anchor entries are dropped, the rest survive
         model.anchors = [a for a in raw.get("anchors", []) if isinstance(a, dict)]
         return model
