@@ -20,7 +20,9 @@ def deepmap(reg):
 
 
 def _only_suggestion(map, module):
-    return srv.modules(action="get", map=map, id=module)["suggestions"][0]
+    # reads are resource-only; srv.get_module is the read helper behind
+    # archmap://{map}/module/{id}.
+    return srv.get_module(map=map, id=module)["suggestions"][0]
 
 
 def test_flag_deepening_derives_id_and_attaches(deepmap):

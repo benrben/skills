@@ -53,10 +53,10 @@ def test_create_provisions_and_records(reg, gitrepo, wt_dir, monkeypatch):
     assert out["provisioned"] is True
     assert out["worktree"]["branch"] == "feat/pricing"
     # real git knows about it
-    listed = srv.worktrees(action="list", map="m", root=str(gitrepo))
+    listed = srv.list_worktrees(map="m", root=str(gitrepo))
     assert "feat/pricing" in [g["branch"] for g in listed["gitWorktrees"]]
     # the spine linked it back onto the card
-    assert srv.plans(action="get", map="m", plan_id="p1")["steps"][0]["worktree"] == out["worktree"]["id"]
+    assert srv.get_plan(map="m", plan_id="p1")["steps"][0]["worktree"] == out["worktree"]["id"]
 
 
 def test_create_derives_branch_from_step(reg, gitrepo, wt_dir):
@@ -84,7 +84,7 @@ def test_attach_records_without_git_mutation(reg):
     out = srv.worktrees(action="attach", map="m", branch="feat/existing",
                         plan_id="p1", step_id="s1")
     assert out["worktree"]["branch"] == "feat/existing"
-    assert srv.plans(action="get", map="m", plan_id="p1")["steps"][0]["worktree"] == out["worktree"]["id"]
+    assert srv.get_plan(map="m", plan_id="p1")["steps"][0]["worktree"] == out["worktree"]["id"]
 
 
 def test_sync_marks_vanished_worktree_removed(reg, gitrepo, wt_dir):
@@ -95,7 +95,7 @@ def test_sync_marks_vanished_worktree_removed(reg, gitrepo, wt_dir):
     shutil.rmtree(out["worktree"]["path"])                 # delete the checkout behind git's back
     synced = srv.worktrees(action="sync", map="m", root=str(gitrepo))
     assert out["worktree"]["id"] in synced["updated"]
-    rec = srv.worktrees(action="list", map="m", root=str(gitrepo))["worktrees"][0]
+    rec = srv.list_worktrees(map="m", root=str(gitrepo))["worktrees"][0]
     assert rec["status"] == "removed"
 
 
@@ -105,7 +105,7 @@ def test_remove_drops_git_and_spine(reg, gitrepo, wt_dir):
                         plan_id="p1", step_id="s1", root=str(gitrepo))
     rm = srv.worktrees(action="remove", map="m", id=out["worktree"]["id"], root=str(gitrepo))
     assert rm["gitRemoved"] is True
-    assert srv.worktrees(action="list", map="m", root=str(gitrepo))["worktrees"] == []
+    assert srv.list_worktrees(map="m", root=str(gitrepo))["worktrees"] == []
 
 
 # ---- board tool --------------------------------------------------------------

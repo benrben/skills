@@ -109,7 +109,7 @@ def test_suggestions_flag_ack_returns_derived_suggestion_id(reg):
     # and it round-trips: the derived id can decide/dismiss the candidate
     srv.suggestions(action="decide", map="m", suggestion_id=ack["suggestion_id"],
                     decision="accepted", note="ok")
-    assert srv.modules(action="get", map="m", id="a")["suggestions"][0]["decision"] == "accepted"
+    assert srv.get_module(map="m", id="a")["suggestions"][0]["decision"] == "accepted"
 
 
 # ---- verify_edges / drift paging metadata -----------------------------------

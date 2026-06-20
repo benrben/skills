@@ -9,6 +9,10 @@ dependencies = [
   # unchanged across the 2.x->3.x bump. Install the `generative` extra below to
   # pull the apps subdependencies; without it the server degrades to Lane 1 only.
   "fastmcp>=3.2,<4",
+  # The archmap:// read RESOURCES serialize their payloads as YAML (and docs as a
+  # YAML-frontmatter Markdown block) to cut JSON's brace/quote/comma token overhead.
+  # Not transitively guaranteed by fastmcp, so pin it explicitly.
+  "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
