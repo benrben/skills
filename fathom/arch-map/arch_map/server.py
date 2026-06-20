@@ -1487,13 +1487,29 @@ def _first_open(m: Module):
     return next((s for s in m.suggestions if s.decision == "" and s.status != "done"), None)
 
 
-def _grill_prompt(store: Store, map: str, module: str) -> str:
-    m = store.modules[module]
-    s = _first_open(m)
+def _grill_text(map: str, m: Module, s) -> str:
+    """The canonical /deepen walkthrough text for one module + (optional) candidate.
+    Single source of truth shared by the archmap_grilling(start) tool, the
+    archmap:// flow, and the grill_candidate prompt — given the already-resolved
+    module and suggestion so each caller resolves them however it keys (module-first
+    for the tool, suggestion-first for the prompt)."""
     head = s.title if s else f"the {m.label} module"
     sid = f", suggestion '{s.id}'" if s else ""
-    return CANON_GRILL_PROMPT.format(head=head, map=map, module=module, sid=sid,
+    return CANON_GRILL_PROMPT.format(head=head, map=map, module=m.id, sid=sid,
                                      depth=m.depth, cov=m.coverage)
+
+
+def _grill_prompt(store: Store, map: str, module: str) -> str:
+    m = store.modules[module]
+    return _grill_text(map, m, _first_open(m))
+
+
+def _grill_prompt_for_suggestion(store: Store, map: str, suggestion_id: str) -> str:
+    """Build the SAME walkthrough text the archmap_grilling(start) tool builds, but
+    keyed by suggestion id (raises KeyError if the suggestion — and thus its map —
+    does not exist; never creates anything)."""
+    m, s = store._load()._find_suggestion(suggestion_id)
+    return _grill_text(map, m, s)
 
 
 # --- Plans + work steps (fathom:plan creates; fathom:code executes) ----------
@@ -1981,6 +1997,19 @@ async def api_tool(request):
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(store.to_dict())
+
+
+# --- archmap:// read resources + grill_candidate prompt ----------------------
+# Registered ONCE here, after `mcp` and every tool/helper above is defined, so the
+# resource/prompt modules can reuse the read tools' `_impl` helpers and the shared
+# grilling text builder (single source of truth). The read TOOLS above are left
+# unchanged — they remain the tools-only-client fallback. (Local imports avoid an
+# import cycle: resources/prompts import this module.)
+from . import resources as _resources  # noqa: E402
+from . import prompts as _prompts      # noqa: E402
+
+_resources.register(mcp)
+_prompts.register(mcp)
 
 
 def main() -> None:
