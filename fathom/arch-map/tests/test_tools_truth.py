@@ -52,7 +52,7 @@ def test_ingest_measures_churn_and_records_anchor(truthmap):
     assert out["anchor"]["moduleCount"] == 2 and len(out["anchor"]["sha"]) == 40
     assert out["loc"] == {"a": 1, "b": 1}
     assert out["sized"] == 2                         # measured LOC written to size
-    rec = srv.modules(action="get", map="t", id="a")
+    rec = srv.get_module(map="t", id="a")
     assert rec["churn"] == 1.0                      # every window commit touches it
     assert rec["size"] == 1.0                       # both modules at the median -> 1.0
     assert rec["updated"] is False                  # ingest never flips halos
@@ -77,8 +77,8 @@ def test_ingest_scales_size_from_loc_and_fires_bulky_impl(reg, tmp_path):
     ])
     out = srv.ingest(map="s", root=str(root))
     assert out["sized"] == 3
-    assert srv.modules(action="get", map="s", id="big")["size"] >= 2.0   # 50 LOC / median 5
-    assert srv.modules(action="get", map="s", id="s1")["size"] == 1.0    # at the median
+    assert srv.get_module(map="s", id="big")["size"] >= 2.0   # 50 LOC / median 5
+    assert srv.get_module(map="s", id="s1")["size"] == 1.0    # at the median
     flagged = srv.scan_signals(map="s", signal="bulky-impl")
     flagged_ids = {r["id"] for r in flagged["modules"]}
     assert "big" in flagged_ids
@@ -101,15 +101,15 @@ def test_ingest_leaves_intended_and_fileless_modules_unsized(reg, tmp_path):
     ])
     out = srv.ingest(map="p", root=str(root))
     assert out["sized"] == 1                               # only the actual module with files
-    assert srv.modules(action="get", map="p", id="real")["size"] == 1.0     # self-normalized
-    assert srv.modules(action="get", map="p", id="planned")["size"] == 1.5  # estimate untouched
+    assert srv.get_module(map="p", id="real")["size"] == 1.0     # self-normalized
+    assert srv.get_module(map="p", id="planned")["size"] == 1.5  # estimate untouched
 
 
 def test_ingest_patches_coverage_from_report(truthmap, tmp_path):
     (tmp_path / "cov.info").write_text(
         "SF:src/a.py\nLF:10\nLH:9\nend_of_record\n")
     srv.ingest(map="t", root=str(truthmap), coverage_report=str(tmp_path / "cov.info"))
-    assert srv.modules(action="get", map="t", id="a")["coverage"] == pytest.approx(0.9)
+    assert srv.get_module(map="t", id="a")["coverage"] == pytest.approx(0.9)
 
 
 def test_drift_clean_then_touched(truthmap):

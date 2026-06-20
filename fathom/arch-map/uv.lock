@@ -65,6 +65,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
+    { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
@@ -80,6 +81,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.2,<4" },
     { name = "fastmcp", extras = ["apps"], marker = "extra == 'generative'", specifier = ">=3.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
+    { name = "pyyaml", specifier = ">=6" },
 ]
 provides-extras = ["generative", "test"]
 

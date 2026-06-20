@@ -20,13 +20,15 @@ def test_add_module_returns_uniform_ack(reg):
 
 
 def test_get_and_update_and_delete_module(reg):
+    # reads are resource-only now: srv.get_module is the read helper the
+    # archmap://{map}/module/{id} resource calls (and the writes' read-back here).
     srv.modules(action="add", map="m", id="a", label="A", domain="d")
-    assert srv.modules(action="get", map="m", id="a")["id"] == "a"
+    assert srv.get_module(map="m", id="a")["id"] == "a"
     srv.modules(action="update", map="m", id="a", depth=0.9, iface="x")
-    assert srv.modules(action="get", map="m", id="a")["depth"] == 0.9
+    assert srv.get_module(map="m", id="a")["depth"] == 0.9
     srv.modules(action="delete", map="m", id="a")
     with pytest.raises(KeyError):
-        srv.modules(action="get", map="m", id="a")
+        srv.get_module(map="m", id="a")
 
 
 def test_set_depth_coverage_churn_and_mark_updated(reg):
@@ -35,7 +37,7 @@ def test_set_depth_coverage_churn_and_mark_updated(reg):
     srv.modules(action="update", map="m", id="a", coverage=0.6)
     srv.modules(action="update", map="m", id="a", churn=9.0)        # clamped to 1.0
     srv.modules(action="update", map="m", id="a", updated=False)
-    rec = srv.modules(action="get", map="m", id="a")
+    rec = srv.get_module(map="m", id="a")
     assert rec["depth"] == 0.7
     assert rec["coverage"] == 0.6
     assert rec["churn"] == 1.0
@@ -47,10 +49,10 @@ def test_bulk_add_get_update_delete(reg):
         {"id": "a", "label": "A", "domain": "d"},
         {"id": "b", "label": "B", "domain": "d", "dependsOn": ["a"]},
     ])
-    got = srv.modules(action="get", map="m", ids=["a", "b"])["modules"]
+    got = srv.get_modules(map="m", ids=["a", "b"])["modules"]
     assert [r["id"] for r in got] == ["a", "b"]
     srv.modules(action="update", map="m", items=[{"id": "a", "depth": 0.95}])
-    assert srv.modules(action="get", map="m", id="a")["depth"] == 0.95
+    assert srv.get_module(map="m", id="a")["depth"] == 0.95
     srv.modules(action="delete", map="m", ids=["a", "b"])
     assert srv.show_map(map="m")["moduleCount"] == 0
 

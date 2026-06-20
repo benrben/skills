@@ -14,12 +14,14 @@ import arch_map.server as srv
 # ---- modules: action routing + arg guards -----------------------------------
 
 def test_modules_single_and_bulk_roundtrip(reg):
+    # reads are resource-only; srv.get_module/get_modules are the read helpers the
+    # archmap://{map}/module/{id} + /model resources call (and the read-back here).
     srv.modules(action="add", map="m", id="a", label="A", domain="d")
     srv.modules(action="add", map="m", items=[{"id": "b", "label": "B", "domain": "d"}])
-    assert srv.modules(action="get", map="m", id="a")["id"] == "a"
-    assert {r["id"] for r in srv.modules(action="get", map="m", ids=["a", "b"])["modules"]} == {"a", "b"}
+    assert srv.get_module(map="m", id="a")["id"] == "a"
+    assert {r["id"] for r in srv.get_modules(map="m", ids=["a", "b"])["modules"]} == {"a", "b"}
     srv.modules(action="update", map="m", id="a", depth=0.9)
-    assert srv.modules(action="get", map="m", id="a")["depth"] == 0.9
+    assert srv.get_module(map="m", id="a")["depth"] == 0.9
     srv.modules(action="delete", map="m", ids=["a", "b"])
     assert srv.show_map(map="m")["moduleCount"] == 0
 
@@ -28,14 +30,14 @@ def test_modules_realize_flips_plane(reg):
     srv.modules(action="add", map="m", id="a", label="A", domain="d",
                 plane="intended", lifecycle="planned")
     srv.modules(action="realize", map="m", id="a", depth=0.8, coverage=0.5)
-    rec = srv.modules(action="get", map="m", id="a")
+    rec = srv.get_module(map="m", id="a")
     assert rec["plane"] == "actual" and rec["lifecycle"] == "built"
     assert rec["depth"] == 0.8
 
 
 def test_modules_guards(reg):
     srv.create_project(name="M", map_id="m")
-    for kw in ({"action": "get"}, {"action": "update"}, {"action": "delete"},
+    for kw in ({"action": "update"}, {"action": "delete"},
                {"action": "realize"}):
         with pytest.raises(ValueError):
             srv.modules(map="m", **kw)          # no id / ids -> actionable error
@@ -50,7 +52,7 @@ def test_suggestions_lifecycle(reg):
                     solution="s", wins=["w"])
     sid = "a-strong"                            # f"{module}-{strength}" slugged
     srv.suggestions(action="decide", map="m", suggestion_id=sid, decision="accepted", note="ok")
-    assert srv.modules(action="get", map="m", id="a")["suggestions"][0]["decision"] == "accepted"
+    assert srv.get_module(map="m", id="a")["suggestions"][0]["decision"] == "accepted"
     srv.suggestions(action="dismiss", map="m", suggestion_id=sid)
 
 
@@ -77,31 +79,31 @@ def test_grilling_lifecycle(reg):
         srv.grilling(action="finish", map="m", suggestion_id="a-strong")   # missing decision
 
 
-# ---- plans: create / add_steps / set_step_status / update / get -------------
+# ---- plans: create / add_steps / set_step_status / update (get is resource-only)
 
 def test_plans_lifecycle(reg):
     srv.plans(action="create", map="m", plan_id="p1", title="P", intent="i")
     srv.plans(action="add_steps", map="m", plan_id="p1", steps=[{"id": "s1", "title": "S"}])
     srv.plans(action="set_step_status", map="m", plan_id="p1", step_id="s1", step_status="done")
     srv.plans(action="update", map="m", plan_id="p1", status="active")
-    plan = srv.plans(action="get", map="m", plan_id="p1")
+    plan = srv.get_plan(map="m", plan_id="p1")   # read helper behind archmap://{map}/plan/{id}
     assert plan["status"] == "active"
     assert plan["steps"][0]["status"] == "done"
 
 
-# ---- docs: add / get / list (paged) / update / delete -----------------------
+# ---- docs: add / update / delete (get + list are resource-only) -------------
 
 def test_docs_lifecycle_and_list(reg):
     srv.docs(action="add", map="m", doc_id="d1", type="adr", title="One")
     srv.docs(action="add", map="m", doc_id="d2", type="note", title="Two")
-    assert srv.docs(action="get", map="m", doc_id="d1")["title"] == "One"
-    listed = srv.docs(action="list", map="m", limit=1, offset=0)
+    assert srv.get_doc(map="m", doc_id="d1")["title"] == "One"
+    listed = srv.list_docs(map="m", limit=1, offset=0)   # read helper behind archmap://{map}/docs
     assert listed["total_count"] == 2 and len(listed["docs"]) == 1 and listed["has_more"] is True
     srv.docs(action="update", map="m", doc_id="d1", status="accepted")
-    assert srv.docs(action="get", map="m", doc_id="d1")["status"] == "accepted"
+    assert srv.get_doc(map="m", doc_id="d1")["status"] == "accepted"
     srv.docs(action="delete", map="m", doc_id="d1")
     with pytest.raises(KeyError):
-        srv.docs(action="get", map="m", doc_id="d1")
+        srv.get_doc(map="m", doc_id="d1")
 
 
 def test_docs_add_guard(reg):
