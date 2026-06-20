@@ -5,7 +5,7 @@
 #   ./run-mcp.sh web      browser studio at http://127.0.0.1:8800/
 #
 # Register with Claude Code:
-#   claude mcp add arch-map -- /Users/benreich/skills/run-mcp.sh
+#   claude mcp add arch-map -- uv run --project ./fathom/arch-map arch-map
 set -euo pipefail
 
 ARCH_MAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fathom/arch-map"
