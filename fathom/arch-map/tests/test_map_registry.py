@@ -11,6 +11,7 @@ import json
 import pytest
 
 import arch_map.server as srv
+import arch_map.map_registry as mr
 from arch_map.server import MapRegistry, Store, _slug
 
 
@@ -18,7 +19,7 @@ from arch_map.server import MapRegistry, Store, _slug
 def reg(tmp_path, monkeypatch):
     # Disable the one-shot legacy-state migration so an empty tmp registry stays
     # empty regardless of the real repo's files.
-    monkeypatch.setattr(srv, "LEGACY_STATE", tmp_path / "no-legacy.json")
+    monkeypatch.setattr(mr, "LEGACY_STATE", tmp_path / "no-legacy.json")
     return MapRegistry(tmp_path / "maps")
 
 
@@ -158,7 +159,7 @@ def test_migrate_legacy_moves_data_to_default_map(tmp_path, monkeypatch):
         "repo": "MyRepo",
         "modules": [{"id": "a", "label": "A", "domain": "d", "depth": 0.5, "size": 1.0, "seam": ""}],
     }), encoding="utf-8")
-    monkeypatch.setattr(srv, "LEGACY_STATE", legacy)
+    monkeypatch.setattr(mr, "LEGACY_STATE", legacy)
     reg = MapRegistry(tmp_path / "maps")
     assert reg.exists("myrepo"), "migrated map should exist under the slugged repo name"
     ids = {m["id"] for m in reg.store("myrepo").to_dict()["modules"]}
@@ -171,7 +172,7 @@ def test_migrate_legacy_moves_data_to_default_map(tmp_path, monkeypatch):
 def test_legacy_migration_with_corrupt_json_falls_back_to_default(tmp_path, monkeypatch):
     legacy = tmp_path / "arch_state.json"
     legacy.write_text("{not json", encoding="utf-8")
-    monkeypatch.setattr(srv, "LEGACY_STATE", legacy)
+    monkeypatch.setattr(mr, "LEGACY_STATE", legacy)
     r = MapRegistry(tmp_path / "maps")
     assert (r.root / "default.json").exists()      # unparseable repo name -> 'default'
 
