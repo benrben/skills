@@ -1,7 +1,7 @@
 ---
 name: understand
 description: Read-only guided tour of an existing arch-map — entry interfaces, the deepest modules, leak/drift hot-spots, the recorded docs (glossary, adr, spec, risk, runbook, diagram...) scoped to the modules it covers, AND the work in flight on the skill-cycle task board (which tasks sit in which column, which agents and worktrees are active) — so a newcomer (human or agent) can comprehend a codebase's deep structure and its live work before touching it. The front door of the Fathom suite, and the explainer of the "understand" board column. Use when onboarding a repo that ALREADY has a map; an unmapped repo goes to fathom:map first. Do NOT use for changing the map (that is fathom:map, which seeds and reconciles), for improving shallow modules or designing new structure (that is fathom:design), or for editing source (that is fathom:code) — understand writes NOTHING, to the spine or to disk; if the user wants the tour saved it hands off to fathom:map to record it as a note or diagram doc on the spine.
-allowed-tools: Read Grep Glob Bash mcp__arch-map__*
+allowed-tools: Read Grep Glob Bash ReadMcpResourceTool ListMcpResourcesTool mcp__arch-map__*
 ---
 
 # Understand a Codebase Through Its Map
@@ -38,7 +38,7 @@ You read the **map**, not the repository. The map is the spine the other Fathom 
 - **`lifecycle`** is `"planned"`, `"building"`, or `"built"`. Tour the **built** structure; flag planned-but-unbuilt modules as "designed, not yet here."
 - A **candidate** is the user-facing word for a Suggestion — an open deepening opportunity another run flagged. Surface candidates as *part of the map's story* ("this module already has a Strong candidate on it"); do not grill or decide them.
 
-Read the docs scoped to the modules you cover: `archmap_docs(map, action="list")` to see what's recorded, then `archmap_docs(map, action="get", ...)` to pull a body — an adr explaining a seam, a spec pinning an interface, a risk on a danger-zone module, a runbook for an entry point, a diagram of a domain. In a UI-capable host they ride alongside the graph; in a terminal you read them and narrate them. A good tour surfaces the relevant docs for the modules it walks, not a doc dump.
+Read the docs scoped to the modules you cover: `archmap://{map}/docs` (filter with `?type=adr`, `?domain=<d>`, `?tag=`, `?q=`) to see what's recorded, then `archmap://{map}/doc/{id}` to pull a body — an adr explaining a seam, a spec pinning an interface, a risk on a danger-zone module, a runbook for an entry point, a diagram of a domain. The list comes back as **YAML**; a single doc comes back as a **Markdown file** (frontmatter + body) you read directly. In a UI-capable host they ride alongside the graph; in a terminal you read them and narrate them. A good tour surfaces the relevant docs for the modules it walks, not a doc dump.
 
 If the map looks stale or wrong while you tour it — depth scores that don't match the code, missing modules, edges that no longer exist — that is a **reconcile** job, and it belongs to [fathom:map](#hand-offs), not here. Say so and hand off; never "fix" the map yourself.
 
@@ -48,17 +48,19 @@ If the map looks stale or wrong while you tour it — depth scores that don't ma
 
 A tour needs a named map. Maps are shared and file-backed, so the same map id threads through every call you make.
 
-1. `archmap_list_maps()` → the available maps with their repo label and module / candidate counts. If the user named a project, match it; otherwise present the list and ask which one to tour.
+**Reads of stored state are MCP resources**, read with the built-in `ReadMcpResourceTool` (server `arch-map`, an `archmap://` uri; `ListMcpResourcesTool` enumerates them). Resources return **YAML** (compact) and `archmap://{map}/doc/{id}` returns a **Markdown file** you read directly. The computed-query tools (`archmap_render_view`, `archmap_scan_signals`) stay `archmap_*` calls.
+
+1. Read `archmap://maps` (optionally `archmap://maps?q=<name>`) → the available maps with their repo label and module / candidate counts. If the user named a project, match it; otherwise present the list and ask which one to tour.
 2. If there is **no map for this codebase yet**, there is nothing to tour. Do not create or seed one — tell the user the codebase hasn't been mapped and hand off to [fathom:map](#hand-offs) to seed it, then come back.
 
-Hold onto the chosen `map` id; pass it as the first argument to every read below.
+Hold onto the chosen `map` id; substitute it into every `archmap://{map}/...` read below.
 
 ### 2. Take the lay of the land
 
 ```
-archmap_show_map(map)                 # digest: module/domain counts, orphans, open candidates,
-                                      # and the ten worst-health modules
-archmap_show_map(map, domain="<d>")   # full view records (edges, metrics) for one domain slice
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/digest")             # module/domain counts,
+                                      # orphans, open candidates, and the ten worst-health modules
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/model?domain=<d>")   # full records for one domain slice
 ```
 
 Inside a UI-capable MCP host this renders the network graph inline (fill = depth, ring = coverage, halo = updated, ⚠ ring = open candidate, red edge = leak, orphan tray = **not connected**) and your narration rides alongside it. In a terminal you get the same data as structured text and you narrate from it. Either way, start with the shape of the whole before zooming in:
@@ -77,19 +79,21 @@ archmap_render_view(map, columns=["id","domain","depth","coverage"], sort_by="de
 
 ### 3. Walk the three lenses
 
-A good tour is three passes over the same map, each answering a question a newcomer actually has. Pull full module records as you go — `archmap_show_map` gives the skeleton, but the interface text, files, and tests live in the full model:
+A good tour is three passes over the same map, each answering a question a newcomer actually has. Pull full module records as you go — the digest gives the skeleton, but the interface text, files, and tests live in the full model:
 
 ```
-archmap_get_full_model(map)                       # the FULL model: every iface, files, tests, candidate body
-archmap_modules(map, action="get", id=X)          # one module's full record (read-only; does not redraw)
-archmap_modules(map, action="get", ids=[...])     # several at once
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/model")            # FULL model: every iface, files, tests
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/model?sort=depth&dir=desc")  # deepest-first (Lens B)
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/module/{id}")      # one module's full record
 ```
+
+The model resource takes RFC 6570 query params as optional kwargs — `?domain`, `?plane`, `?lifecycle`, `?sort`, `?dir`, `?q`, `?limit`, `?offset` (paging fields `total_count`/`has_more`/`next_offset` ride in the payload). `q` is a case-insensitive substring over id/label/iface; `domain`/`plane`/`lifecycle` are exact match.
 
 **Lens A — Entry interfaces: "where do I come in?"**
 The modules a caller or a newcomer meets first. Find them structurally: modules many others `dependsOn` but that depend on little themselves (the things the system is *used through*), plus the top of each domain. For each, narrate its **interface** — what a caller must know to use it (types, invariants, error modes, ordering, config), not just the signature. This is the map a newcomer most needs.
 
 **Lens B — Deepest modules: "where does the leverage live?"**
-Sort by `depth` (`archmap_render_view` with `sort_by="depth", sort_dir="desc"`, or read it off `archmap_get_full_model`). The deepest modules are where a lot of behaviour sits behind a small interface — the load-bearing parts worth understanding well. Use the **deletion test** to explain *why* each is deep: deleting it would scatter its complexity across N callers. Note their `coverage` — a deep module with high interface coverage is one you can lean on with confidence; a deep module with low coverage is the one to be careful around.
+Sort by `depth` — read `archmap://{map}/model?sort=depth&dir=desc` (deepest-first), or shape it with `archmap_render_view`. The deepest modules are where a lot of behaviour sits behind a small interface — the load-bearing parts worth understanding well. Use the **deletion test** to explain *why* each is deep: deleting it would scatter its complexity across N callers. Note their `coverage` — a deep module with high interface coverage is one you can lean on with confidence; a deep module with low coverage is the one to be careful around.
 
 **Lens C — Hot-spots: "where is the friction?"**
 The places that explain why the codebase feels harder than its size suggests. Start with `archmap_scan_signals(map)` — it returns every module carrying a structural signal sorted worst-first by health score, which is the fastest triage of the whole map. Then narrate what you find:
@@ -105,20 +109,21 @@ The places that explain why the codebase feels harder than its size suggests. St
 - **Not-connected** (`orphans`) — modules with no edge in any direction. Either dead, or connected through a path the map doesn't yet record (a reconcile question for [fathom:map](#hand-offs)).
 - **Shallow clusters** — runs of low-`depth` modules in one domain, where understanding one concept means bouncing between many small modules with no **locality**. Name the friction; don't prescribe the merge.
 - **Open candidates** — modules already carrying a deepening candidate (the ⚠ ring). Report the candidate's `title` and `strength` (`"Strong"` / `"Worth exploring"` / `"Speculative"`) and that someone has already noticed this friction — then move on.
-- **Recorded docs** — when a module you're touring has a doc on the spine (`archmap_docs(map, action="list")`, then `action="get"` for the body), surface it: a `risk` on a danger-zone module, an `adr` explaining why a seam is where it is, a `spec` pinning an interface, a `runbook` for an entry point. The docs say *why* the friction is tolerated or *what* the constraint is — read them into the tour, don't dump them all.
+- **Recorded docs** — when a module you're touring has a doc on the spine (`archmap://{map}/docs?domain=<d>` or `?type=risk`, then `archmap://{map}/doc/{id}` for the Markdown body), surface it: a `risk` on a danger-zone module, an `adr` explaining why a seam is where it is, a `spec` pinning an interface, a `runbook` for an entry point. The docs say *why* the friction is tolerated or *what* the constraint is — read them into the tour, don't dump them all.
 
-You may also use `archmap_get_metrics(map, module)` to pull a single module's raw numbers (fanIn, fanOut, instability, blastRadius, health) when a user asks "how bad is this one specifically?" That gives you the numbers; `archmap_scan_signals` gives you the interpretation.
+You may also read `archmap://{map}/metrics/{module}` to pull a single module's raw numbers (fanIn, fanOut, instability, blastRadius, health) when a user asks "how bad is this one specifically?" — or `archmap://{map}/metrics?sort=health&dir=asc&limit=10` for the worst handful. That gives you the numbers; `archmap_scan_signals` gives you the interpretation.
 
-Scope each lens to what the user asked for. "Give me a tour" earns all three across all domains; "what does the billing area do?" earns all three filtered to that domain (`archmap_render_view(map, of="<domain>")` or `archmap_show_map(map, domain="<domain>")`, then `archmap_modules` with `action="get"` for the bodies).
+Scope each lens to what the user asked for. "Give me a tour" earns all three across all domains; "what does the billing area do?" earns all three filtered to that domain (`archmap://{map}/model?domain=<domain>` for the records, optionally `archmap://{map}/docs?domain=<domain>` for the docs that explain it).
 
 ### 3a. Lens D — Work in flight: "what's being worked on right now?"
 
 A tour isn't only the static structure — it's the **live work** on the skill-cycle task board ([../../fathom/BOARD.md](../../fathom/BOARD.md)). Read it and narrate it:
 
 ```
-archmap_board(map)                       # cards by cycle column (todo·understand·plan·in-progress·review·done),
-                                         # grouped into agent swimlanes, each with its worktree
-archmap_worktrees(map, action="list")    # the per-task isolated branches + the live git worktree list
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/board")              # cards by cycle column
+                  # (todo·understand·plan·in-progress·review·done), grouped into agent swimlanes, each with its worktree
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/worktrees")          # per-task isolated branches
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/worktrees?status=active")  # just the live ones
 ```
 
 Report, briefly: which tasks sit in which column (where the work *is* in the cycle), which **agents** are carrying them (and any running right now), which tasks have their own **worktree branch**, and anything `blocked`. This is the part of comprehension a static map can't give — a newcomer learns not just *what the code is* but *what's moving and who's moving it*. understand explains the **understand** column itself: a card here is a task being comprehended before it's touched. Surface the board as part of the story; never move a card (that's the acting skills' job).

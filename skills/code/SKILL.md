@@ -2,7 +2,7 @@
 name: code
 description: Execute an already-chosen deepening into source — refactor a shallow cluster into one deep module, build new code to a planned interface so it is deep from the start, or write interface tests for a test-first target the signal scan named. Use when the user says "refactor this into a deep module", "implement this interface", "merge these pass-throughs", "execute the accepted candidate", "build this work step", or "write the tests for this module". This is the ONLY Fathom skill that edits source; it builds a board task INSIDE that task's own git worktree (an isolated branch) — code OWNS the "in-progress" column — and reconciles the modules it touched on the arch-map spine. Do NOT use to decide WHETHER to deepen, grill a candidate, or design a target structure from scratch (that is fathom:design) — code executes a target the spine already holds. Skip for read-only mapping (fathom:map).
 disable-model-invocation: true
-allowed-tools: Read Grep Glob Edit Write Bash mcp__arch-map__*
+allowed-tools: Read Grep Glob Edit Write Bash ReadMcpResourceTool ListMcpResourcesTool mcp__arch-map__*
 ---
 
 # Execute a Deepening
@@ -33,16 +33,18 @@ Principles this skill enforces while it works:
 
 ### 1. Bootstrap the map and pick up the marching order
 
-The map is shared and file-backed. Resolve it before anything else:
+The map is shared and file-backed. Resolve it before anything else.
 
-- `archmap_list_maps()` → find this repo's map id. If there is none, the repo isn't mapped — STOP and hand to **fathom:map** to seed it; fathom:code does not seed. (If you truly need a fresh project: `archmap_create_map(name)` returns the `map` id.)
-- Thread the returned `map` id through every later call.
+**Reads of stored state are MCP resources** — read them with the built-in `ReadMcpResourceTool` (server `arch-map`, an `archmap://` uri; `ListMcpResourcesTool` enumerates them). Resources return **YAML** (compact); `archmap://{map}/doc/{id}` returns a **Markdown file** you read directly. Writes (`archmap_modules`/`archmap_plans`/`archmap_docs`/`archmap_worktrees`/`archmap_suggestions`) and computed queries (`archmap_scan_signals`) stay `archmap_*` calls.
+
+- Read `archmap://maps` → find this repo's map id. If there is none, the repo isn't mapped — STOP and hand to **fathom:map** to seed it; fathom:code does not seed. (If you truly need a fresh project: `archmap_create_map(name)` returns the `map` id.)
+- Thread the returned `map` id through every later read and call.
 
 Then read the target the spine holds — never invent one:
 
-- `archmap_get_full_model(map)` to see the whole picture, then `archmap_modules(map, action="get", id=module)` for the specific target.
+- `archmap://{map}/model` to see the whole picture, then `archmap://{map}/module/{id}` for the specific target.
 - **Mode (a) REFACTOR** — an accepted candidate: a Suggestion with `decision == "accepted"` on a shallow module. Read its `category`, `problem`, `solution`, `wins`. The `category` drives the seam strategy in step 4.
-- **Mode (b) BUILD** — a planned WorkStep: `archmap_plans(map, action="get", plan_id=)` for the ordered steps; the step names its `targets` (intended module ids, `plane == "intended"`, `lifecycle == "planned"`), its `interface` (the test surface), `dependsOnSteps`, and `adapters` (the dependency category + which adapters). Take the **next** step whose dependencies are `done`.
+- **Mode (b) BUILD** — a planned WorkStep: read `archmap://{map}/plan/{id}` for the ordered steps; the step names its `targets` (intended module ids, `plane == "intended"`, `lifecycle == "planned"`), its `interface` (the test surface), `dependsOnSteps`, and `adapters` (the dependency category + which adapters). Take the **next** step whose dependencies are `done`.
 - **Mode (c) TEST-FIRST** — a module the signal scan names and the user asks to see tested: `archmap_scan_signals(map, "test-first")` returns them worst-first. The target is the module's recorded `iface` — write interface tests ONLY, no refactor in the same pass (a refactor needs its own grilled candidate). The recorded interface is the contract to assert: types, invariants, ordering, error modes. If the interface prose is too thin to test against, that is itself the finding — hand to **fathom:map** to sharpen the record first.
 
 If there is **no** accepted candidate, **no** planned WorkStep, and **no** explicit test-first ask, STOP. Hand back to **fathom:design** (to grill and accept a candidate, or to design and sequence one). fathom:code chooses nothing.
@@ -69,9 +71,9 @@ For a one-off accepted candidate with no Plan, a worktree is optional (recommend
 
 ### 2. Read the constraints that bound the execution
 
-All docs live on the spine, typed — never in `docs/` files. Read them with `archmap_docs(map, action="list")` then `archmap_docs(map, action="get", doc_id=)`.
+All docs live on the spine, typed — never in `docs/` files. Read them as resources: `archmap://{map}/docs` (filter with `?type=adr`, `?type=spec`, `?domain=<d>`) for the summaries, then `archmap://{map}/doc/{id}` for the Markdown body.
 
-- Skim the relevant `adr` and `spec` docs for the area, and the project's domain terms in the `glossary` doc (so the module you produce is named in domain vocabulary, not "FooBarHandler").
+- Skim the relevant `adr` and `spec` docs for the area (`archmap://{map}/docs?type=adr&domain=<d>`, `?type=spec`), and the project's domain terms in the `glossary` doc (`archmap://{map}/docs?type=glossary`) — so the module you produce is named in domain vocabulary, not "FooBarHandler".
 - If the chosen target **contradicts a recorded `adr` doc**, STOP and surface the conflict. Do not quietly override an `adr`.
 
 ### 3. Confirm the interface and seam — do not redesign

@@ -1,7 +1,7 @@
 ---
 name: map
 description: Build and keep honest the model of what a codebase IS — its modules, their depth, edges, leaks, and interface coverage — AND capture the recorded truth around it as spine docs of every type (glossary, note, risk, runbook, postmortem, diagram, and the adr for a decision baked into the code). Finds all structural indicators (signals). The doc REGISTRAR of the suite, and the keeper of worktree truth — it syncs the task board's per-task git worktrees against real git on every reconcile. Use when onboarding a repo, running an architecture health check, reconciling drift after a merge, capturing decisions/notes/diagrams, or asking "what does this codebase actually look like." This skill models what EXISTS and records the truth about it — it never proposes deepenings or designs intended structure (that is fathom:design), and never edits source (fathom:code).
-allowed-tools: Read Grep Glob Bash mcp__arch-map__*
+allowed-tools: Read Grep Glob Bash ReadMcpResourceTool ListMcpResourcesTool mcp__arch-map__*
 ---
 
 # Map — Observe & Record What Is
@@ -47,10 +47,13 @@ It DOES (new in v2) write `adr` docs — but only for a decision **already embed
 
 The spine is a shared, file-backed set of named maps (one per project). Bootstrap by resolving the map id and thread that `map` id through every call.
 
+**Reads of stored state are MCP resources, not tools.** Read them with the built-in `ReadMcpResourceTool` against server `arch-map` and an `archmap://` uri (`ListMcpResourcesTool` enumerates them). Resources return **YAML** (compact — indentation, no JSON braces/quotes), and `archmap://{map}/doc/{id}` returns a **Markdown file** (frontmatter + body) you can read directly. Writes and computed queries stay `archmap_*` tool calls.
+
 ```
-archmap_list_maps()                       # resume vs create
-archmap_create_map("My Repo") -> {map}    # capture the id
-archmap_show_map(map)                      # digest: counts, domains, orphans, worst health
+ListMcpResourcesTool(server="arch-map")                  # enumerate the archmap:// uris
+ReadMcpResourceTool(server="arch-map", uri="archmap://maps")           # resume vs create
+archmap_create_map("My Repo") -> {map}                   # capture the id (write = tool)
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/digest")   # digest: counts, domains, orphans, worst health
 ```
 
 Reconcile is run explicitly — on a health check, after a big merge, or when someone asks "is the map still accurate."
@@ -59,7 +62,7 @@ Reconcile is run explicitly — on a health check, after a big merge, or when so
 
 ### 1. Resolve the target map
 
-`archmap_list_maps()`, then **resume vs create**. Capture the `map` id. Read the spine's `glossary` docs so module domains and labels use the project's vocabulary, and skim its `adr` docs so you treat recorded decisions as **facts about what is** — never as things to challenge. (If a repo carries a legacy `CONTEXT.md`, read it as bootstrap input, then write the canonical vocabulary as `glossary` docs in step 7.)
+Read `archmap://maps`, then **resume vs create**. Capture the `map` id. Read the spine's `glossary` docs (`archmap://{map}/docs?type=glossary`, then `archmap://{map}/doc/{id}` for a body) so module domains and labels use the project's vocabulary, and skim its `adr` docs (`archmap://{map}/docs?type=adr`) so you treat recorded decisions as **facts about what is** — never as things to challenge. (If a repo carries a legacy `CONTEXT.md`, read it as bootstrap input, then write the canonical vocabulary as `glossary` docs in step 7.)
 
 If the map already exists, skip to **step 6 (Reconcile)**. A fresh map runs steps 2–5.
 
@@ -89,8 +92,8 @@ archmap_modules(map, action="add", items=[ {id,label,domain, depth,size,seam,ifa
 ### 5. Inspect and find every indicator
 
 ```
-archmap_show_map(map)                                                  # digest + worst health
-archmap_render_view(map, of="orphans" | "low-coverage" | "leaks")      # diagnostic cuts
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/digest")    # digest + worst health (resource)
+archmap_render_view(map, of="orphans" | "low-coverage" | "leaks")      # diagnostic cuts (computed query)
 archmap_render_view(map, kind="bar", metric="depth", group_by="domain")
 archmap_scan_signals(map)                                              # ALL structural signals, worst-first
 ```
@@ -101,7 +104,7 @@ archmap_scan_signals(map)                                              # ALL str
 
 Start with the drift report: `archmap_drift(map, root=<repo>)` names changed files and the modules they belong to — that IS the scope. `unmappedFiles` is the step-from-below worklist. `archmap_verify_edges(map, root=<repo>)` cross-checks recorded edges against real imports.
 
-- **Per module in scope** — pull its record (`action="get"`), re-walk its `files` (an Explore subagent if large), re-derive depth/coverage/dependsOn/leaksTo/iface/seam/tests (`action="update"`).
+- **Per module in scope** — pull its record (`archmap://{map}/module/{id}`; bulk via `archmap://{map}/model`), re-walk its `files` (an Explore subagent if large), re-derive depth/coverage/dependsOn/leaksTo/iface/seam/tests (`archmap_modules(action="update")`).
 - **Unowned files** — extend a module's `files` or add a new module.
 - **Vanished files** — `action="delete"` (prunes edges); if a file merely moved, update `files` so hand-curated prose survives.
 - **Clear the halos** — `archmap_modules(map, action="update", ids=["*"], updated=False)` once the scope matches reality.
@@ -141,7 +144,7 @@ Then point the affected modules at it via their `adrRef` (the doc id). If a gate
 
 ### 8. Keep domain language honest, then hand off
 
-If mapping surfaces a load-bearing concept the `glossary` docs don't name, add the term (step 7). Re-run `archmap_show_map(map)` and state the headline: deepest/shallowest domains, low-coverage and leak hot-spots, orphans resolved, docs captured. Then route — **without doing their jobs**:
+If mapping surfaces a load-bearing concept the `glossary` docs don't name, add the term (step 7). Re-read `archmap://{map}/digest` and state the headline: deepest/shallowest domains, low-coverage and leak hot-spots, orphans resolved, docs captured. Then route — **without doing their jobs**:
 
 - **Shallow clusters or new/changing work that need a target** → [fathom:design](../design/SKILL.md) (it proposes, grills, and designs).
 - **Executing a refactor or build** → [fathom:code](../code/SKILL.md) (the only source editor).

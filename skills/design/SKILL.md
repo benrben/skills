@@ -1,6 +1,7 @@
 ---
 name: design
 description: Decide the deep-module structure for a change — in ONE skill, two modes by request. IMPROVE mode finds friction in EXISTING shallow modules, flags a deepening candidate, and grills it to accepted/deferred/rejected. NEW mode designs the intended deep-module graph for new or changing work (seams, interfaces design-it-twice, dependency categories) and sequences it into build steps — each step is a TASK on the skill-cycle board (design OWNS the "plan" column), carrying a priority, an assigned agent, and its own per-task git worktree for fathom:code to build in. Records the decision on the spine as docs (rfc → adr · spec · diagram), candidates, intended modules, and Plans — all spine-only, no files. Use when the user wants to improve architecture, consolidate shallow modules, design a new feature's structure, or compare interface options before code. Do NOT use to seed or reconcile the map of what IS (fathom:map), to edit source (fathom:code), or to gate a diff (fathom:review). design decides WHAT should exist and grills HOW; it never writes source.
+allowed-tools: Read Grep Glob Bash ReadMcpResourceTool ListMcpResourcesTool mcp__arch-map__*
 ---
 
 # Design — Decide the Deep Structure
@@ -44,13 +45,15 @@ Docs are **spine-only** (no files — see [../../fathom/DOC-TYPES.md](../../fath
 
 The map is shared and file-backed; thread its `map` id through every call.
 
+**Reads of stored state are MCP resources** — read them with the built-in `ReadMcpResourceTool` (server `arch-map`, an `archmap://` uri; `ListMcpResourcesTool` enumerates them). They return **YAML** (compact); `archmap://{map}/doc/{id}` returns a **Markdown file** you read directly. Writes (modules/suggestions/grilling/plans/docs/worktrees) and computed queries (`archmap_scan_signals`) stay `archmap_*` calls.
+
 ```
-archmap_list_maps()                    # find this project's map (resume) — capture its id
-archmap_show_map(map)                  # the network digest; shallow nodes, leaks, thin coverage
-archmap_get_full_model(map)            # full interfaces/seams/tests/candidates when you need them
+ReadMcpResourceTool(server="arch-map", uri="archmap://maps")             # find this project's map (resume) — capture id
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/digest")     # the network digest; shallow nodes, leaks, thin coverage
+ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/model?sort=depth&dir=asc")  # shallowest-first — design's hunting ground
 ```
 
-If the repo isn't mapped, **STOP and hand to `fathom:map`** to seed it — `design` consumes an accurate baseline, it never builds one. Read the project's `glossary` docs (domain vocabulary) and any `adr` docs in the area off the spine, so you name modules in domain terms and treat recorded decisions as **constraints**, not invitations to re-litigate.
+If the repo isn't mapped, **STOP and hand to `fathom:map`** to seed it — `design` consumes an accurate baseline, it never builds one. Read the project's `glossary` docs (`archmap://{map}/docs?type=glossary`) and any `adr` docs in the area (`archmap://{map}/docs?type=adr&domain=<d>`, then `archmap://{map}/doc/{id}`) off the spine, so you name modules in domain terms and treat recorded decisions as **constraints**, not invitations to re-litigate.
 
 ## Branch on the request
 
@@ -98,7 +101,7 @@ The id is derived as `f"{module}-{strength}"` (lower-cased, spaces dashed). Pres
 
 ### 1. Frame the change
 
-Restate the request as **what behaviour must exist** and **what must NOT change**, in domain terms. Locate it on the map: which actual modules the work touches, depends on, or sits beside (`archmap_modules(map, action="get", id=…)` for interfaces you'll build on).
+Restate the request as **what behaviour must exist** and **what must NOT change**, in domain terms. Locate it on the map: which actual modules the work touches, depends on, or sits beside (`archmap://{map}/module/{id}` for an interface you'll build on; `archmap://{map}/model?domain=<d>` for the whole slice).
 
 ### 2. Design the module graph twice (system level)
 
