@@ -24,11 +24,11 @@ payload). ``register(mcp)`` is called once from server.py after the tools are de
 """
 from __future__ import annotations
 
-import yaml
 from fastmcp.exceptions import ResourceError
 from fastmcp.resources import ResourceContent
 
 from . import server as srv
+from .serialize import _yaml          # the ONE serializer both surfaces share (serialize.py)
 
 # MIME types for the two surfaces. YAML for every structured payload (cuts JSON's
 # brace/quote/comma token overhead); Markdown for the single doc (prose verbatim,
@@ -38,14 +38,6 @@ from . import server as srv
 # return in [ResourceContent(text, mime_type=...)] to pin the block's mime too.
 _YAML_MIME = "application/yaml"
 _MD_MIME = "text/markdown"
-
-
-def _yaml(obj) -> str:
-    """Serialize a payload to YAML — the generic helper every structured resource
-    builds on. Block style (not flow) + insertion order preserved + unicode kept raw,
-    so the output reads as indented key: value lines with no JSON syntax overhead."""
-    return yaml.safe_dump(obj, default_flow_style=False, sort_keys=False,
-                          allow_unicode=True)
 
 
 def _yaml_block(obj):

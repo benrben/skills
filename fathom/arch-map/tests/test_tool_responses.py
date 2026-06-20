@@ -8,9 +8,68 @@
 These lock the NEW optional surface; the HARD INVARIANT (no renamed/changed existing
 params) is covered by test_tool_surface + test_http_backend.
 """
+import asyncio
+
 import pytest
+import yaml
+from fastmcp import Client
 
 import arch_map.server as srv
+
+
+# ---- tool output is YAML TEXT, not a JSON structuredContent block ------------
+# The generic YamlToolOutput middleware + the stripped output_schemas mean every
+# archmap_* TOOL result reaches the model as ONE application/yaml text block with
+# NO structured_content. Exercise the REAL MCP serialization path (not the
+# unwrapped .fn) over an in-memory Client so this is the on-the-wire guarantee.
+
+def _call(tool: str, args: dict):
+    """Call an archmap_* tool over an in-memory Client (real serialization path),
+    returning the CallToolResult. Composes with the `reg` fixture because the
+    server resolves REGISTRY per call."""
+    async def go():
+        async with Client(srv.mcp) as c:
+            return await c.call_tool(tool, args)
+    return asyncio.run(go())
+
+
+def test_tool_result_is_yaml_text_with_no_structured_content(reg):
+    res = _call("archmap_create_map", {"name": "Demo", "map_id": "demo"})
+    # NO JSON structuredContent leaks to the client (the whole point of the pass)
+    assert res.structured_content is None
+    assert res.data is None
+    # exactly one text block, and it parses as YAML (not JSON-with-braces)
+    assert len(res.content) == 1 and res.content[0].type == "text"
+    text = res.content[0].text
+    assert "{" not in text.splitlines()[0]            # YAML key: value, not a JSON brace
+    payload = yaml.safe_load(text)
+    assert payload["ok"] is True and payload["map"] == "demo"
+
+
+def test_every_tool_kind_returns_yaml_no_structured_content(reg):
+    # a write (modules add), a computed query (scan_signals), and a lifecycle ack
+    # all come back as YAML text with structured_content stripped.
+    srv.create_project(name="M", map_id="m")
+    add = _call("archmap_modules",
+                {"map": "m", "action": "add", "id": "a", "label": "A",
+                 "domain": "d", "depth": 0.7})
+    assert add.structured_content is None
+    assert yaml.safe_load(add.content[0].text)["created"]["id"] == "a"
+
+    scan = _call("archmap_scan_signals", {"map": "m"})
+    assert scan.structured_content is None
+    assert yaml.safe_load(scan.content[0].text)["map"] == "m"
+
+
+def test_tools_list_exposes_no_output_schema(reg):
+    # output_schema is stripped, so tools/list carries no outputSchema and no
+    # client expects a JSON object back (it gets YAML text instead).
+    async def go():
+        async with Client(srv.mcp) as c:
+            return await c.list_tools()
+    tools = asyncio.run(go())
+    ours = [t for t in tools if t.name.startswith("archmap_")]
+    assert ours and all(t.outputSchema is None for t in ours)
 
 
 # ---- get_full_model: no args == today's whole model -------------------------

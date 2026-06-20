@@ -43,6 +43,9 @@ import re
 import shutil
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
+from fastmcp.tools import FunctionTool, ToolResult
+from mcp.types import TextContent
 from pydantic import Field
 from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
@@ -69,6 +72,7 @@ from .git_facts import GitFacts, NotARepo, UnknownSha
 from .import_graph import verify as verify_imports
 from .whatif import preview_merge
 from .worktrees import Worktrees, WorktreeError, slug as _wt_slug, default_path as _wt_default_path
+from .serialize import _yaml          # the ONE serializer shared with resources.py (serialize.py)
 
 HERE = Path(__file__).parent
 # The unified **studio** — one workspace combining the dependency graph (canvas)
@@ -118,10 +122,60 @@ mcp = FastMCP(
         "interface), seam, leak, coverage, candidate (a proposed deepening) and its grilling, "
         "Plan/WorkStep (a task on the board), worktree (a task's isolated branch), and doc types "
         "(glossary/note/adr/spec/risk/runbook/postmortem/diagram). "
+        "EVERY TOOL RETURNS YAML TEXT (one text block, no JSON structuredContent) — the same "
+        "token-cheap indented key: value shape the archmap:// resources return; parse it as YAML. "
         "Over HTTP, root defaults to the studio's launch dir, so pass root= explicitly to the "
         "tools that read the repo (archmap_ingest/archmap_drift/archmap_verify_edges/archmap_worktrees)."
     ),
 )
+
+
+# --- Generic tool-output hook: every archmap_* TOOL result -> YAML text -------
+# The tool functions still RETURN dicts (so _ack / _worktrees_impl / the /api/*
+# routes and the direct-call unit tests stay dict-shaped JSON). The conversion to
+# YAML happens once, generically, at the MCP boundary: FastMCP turns a dict return
+# into a ToolResult whose structured_content is that dict (a JSON block the model
+# would otherwise receive); this middleware reserializes that dict as a single
+# application/yaml-shaped TEXT block and DROPS structured_content, so the model
+# gets token-cheap YAML and NO JSON structuredContent. It fires only on MCP
+# call_tool — the studio's /api/* Starlette routes never pass through it, so they
+# keep returning JSON. Scoped to our archmap_* tools by name, so any Lane-2 Prefab
+# UI tool (which returns a rendered component, not an ack dict) is left untouched.
+class YamlToolOutput(Middleware):
+    """Reserialize each archmap_* tool's structured result as one YAML text block."""
+
+    async def on_call_tool(self, context, call_next):
+        result = await call_next(context)
+        name = getattr(context.message, "name", "") or ""
+        if not name.startswith("archmap_"):
+            return result                              # Prefab/other tools: leave as-is
+        sc = result.structured_content
+        if sc is None:
+            return result                              # already non-structured (e.g. a str)
+        # output_schema is stripped for these tools (see _strip_tool_output_schemas),
+        # so a dict return arrives here as a bare dict; tolerate the wrap-result shape
+        # too in case a tool ever returns a scalar/list.
+        payload = sc["result"] if (isinstance(sc, dict) and set(sc) == {"result"}) else sc
+        return ToolResult(content=[TextContent(type="text", text=_yaml(payload))],
+                          structured_content=None)
+
+
+def _strip_tool_output_schemas(server: FastMCP) -> None:
+    """Drop the auto-generated `-> dict` output_schema on every archmap_* tool.
+
+    A declared output_schema makes the MCP SDK REQUIRE structured_content on the
+    wire, which is exactly the JSON block we want gone. Clearing it lets the YAML
+    middleware return a text-only ToolResult without tripping output validation,
+    and removes outputSchema from tools/list so no client expects a JSON object.
+    Iterates the live FunctionTool objects in the local provider (mutating their
+    output_schema in place propagates to listing + dispatch). Called once at the
+    bottom of this module, AFTER every @mcp.tool above is registered."""
+    for tool in server.local_provider._components.values():
+        if isinstance(tool, FunctionTool) and tool.name.startswith("archmap_"):
+            tool.output_schema = None
+
+
+mcp.add_middleware(YamlToolOutput())
 
 # Persisted, file-backed state. Each *named map* is one JSON file under maps/, so
 # many maps (one per project) coexist; every read loads the latest from disk and
@@ -305,6 +359,7 @@ def list_maps(limit: int = 50, offset: int = 0) -> dict:
 @mcp.tool(name="archmap_create_map", **_APP)
 def create_project(name: str, map_id: str = "", repo: str = "") -> dict:
     """Create a new map (one per project/repo) and open it empty, then render it.
+    Returns its ack AS YAML TEXT (parse it as YAML — no JSON structuredContent).
 
     When to use: starting a new project/map (typically one per repo). `name` is the
     human project name (e.g. "Mr. Meeseeks") and becomes the display label. By
@@ -328,7 +383,8 @@ def create_project(name: str, map_id: str = "", repo: str = "") -> dict:
 def rename_map(map: str, to: str, repo: str = "") -> dict:
     """Rename a map. `map` is the current id, `to` the new id, `repo` the new
     display label (defaults to `to` if blank). Use to point a map at a real
-    project, e.g. rename_map("arch-map", "mr-meeseeks", "Mr. Meeseeks")."""
+    project, e.g. rename_map("arch-map", "mr-meeseeks", "Mr. Meeseeks").
+    Returns its ack AS YAML TEXT (parse it as YAML)."""
     new_id = _slug(to)
     call = f"archmap_rename_map(map='{map}', to='{new_id}')"
     hint = "List existing maps via archmap_list_maps; the target id must be free."
@@ -339,7 +395,8 @@ def rename_map(map: str, to: str, repo: str = "") -> dict:
 @mcp.tool(name="archmap_delete_map")
 def delete_map(map: str) -> dict:
     """Delete an entire named map and its file. IRREVERSIBLE — the map's JSON file
-    is removed permanently and there is no undo; archmap_list_maps first if unsure."""
+    is removed permanently and there is no undo; archmap_list_maps first if unsure.
+    Returns its ack AS YAML TEXT (parse it as YAML)."""
     call = f"archmap_delete_map(map='{map}')"
     hint = "List existing maps via archmap_list_maps to confirm the id."
 
@@ -461,7 +518,8 @@ def render_view(
     title: str = "",
 ) -> dict:
     """Render an on-brand ad-hoc VIEW of a map — a table or bar chart drawn with the
-    studio's own design (not generic widgets).
+    studio's own design (not generic widgets). The tool result is YAML TEXT (parse it
+    as YAML); inside an MCP-App host the same view payload drives the view renderer.
 
     `of` selects which modules: "all" | "orphans" | "leaks" | "suggestions" |
     "updated" | "low-coverage" | "shallow" | "mid" | "deep" | <domain name>.
@@ -555,6 +613,7 @@ def _compute_signals(m, mx: dict) -> list[str]:
 def scan_signals(map: str, signal: str | None = None,
                          limit: int = 50, offset: int = 0) -> dict:
     """Scan a map for structural signals (rules-based architectural issues).
+    Result is YAML TEXT (parse it as YAML — no JSON structuredContent).
 
     Returns the modules that have at least one signal, with the signals they
     carry and a health score, sorted worst-first (lowest health). Optionally filter
@@ -671,6 +730,7 @@ def _safe_git_worktrees(wm: "Worktrees") -> list[dict]:
 def ingest(map: str, root: str = "", coverage_report: str = "",
            window_days: int = 90, anchor: bool = True) -> dict:
     """Measure ground truth for `map` and patch module facts in ONE locked write.
+    Returns its summary AS YAML TEXT (parse it as YAML — no JSON structuredContent).
 
     churn: per actual-plane module with files, the share of the last
     `window_days`' commits touching those files (git history — measured, not
@@ -743,8 +803,8 @@ def _ingest_impl(map, root, coverage_report, window_days, anchor) -> dict:
 @mcp.tool(name="archmap_drift", meta=_MAX_RESULT)
 def drift(map: str, since_sha: str = "", root: str = "",
           limit: int = 0, offset: int = 0) -> dict:
-    """How stale is the map? Changes since the last reconcile anchor (or since an
-    explicit `since_sha` baseline — the review-style question): the changed files,
+    """How stale is the map? Result is YAML TEXT (parse it as YAML). Changes since the
+    last reconcile anchor (or since an explicit `since_sha` baseline — the review question): the changed files,
     the modules they belong to, the changed files NO module owns, and a one-line
     summary. Read-only; degraded outcomes (no anchors / no repo) come back with
     anchored=false and a `reason`, never an error. Over HTTP, root defaults to the
@@ -775,7 +835,8 @@ def drift(map: str, since_sha: str = "", root: str = "",
 @mcp.tool(name="archmap_history")
 def history(map: str, module: str = "", domain: str = "",
             metrics: list[str] | None = None) -> dict:
-    """Trend series across the map's reconcile anchors, oldest -> newest: health/
+    """Trend series across the map's reconcile anchors, AS YAML TEXT (parse it as YAML),
+    oldest -> newest: health/
     depth/coverage per module (default: every module ever anchored), for one
     `module`, or aggregated as the mean over one `domain`. Series lists are
     index-aligned with `anchors` (null where a module did not exist yet).
@@ -795,7 +856,8 @@ def history(map: str, module: str = "", domain: str = "",
 @mcp.tool(name="archmap_verify_edges", meta=_MAX_RESULT)
 def verify_edges(map: str, root: str = "", limit: int = 0, offset: int = 0) -> dict:
     """Check the map's recorded dependsOn/leaksTo edges against the code's REAL
-    imports (Python via ast, JS/TS via import lexing). Returns confirmedEdges,
+    imports (Python via ast, JS/TS via import lexing). Result is YAML TEXT (parse it
+    as YAML). Returns confirmedEdges,
     undeclaredEdges (in code but not on the map — candidate leaks), missingEdges
     (on the map but not in code; only reported when both modules own parsed
     source, so prose modules never false-positive), and the unparseable files.
@@ -826,7 +888,8 @@ def verify_edges(map: str, root: str = "", limit: int = 0, offset: int = 0) -> d
 
 @mcp.tool(name="archmap_whatif")
 def whatif(map: str, ids: list[str]) -> dict:
-    """Preview the metrics of a hypothetical merge of 2+ modules: the merged
+    """Preview the metrics of a hypothetical merge of 2+ modules, AS YAML TEXT (parse
+    it as YAML — no JSON structuredContent): the merged
     node's fanIn/fanOut/instability/blastRadius/health (computed on a rewritten
     copy of the edge graph — no duplicated math), size-weighted depth/coverage,
     the member edges the merge absorbs, and the external edges it keeps.
@@ -870,9 +933,9 @@ def modules(
                    Field(description="bulk target ids (or [\"*\"] on update for every module)")] = None,
 ) -> dict:
     """Create / read / update / delete / realize MODULE nodes in `map`, selected by
-    `action`. Writes re-render and return the compact ack (it carries
-    `unresolvedEdges` when an edge target matches no module — usually a typo);
-    get returns the record(s).
+    `action`. Writes re-render and return the compact ack AS YAML TEXT (parse it as
+    YAML — no JSON structuredContent); the ack carries `unresolvedEdges` when an edge
+    target matches no module (usually a typo).
 
       action="add":     create a module — needs id, label, domain (+ optional
                         depth/size/seam/iface/coverage/churn/files/dependsOn/leaksTo/
@@ -991,7 +1054,7 @@ def suggestions(
     note: str = "",
 ) -> dict:
     """Manage deepening SUGGESTIONS (candidates) on a module in `map`, by `action`.
-    Re-renders; returns the compact ack.
+    Re-renders; returns the compact ack AS YAML TEXT (parse it as YAML).
 
       action="flag":    attach a new deepening suggestion to `module` — needs title,
                         strength ("Strong"|"Worth exploring"|"Speculative"), category,
@@ -1045,6 +1108,7 @@ def grilling(
     adr: str = "",
 ) -> dict:
     """Drive the /deepen GRILLING lifecycle for a candidate in `map`, by `action`.
+    Every result is YAML TEXT (parse it as YAML — no JSON structuredContent).
 
       action="start":  UI callback — persist `module`'s first open candidate as
                        'requested' and return {map, module, suggestion_id, prompt}
@@ -1112,7 +1176,7 @@ def plans(
     blocked: bool | None = None,
 ) -> dict:
     """Manage PLANS (intended deep structure) and their work steps in `map`, by `action`.
-    Writes re-render and return the compact ack; get returns the plan record. A step is
+    Writes re-render and return the compact ack AS YAML TEXT (parse it as YAML). A step is
     a TASK on the board (archmap_board) — its `status` is the skill-cycle column and its
     `agent` is the swimlane.
 
@@ -1235,9 +1299,10 @@ def worktrees(
 ) -> dict:
     """Manage per-task git WORKTREES on `map`, by `action` — the board's isolation
     unit: one branch + checkout per WorkStep so an agent builds a task without
-    colliding in the shared working tree. The spine RECORDS each worktree (the board
-    shows the branch + agent); real `git worktree` runs when allowed (ON unless
-    ARCH_MAP_ALLOW_WORKTREE is off) — otherwise it degrades to a copy-paste command.
+    colliding in the shared working tree. Returns its ack AS YAML TEXT (parse it as
+    YAML). The spine RECORDS each worktree (the board shows the branch + agent); real
+    `git worktree` runs when allowed (ON unless ARCH_MAP_ALLOW_WORKTREE is off) —
+    otherwise it degrades to a copy-paste command.
 
       action="create": provision a worktree for a task — needs branch (or a step_id/
                        title to derive one); optional base (fork point), plan_id/step_id
@@ -1439,7 +1504,8 @@ def docs(
     query_has_open_candidate: bool | None = None,
     query_tag: str = "",
 ) -> dict:
-    """Manage scoped architecture DOCS in `map`, by `action`. Writes re-render.
+    """Manage scoped architecture DOCS in `map`, by `action`. Writes re-render and
+    return the compact ack AS YAML TEXT (parse it as YAML).
 
       action="add":    create doc `doc_id` — needs type and title; optional summary,
                        body, status, tags, supersedes, adrRef, author, and a scope
@@ -2066,6 +2132,11 @@ from . import prompts as _prompts      # noqa: E402
 
 _resources.register(mcp)
 _prompts.register(mcp)
+
+# Now that every @mcp.tool above is registered, clear their auto `-> dict`
+# output_schemas so the YamlToolOutput middleware can return text-only YAML
+# without the SDK demanding a JSON structuredContent block.
+_strip_tool_output_schemas(mcp)
 
 
 def main() -> None:
