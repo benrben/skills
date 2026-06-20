@@ -2,6 +2,7 @@
 name: code
 description: Execute an already-chosen deepening into source — refactor a shallow cluster into one deep module, build new code to a planned interface so it is deep from the start, or write interface tests for a test-first target the signal scan named. Use when the user says "refactor this into a deep module", "implement this interface", "merge these pass-throughs", "execute the accepted candidate", "build this work step", or "write the tests for this module". This is the ONLY Fathom skill that edits source; it builds a board task INSIDE that task's own git worktree (an isolated branch) — code OWNS the "in-progress" column — and reconciles the modules it touched on the arch-map spine. Do NOT use to decide WHETHER to deepen, grill a candidate, or design a target structure from scratch (that is fathom:design) — code executes a target the spine already holds. Skip for read-only mapping (fathom:map).
 disable-model-invocation: true
+allowed-tools: Read Grep Glob Edit Write Bash mcp__arch-map__*
 ---
 
 # Execute a Deepening
@@ -49,6 +50,8 @@ If there is **no** accepted candidate, **no** planned WorkStep, and **no** expli
 ### 1a. Enter the task's worktree and claim its board column
 
 A WorkStep is a **task on the skill-cycle board** ([../../fathom/BOARD.md](../../fathom/BOARD.md)); fathom:code owns its **in-progress** column and builds the task **inside that task's own git worktree** — an isolated branch — so parallel builds never collide in the shared working tree.
+
+Sibling tasks in the same wave (steps with no `dependsOnSteps` between them) build **concurrently**, each its own fathom:code agent in its own worktree, so parallel builds never collide. This skill builds **exactly one** task's worktree — its branch alone — and leaves the sibling branches to their own agents.
 
 - **Get into the worktree.** If the step already carries a `worktree`, work in it; if not, provision one (or `attach` an existing branch), then `cd` into its `path` and make **every edit on that branch**:
   ```

@@ -158,6 +158,8 @@ archmap_worktrees(map, action="create", branch="feat/pricing-engine",
 
 (Real `git worktree add` when allowed; otherwise it records the worktree and returns the command — [../../fathom/BOARD.md](../../fathom/BOARD.md). For IMPROVE mode a single accepted candidate is often the whole task — the `module`, its grilled interface, and category are the hand-off; a worktree is optional but recommended for a risky refactor.)
 
+Steps that share no `dependsOnSteps` edge are **independent**: they form a **wave** that fans out to **parallel `fathom:code` agents** — one per worktree — building concurrently on isolated branches, with `fathom:review` gating each branch before it merges. A step that depends on another waits for its wave to land before its own wave starts. Provision a worktree per step in the wave so the fan-out has somewhere to build.
+
 ### Record the decision as docs (spine-only)
 
 When a choice passes the three gates — **hard to reverse · surprising without context · real trade-off** ([../../fathom/DOC-TYPES.md](../../fathom/DOC-TYPES.md)) — write an **adr** doc and scope it to the affected modules:

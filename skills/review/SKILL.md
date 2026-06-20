@@ -90,6 +90,7 @@ Be honest about confidence: if the map's record looks stale for a touched module
 - **The fix itself** → **fathom:code**, only after design has decided a target.
 - **A load-bearing decision surfaced** (e.g. an accepted seam crossing) → record it as an `adr` doc on the spine: fathom:design writes it when it's a decision being made, fathom:map when it's already in the code. (review itself only records `risk` / `postmortem` — see [Strictly read-only](#strictly-read-only--one-carved-exception).)
 - **The change is a board task** → after reporting, move its card ([../../fathom/BOARD.md](../../fathom/BOARD.md)): `archmap_plans(action="set_step_status", step_status="done")` when clean, or back to `in-progress` (more build needed) / `plan` (needs a redesign — route to fathom:design) with the findings attached. Once the task merges, **fathom:map** runs `archmap_worktrees(action="sync")` to retire its worktree and reconcile the branch.
+- **When several worktree branches from one wave land together**, gate **each branch independently** — one review per branch, its own verdict and card move — before that branch merges. A wave is not reviewed in bulk; a clean sibling merges without waiting on a sibling that has findings.
 
 ## What review does NOT do
 
