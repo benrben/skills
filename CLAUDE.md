@@ -5,7 +5,7 @@ skills/
   <skill-name>/SKILL.md   # one folder per skill — auto-discovered by the plugin loader
   README.md               # index listing every skill, name linked to its SKILL.md
 fathom/                   # shared substrate (arch-map MCP spine + format docs); NOT a skill, at the repo root
-.mcp.json                 # registers the spine at ${CLAUDE_PLUGIN_ROOT}/fathom/arch-map
+.mcp.json                 # launches the bundled stdio spine: uv run --project ${CLAUDE_PLUGIN_ROOT}/fathom/arch-map arch-map
 ```
 
 Plugin skills are auto-discovered **one level deep** — Claude Code scans `skills/*/SKILL.md`. Do **not** nest skills under bucket folders (e.g. `skills/engineering/map/`); the loader won't find them and `.claude-plugin/plugin.json` has no supported field to point at deeper paths. Keep all non-skill material (the `fathom/` substrate, the MCP server) at the repo root, OUT of `skills/`, so discovery never sees it. Skill bodies reference the substrate as `../../fathom/<doc>.md` (up from `skills/<name>/` to the repo root).

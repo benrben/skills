@@ -59,14 +59,14 @@ cd /path/to/your/other-project
 That gives you:
 
 - **The skills** — the slash commands `/map`, `/understand`, `/design`, `/code`, `/review` (auto-registered from the plugin; `SKILL.md` edits hot-reload).
-- **The spine** — the `arch-map` MCP server auto-registers from the plugin's [`.mcp.json`](./.mcp.json), which uses `${CLAUDE_PLUGIN_ROOT}` so it resolves to wherever the plugin is installed. Approve it when prompted. The first launch runs `uv`, which bootstraps the server's venv from its lockfile (needs network once; or pre-run `uv sync` in the installed `…/fathom/arch-map`). MCP/hook changes need `/reload-plugins` to take effect.
+- **The spine** — the `arch-map` MCP auto-registers from the plugin's [`.mcp.json`](./.mcp.json), which runs the bundled server over **STDIO** via `uv run --project ${CLAUDE_PLUGIN_ROOT}/fathom/arch-map arch-map` (no fixed host/port — the host launches the process and talks to it on stdin/stdout, and `${CLAUDE_PLUGIN_ROOT}` resolves to wherever the plugin is installed). Approve it when prompted. The first launch runs `uv`, which bootstraps the server's venv from its lockfile (needs network once; or pre-run `uv sync` in the installed `…/fathom/arch-map`). MCP/hook changes need `/reload-plugins` to take effect. The browser studio is a **separate, optional** command — `./run-mcp.sh web` — not part of the auto-registered MCP.
 
 The spine is **multi-map**, so a single install serves *every* project — each gets its own map keyed by project name (stored under the plugin's `arch-map/maps/`).
 
 **Just the living map (no skills):** register only the MCP, from any project, with an absolute path:
 
 ```bash
-claude mcp add arch-map -- uv run --project /Users/benreich/skills/fathom/arch-map arch-map
+claude mcp add arch-map -- uv run --project /path/to/fathom/fathom/arch-map arch-map
 ```
 
 **Developing in *this* repo:** `${CLAUDE_PLUGIN_ROOT}` is only set when the plugin is installed, so the bundled `.mcp.json` won't auto-launch arch-map when this repo is opened directly. For local dev, run it explicitly — `uv run --project fathom/arch-map arch-map` (stdio) or `… arch-map.web` (browser studio at `http://127.0.0.1:8800/`).
