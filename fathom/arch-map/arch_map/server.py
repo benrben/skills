@@ -35,7 +35,7 @@ from pathlib import Path
 
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 import asyncio
 import json
 import os
@@ -43,6 +43,7 @@ import re
 import shutil
 
 from fastmcp import FastMCP
+from pydantic import Field
 from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 try:  # Lane 1 — the custom MCP-App network-graph link — needs fastmcp.apps.AppConfig.
@@ -105,7 +106,9 @@ mcp = FastMCP(
         "Vocabulary: module (interface + implementation), depth (much behaviour behind a small "
         "interface), seam, leak, coverage, candidate (a proposed deepening) and its grilling, "
         "Plan/WorkStep (a task on the board), worktree (a task's isolated branch), and doc types "
-        "(glossary/note/adr/spec/risk/runbook/postmortem/diagram)."
+        "(glossary/note/adr/spec/risk/runbook/postmortem/diagram). "
+        "Over HTTP, root defaults to the studio's launch dir, so pass root= explicitly to the "
+        "tools that read the repo (archmap_ingest/archmap_drift/archmap_verify_edges/archmap_worktrees)."
     ),
 )
 
@@ -271,12 +274,14 @@ def list_maps(limit: int = 50, offset: int = 0) -> dict:
     Maps are shared — any agent can read or write any of them; pass the id as `map`.
     Use `limit` (default 50) and `offset` to page `maps`; the response carries
     total_count / has_more / next_offset."""
-    all_maps = REGISTRY.list()
-    page = all_maps[offset:offset + limit]
-    return {"maps": page, "default": REGISTRY.default_id(),
-            "total_count": len(all_maps),
-            "has_more": offset + limit < len(all_maps),
-            "next_offset": offset + limit if offset + limit < len(all_maps) else None}
+    def run():
+        all_maps = REGISTRY.list()
+        page = all_maps[offset:offset + limit]
+        return {"maps": page, "default": REGISTRY.default_id(),
+                "total_count": len(all_maps),
+                "has_more": offset + limit < len(all_maps),
+                "next_offset": offset + limit if offset + limit < len(all_maps) else None}
+    return _guard("archmap_list_maps()", False, "", run)
 
 
 @mcp.tool(name="archmap_create_map", **_APP)
@@ -291,9 +296,14 @@ def create_project(name: str, map_id: str = "", repo: str = "") -> dict:
     and archmap_suggestions(action="flag", ...) to populate the map. Maps are shared:
     any agent can read or write this one."""
     mid = map_id if map_id else _slug(name)   # explicit id passes through (REGISTRY validates it)
-    ack = _ack(REGISTRY.create(mid, repo or name or mid), changed=f"created project {mid}")
-    ack["map"] = mid          # the id to pass to subsequent tool calls
-    return ack
+    call = f"archmap_create_map(name='{name}'" + (f", map_id='{mid}'" if map_id else "") + ")"
+    hint = "List existing maps via archmap_list_maps; pass a different map_id to avoid a clash."
+
+    def run():
+        ack = _ack(REGISTRY.create(mid, repo or name or mid), changed=f"created project {mid}")
+        ack["map"] = mid          # the id to pass to subsequent tool calls
+        return ack
+    return _guard(call, True, hint, run)
 
 
 @mcp.tool(name="archmap_rename_map", **_APP)
@@ -302,21 +312,29 @@ def rename_map(map: str, to: str, repo: str = "") -> dict:
     display label (defaults to `to` if blank). Use to point a map at a real
     project, e.g. rename_map("arch-map", "mr-meeseeks", "Mr. Meeseeks")."""
     new_id = _slug(to)
-    return _ack(REGISTRY.rename(map, new_id, repo or to), changed=f"renamed {map} -> {new_id}")
+    call = f"archmap_rename_map(map='{map}', to='{new_id}')"
+    hint = "List existing maps via archmap_list_maps; the target id must be free."
+    return _guard(call, True, hint, lambda: _ack(
+        REGISTRY.rename(map, new_id, repo or to), changed=f"renamed {map} -> {new_id}"))
 
 
 @mcp.tool(name="archmap_delete_map")
 def delete_map(map: str) -> dict:
     """Delete an entire named map and its file. IRREVERSIBLE — the map's JSON file
     is removed permanently and there is no undo; archmap_list_maps first if unsure."""
-    REGISTRY.delete(map)
-    return {"ok": True, "deleted": map, "maps": [m["id"] for m in REGISTRY.list()]}
+    call = f"archmap_delete_map(map='{map}')"
+    hint = "List existing maps via archmap_list_maps to confirm the id."
+
+    def run():
+        REGISTRY.delete(map)
+        return {"ok": True, "deleted": map, "maps": [m["id"] for m in REGISTRY.list()]}
+    return _guard(call, True, hint, run)
 
 
 @mcp.tool(name="archmap_show_map", meta=_MAX_RESULT, **_APP)
 def show_map(map: str, domain: str = "", ids: list[str] | None = None) -> dict:
-    """Render a map — a DIGEST by default, module records only on request. Creates
-    the map empty if it doesn't exist yet.
+    """Render a map — a DIGEST by default, module records only on request. Reads
+    only an EXISTING map (it never auto-creates one); use archmap_create_map first.
 
     No filter -> digest: module/domain counts, orphans, open suggestions, and the
     ten worst-health modules. It deliberately does NOT return every module record
@@ -324,7 +342,13 @@ def show_map(map: str, domain: str = "", ids: list[str] | None = None) -> dict:
     view records for just that slice, or call archmap_get_full_model for everything.
     Inside an MCP-App host this drives the inline studio: the result tells the
     studio which `map` to render and it pulls the full model itself."""
-    store = REGISTRY.ensure(map)
+    call = f"archmap_show_map(map='{map}')"
+    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
+    return _guard(call, False, hint, lambda: _show_map_impl(map, domain, ids))
+
+
+def _show_map_impl(map: str, domain: str, ids: list[str] | None) -> dict:
+    store = REGISTRY.store(map)                       # raises KeyError — no phantom map on a read
     v = store.to_view()
     if domain or ids:
         want = set(ids or [])
@@ -353,14 +377,57 @@ def show_map(map: str, domain: str = "", ids: list[str] | None = None) -> dict:
     }
 
 
+_FULL_MODEL_SECTIONS = ("modules", "plans", "docs", "board")
+
+
 @mcp.tool(name="archmap_get_full_model", meta=_MAX_RESULT, **_APP)
-def get_full_model(map: str) -> dict:
+def get_full_model(
+    map: str,
+    include: list[str] | None = None,
+    module_limit: int = 0,
+    module_offset: int = 0,
+) -> dict:
     """Return a map's FULL model — every module's interface, files, tests, and
     suggestion bodies — which is what the inline studio renders. Heavier than
     archmap_show_map (the digest), so the studio calls this once it knows the
-    map and after each edit; agents normally use archmap_show_map."""
-    v = REGISTRY.ensure(map).to_dict()
+    map and after each edit; agents normally use archmap_show_map.
+
+    With NO extra args the result is byte-for-byte today's whole model. To bound it:
+      include: keep only these top-level sections (subset of
+               ["modules","plans","docs","board"]); "docs" also keeps docMembership,
+               "board" also keeps worktrees. Sections you omit are dropped.
+      module_limit / module_offset: page the modules list (only when module_limit>0).
+               Adds {"truncated", "next_offset", "total_modules"} so the caller can
+               fetch the rest with a follow-up call."""
+    call = f"archmap_get_full_model(map='{map}')"
+    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
+    return _guard(call, False, hint, lambda: _get_full_model_impl(
+        map, include, module_limit, module_offset))
+
+
+def _get_full_model_impl(map: str, include: list[str] | None,
+                         module_limit: int, module_offset: int) -> dict:
+    v = REGISTRY.store(map).to_dict()                 # raises KeyError — no phantom map on a read
     v["map"] = map
+    if module_limit and module_limit > 0:
+        all_mods = v.get("modules") or []
+        total = len(all_mods)
+        end = module_offset + module_limit
+        v["modules"] = all_mods[module_offset:end]
+        v["truncated"] = end < total
+        v["next_offset"] = end if end < total else None
+        v["total_modules"] = total
+    if include is not None:
+        keep = set(include)
+        # each requested section keeps its computed companion key
+        if "docs" in keep:
+            keep.add("docMembership")
+        if "board" in keep:
+            keep.add("worktrees")
+        droppable = set(_FULL_MODEL_SECTIONS) | {"docMembership", "worktrees"}
+        for key in list(v):
+            if key in droppable and key not in keep:
+                v.pop(key, None)
     return v
 
 
@@ -388,17 +455,22 @@ def render_view(
 
     e.g. archmap_render_view(map, of="low-coverage", columns=["id","domain","coverage"], sort_by="coverage")
          archmap_render_view(map, kind="bar", metric="coverage", group_by="domain", agg="avg")"""
-    spec: dict = {"kind": kind, "of": of, "title": title}
-    if kind == "bar":
-        spec |= {"metric": metric, "groupBy": group_by, "agg": agg}
-    else:
-        if columns:
-            spec["columns"] = columns
-        if sort_by:
-            spec |= {"sortBy": sort_by, "sortDir": sort_dir}
-    payload = _build_view(REGISTRY.store(map).to_dict(), _parse_view_spec(spec))
-    payload["map"] = map
-    return payload
+    call = f"archmap_render_view(map='{map}')"
+    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
+
+    def run():
+        spec: dict = {"kind": kind, "of": of, "title": title}
+        if kind == "bar":
+            spec |= {"metric": metric, "groupBy": group_by, "agg": agg}
+        else:
+            if columns:
+                spec["columns"] = columns
+            if sort_by:
+                spec |= {"sortBy": sort_by, "sortDir": sort_dir}
+        payload = _build_view(REGISTRY.store(map).to_dict(), _parse_view_spec(spec))
+        payload["map"] = map
+        return payload
+    return _guard(call, False, hint, run)
 
 
 @mcp.tool(name="archmap_get_metrics")
@@ -411,21 +483,26 @@ def get_metrics(map: str, module: str | None = None,
     Pass `module` for a single module's metrics. With no `module`, returns a page of
     all modules' metrics (keyed by id, ordered by id) — use `limit` (default 50) and
     `offset` to page; the response carries total_count / has_more / next_offset."""
-    model = REGISTRY.store(map)._load()
-    all_metrics = model.compute_metrics()
-    if module:
-        if module not in model.modules:
-            raise KeyError(f"no module '{module}' in map '{map}'. "
-                           f"Call archmap_get_metrics(map) for all modules, or "
-                           f"archmap_show_map(map) to list module ids.")
-        return {"map": map, "module": module, "metrics": all_metrics[module]}
-    ids = sorted(all_metrics)
-    page = ids[offset:offset + limit]
-    return {"map": map,
-            "metrics": {mid: all_metrics[mid] for mid in page},
-            "total_count": len(ids),
-            "has_more": offset + limit < len(ids),
-            "next_offset": offset + limit if offset + limit < len(ids) else None}
+    call = f"archmap_get_metrics(map='{map}')"
+    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
+
+    def run():
+        model = REGISTRY.store(map)._load()
+        all_metrics = model.compute_metrics()
+        if module:
+            if module not in model.modules:
+                raise KeyError(f"no module '{module}' in map '{map}'. "
+                               f"Call archmap_get_metrics(map) for all modules, or "
+                               f"archmap_show_map(map) to list module ids.")
+            return {"map": map, "module": module, "metrics": all_metrics[module]}
+        ids = sorted(all_metrics)
+        page = ids[offset:offset + limit]
+        return {"map": map,
+                "metrics": {mid: all_metrics[mid] for mid in page},
+                "total_count": len(ids),
+                "has_more": offset + limit < len(ids),
+                "next_offset": offset + limit if offset + limit < len(ids) else None}
+    return _guard(call, False, hint, run)
 
 
 def _compute_signals(m, mx: dict) -> list[str]:
@@ -458,7 +535,7 @@ def _compute_signals(m, mx: dict) -> list[str]:
     return signals
 
 
-@mcp.tool(name="archmap_scan_signals")
+@mcp.tool(name="archmap_scan_signals", meta=_MAX_RESULT)
 def scan_signals(map: str, signal: str | None = None,
                          limit: int = 50, offset: int = 0) -> dict:
     """Scan a map for structural signals (rules-based architectural issues).
@@ -485,40 +562,45 @@ def scan_signals(map: str, signal: str | None = None,
     Use `signal=<id>` to focus on one issue type, e.g.
     scan_signals(map, "test-first") returns the modules you should write
     tests for first, in priority order."""
-    model = REGISTRY.store(map)._load()
-    all_metrics = model.compute_metrics()
-    results = []
-    for m in model.modules.values():
-        mx = all_metrics[m.id]
-        sigs = _compute_signals(m, mx)
-        if signal and signal not in sigs:
-            continue
-        if not sigs and not signal:
-            continue
-        results.append({
-            "id": m.id, "label": m.label, "domain": m.domain,
-            "signals": sigs,
-            "health": mx["health"],
-            "depth": round(m.depth * 100),
-            "coverage": round(m.coverage * 100),
-            "fanIn": mx["fanIn"], "fanOut": mx["fanOut"],
-            "blastRadius": mx["blastRadius"],
-        })
-    results.sort(key=lambda r: (r["health"], r["id"]))  # worst health first
-    summary = {}
-    for r in results:                                   # summarise the FULL set, not the page
-        for s in r["signals"]:
-            summary[s] = summary.get(s, 0) + 1
-    page = results[offset:offset + limit]
-    return {
-        "map": map,
-        "filter": signal,
-        "total": len(results),
-        "signalCounts": summary,
-        "modules": page,
-        "has_more": offset + limit < len(results),
-        "next_offset": offset + limit if offset + limit < len(results) else None,
-    }
+    call = f"archmap_scan_signals(map='{map}')"
+    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
+
+    def run():
+        model = REGISTRY.store(map)._load()
+        all_metrics = model.compute_metrics()
+        results = []
+        for m in model.modules.values():
+            mx = all_metrics[m.id]
+            sigs = _compute_signals(m, mx)
+            if signal and signal not in sigs:
+                continue
+            if not sigs and not signal:
+                continue
+            results.append({
+                "id": m.id, "label": m.label, "domain": m.domain,
+                "signals": sigs,
+                "health": mx["health"],
+                "depth": round(m.depth * 100),
+                "coverage": round(m.coverage * 100),
+                "fanIn": mx["fanIn"], "fanOut": mx["fanOut"],
+                "blastRadius": mx["blastRadius"],
+            })
+        results.sort(key=lambda r: (r["health"], r["id"]))  # worst health first
+        summary = {}
+        for r in results:                                   # summarise the FULL set, not the page
+            for s in r["signals"]:
+                summary[s] = summary.get(s, 0) + 1
+        page = results[offset:offset + limit]
+        return {
+            "map": map,
+            "filter": signal,
+            "total": len(results),
+            "signalCounts": summary,
+            "modules": page,
+            "has_more": offset + limit < len(results),
+            "next_offset": offset + limit if offset + limit < len(results) else None,
+        }
+    return _guard(call, False, hint, run)
 
 
 # --- Ground truth: measured facts, drift, history, edge verification ---------
@@ -584,7 +666,8 @@ def ingest(map: str, root: str = "", coverage_report: str = "",
     merge-weighting read; intended/file-less modules keep their estimate. Unless
     anchor=False, records a reconcile anchor
     (HEAD sha + per-module snapshot) — the baseline archmap_drift and
-    archmap_history read. `root` defaults to the server's cwd."""
+    archmap_history read. `root` defaults to the server's cwd. Over HTTP, root
+    defaults to the studio's launch dir, so pass root= explicitly."""
     call = f"archmap_ingest(map='{map}')"
     hint = ("Pass root=<repo work tree> if the server does not run inside the "
             "repo; coverage_report is optional.")
@@ -641,13 +724,18 @@ def _ingest_impl(map, root, coverage_report, window_days, anchor) -> dict:
     return out
 
 
-@mcp.tool(name="archmap_drift")
-def drift(map: str, since_sha: str = "", root: str = "") -> dict:
+@mcp.tool(name="archmap_drift", meta=_MAX_RESULT)
+def drift(map: str, since_sha: str = "", root: str = "",
+          limit: int = 0, offset: int = 0) -> dict:
     """How stale is the map? Changes since the last reconcile anchor (or since an
     explicit `since_sha` baseline — the review-style question): the changed files,
     the modules they belong to, the changed files NO module owns, and a one-line
     summary. Read-only; degraded outcomes (no anchors / no repo) come back with
-    anchored=false and a `reason`, never an error."""
+    anchored=false and a `reason`, never an error. Over HTTP, root defaults to the
+    studio's launch dir, so pass root= explicitly.
+
+    Big diffs: pass limit>0 to page the changedFiles/unmappedFiles lists (default 0 =
+    return everything); the response then carries total_count / has_more / next_offset."""
     call = f"archmap_drift(map='{map}')"
     hint = "Record a baseline first via archmap_ingest(map) on a reconcile."
 
@@ -655,6 +743,15 @@ def drift(map: str, since_sha: str = "", root: str = "") -> dict:
         model = REGISTRY.store(map)._load()
         out = ledger.drift(model, GitFacts(_repo_root(root)), since_sha or None)
         out["map"] = map
+        if limit and limit > 0:
+            changed = out.get("changedFiles") or []
+            total = len(changed)
+            end = offset + limit
+            out["changedFiles"] = changed[offset:end]
+            out["unmappedFiles"] = (out.get("unmappedFiles") or [])[offset:end]
+            out["total_count"] = total
+            out["has_more"] = end < total
+            out["next_offset"] = end if end < total else None
         return out
     return _guard(call, False, hint, run)
 
@@ -679,20 +776,34 @@ def history(map: str, module: str = "", domain: str = "",
     return _guard(call, False, hint, run)
 
 
-@mcp.tool(name="archmap_verify_edges")
-def verify_edges(map: str, root: str = "") -> dict:
+@mcp.tool(name="archmap_verify_edges", meta=_MAX_RESULT)
+def verify_edges(map: str, root: str = "", limit: int = 0, offset: int = 0) -> dict:
     """Check the map's recorded dependsOn/leaksTo edges against the code's REAL
     imports (Python via ast, JS/TS via import lexing). Returns confirmedEdges,
     undeclaredEdges (in code but not on the map — candidate leaks), missingEdges
     (on the map but not in code; only reported when both modules own parsed
     source, so prose modules never false-positive), and the unparseable files.
-    Read-only — surfacing is this tool's job, deciding is fathom:map's."""
+    Read-only — surfacing is this tool's job, deciding is fathom:map's. Over HTTP,
+    root defaults to the studio's launch dir, so pass root= explicitly.
+
+    Big graphs: pass limit>0 to page the confirmed/undeclared/missingEdges lists
+    (default 0 = return everything); the response then carries total_count /
+    has_more / next_offset (total_count is the longest of the three edge lists)."""
     call = f"archmap_verify_edges(map='{map}')"
     hint = "Pass root=<repo work tree> if the server does not run inside the repo."
 
     def run():
         out = verify_imports(REGISTRY.store(map)._load(), _repo_root(root))
         out["map"] = map
+        if limit and limit > 0:
+            end = offset + limit
+            total = max(len(out.get(k) or [])
+                        for k in ("confirmedEdges", "undeclaredEdges", "missingEdges"))
+            for k in ("confirmedEdges", "undeclaredEdges", "missingEdges"):
+                out[k] = (out.get(k) or [])[offset:end]
+            out["total_count"] = total
+            out["has_more"] = end < total
+            out["next_offset"] = end if end < total else None
         return out
     return _guard(call, False, hint, run)
 
@@ -723,8 +834,9 @@ def whatif(map: str, ids: list[str]) -> dict:
 @mcp.tool(name="archmap_modules", **_APP)
 def modules(
     map: str,
-    action: Literal["add", "update", "delete", "get", "realize"],
-    id: str = "",
+    action: Annotated[Literal["add", "update", "delete", "get", "realize"],
+                      Field(description="which operation to run on module node(s)")],
+    id: Annotated[str, Field(description="the single module id this action targets")] = "",
     label: str | None = None, domain: str | None = None,
     depth: float | None = None, size: float | None = None,
     seam: str | None = None, iface: str | None = None,
@@ -736,7 +848,10 @@ def modules(
     tags: list[str] | None = None,
     dependsOnAdd: list[str] | None = None, dependsOnRemove: list[str] | None = None,
     leaksToAdd: list[str] | None = None, leaksToRemove: list[str] | None = None,
-    items: list[dict] | None = None, ids: list[str] | None = None,
+    items: Annotated[list[dict] | None,
+                     Field(description="bulk add/update payload: [{id, label, domain, ...}, ...]")] = None,
+    ids: Annotated[list[str] | None,
+                   Field(description="bulk target ids (or [\"*\"] on update for every module)")] = None,
 ) -> dict:
     """Create / read / update / delete / realize MODULE nodes in `map`, selected by
     `action`. Writes re-render and return the compact ack (it carries
@@ -784,10 +899,15 @@ def _modules_impl(map: str, action: str, id: str, raw_flds: dict,
     has_edge_ops = any(add or rem for _, add, rem in edge_ops)
     if action == "add":
         if items is not None:
-            store.add_modules([Module.from_dict(d) for d in items])
-        else:
-            store.add_module(Module.from_dict({"id": id, **flds}))   # from_dict validates id/label/domain
-        return _ack(store)
+            mods = [Module.from_dict(d) for d in items]
+            store.add_modules(mods)
+            ack = _ack(store)
+            ack["createdIds"] = [m.id for m in mods]   # the ids the bulk add created
+            return ack
+        store.add_module(Module.from_dict({"id": id, **flds}))   # from_dict validates id/label/domain
+        ack = _ack(store)
+        ack["created"] = store.get_module(id)          # the created record (ids/edges resolved)
+        return ack
     if action == "update":
         if items is not None:
             store.update_modules(items)
@@ -835,9 +955,10 @@ def _modules_impl(map: str, action: str, id: str, raw_flds: dict,
 @mcp.tool(name="archmap_suggestions", **_APP)
 def suggestions(
     map: str,
-    action: Literal["flag", "decide", "dismiss"],
-    module: str = "",
-    suggestion_id: str = "",
+    action: Annotated[Literal["flag", "decide", "dismiss"],
+                      Field(description="flag a new candidate, decide a verdict, or dismiss one")],
+    module: Annotated[str, Field(description="module id to flag a candidate on (action='flag')")] = "",
+    suggestion_id: Annotated[str, Field(description="candidate id to decide/dismiss (from a flag ack)")] = "",
     title: str = "",
     strength: Literal["Strong", "Worth exploring", "Speculative", ""] = "",
     category: str = "",
@@ -878,7 +999,9 @@ def _suggestions_impl(map, action, module, suggestion_id, title, strength,
         sid = f"{module}-{strength}".lower().replace(" ", "-")
         store.add_suggestion(module, Suggestion(sid, title, strength, category,
                                                 problem, solution, wins or []))
-        return _ack(store)
+        ack = _ack(store)
+        ack["suggestion_id"] = sid                     # the derived id to decide/dismiss/grill
+        return ack
     if not suggestion_id:
         raise ValueError(f"suggestions(action='{action}') needs suggestion_id")
     if action == "decide":
@@ -891,13 +1014,14 @@ def _suggestions_impl(map, action, module, suggestion_id, title, strength,
 @mcp.tool(name="archmap_grilling", **_APP)
 def grilling(
     map: str,
-    action: Literal["start", "mark", "finish", "queue"],
-    module: str = "",
-    suggestion_id: str = "",
+    action: Annotated[Literal["start", "mark", "finish", "queue"],
+                      Field(description="which step of the /deepen grilling lifecycle to run")],
+    module: Annotated[str, Field(description="module whose first open candidate to start grilling (action='start')")] = "",
+    suggestion_id: Annotated[str, Field(description="candidate id to mark/finish")] = "",
     decision: Literal["accepted", "deferred", "rejected", ""] = "",
     note: str = "",
     adr: str = "",
-):
+) -> dict:
     """Drive the /deepen GRILLING lifecycle for a candidate in `map`, by `action`.
 
       action="start":  UI callback — persist `module`'s first open candidate as
@@ -946,15 +1070,17 @@ def _grilling_impl(map, action, module, suggestion_id, decision, note, adr):
 @mcp.tool(name="archmap_plans", **_APP)
 def plans(
     map: str,
-    action: Literal["create", "add_steps", "set_step_status", "set_step", "update", "get"],
-    plan_id: str = "",
+    action: Annotated[Literal["create", "add_steps", "set_step_status", "set_step", "update", "get"],
+                      Field(description="which plan/work-step operation to run")],
+    plan_id: Annotated[str, Field(description="the plan this action targets")] = "",
     title: str = "",
     domain: str | None = None,
     intent: str | None = None,
     status: Literal["draft", "active", "done", "abandoned", ""] = "",
     moduleIds: list[str] | None = None,
     adrRefs: list[str] | None = None,
-    steps: list[dict] | None = None,
+    steps: Annotated[list[dict] | None,
+                     Field(description="ordered build steps to append: [{id, title, targets?, interface?, ...}, ...]")] = None,
     step_id: str = "",
     step_status: Literal["todo", "understand", "plan", "in-progress",
                          "review", "done", "blocked", ""] = "",
@@ -1041,23 +1167,29 @@ def board(map: str) -> dict:
     its worktree. Use to see/track work across the cycle from a terminal agent — moves
     are made with archmap_plans(action='set_step'|'set_step_status') and worktrees with
     archmap_worktrees."""
-    model = REGISTRY.ensure(map)._load()
-    out = model.board(running=_running_keys(map))
-    out["map"] = map
-    return out
+    call = f"archmap_board(map='{map}')"
+    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
+
+    def run():
+        model = REGISTRY.store(map)._load()          # raises KeyError — no phantom map on a read
+        out = model.board(running=_running_keys(map))
+        out["map"] = map
+        return out
+    return _guard(call, False, hint, run)
 
 
 @mcp.tool(name="archmap_worktrees", **_APP)
 def worktrees(
     map: str,
-    action: Literal["list", "create", "remove", "prune", "attach", "sync"],
-    branch: str = "",
+    action: Annotated[Literal["list", "create", "remove", "prune", "attach", "sync"],
+                      Field(description="which worktree operation to run")],
+    branch: Annotated[str, Field(description="the task branch (create/attach); derived from step/title if blank)")] = "",
     path: str = "",
     base: str = "",
     plan_id: str = "",
     step_id: str = "",
     agent: str = "",
-    id: str = "",
+    id: Annotated[str, Field(description="worktree id to remove (or override the derived id on create/attach)")] = "",
     force: bool = False,
     root: str = "",
     note: str = "",
@@ -1080,7 +1212,9 @@ def worktrees(
       action="prune":  `git worktree prune` (forget vanished checkouts).
       action="sync":   reconcile spine worktrees against `git worktree list` — refresh
                        HEAD shas, mark vanished ones status='removed'. fathom:map runs this.
-      action="list":   spine worktrees + the live `git worktree list`. Read-only."""
+      action="list":   spine worktrees + the live `git worktree list`. Read-only.
+
+    Over HTTP, root defaults to the studio's launch dir, so pass root= explicitly."""
     call = f"archmap_worktrees(action='{action}')"
     hint = "List worktrees via archmap_worktrees(map, action='list')."
     return _guard(call, action not in ("list",), hint, lambda: _worktrees_impl(
@@ -1228,8 +1362,9 @@ def _scope_from_args(scope_kind: str, scope_ids, scope_domain: str,
 @mcp.tool(name="archmap_docs", **_APP)
 def docs(
     map: str,
-    action: Literal["add", "update", "delete", "list", "get"],
-    doc_id: str = "",
+    action: Annotated[Literal["add", "update", "delete", "list", "get"],
+                      Field(description="which doc operation to run")],
+    doc_id: Annotated[str, Field(description="the doc this action targets (add/update/delete/get)")] = "",
     type: Literal["adr", "note", "rule", "rfc", "glossary",
                   "spec", "ceiling", "risk", "runbook", "postmortem", "diagram", ""] = "",
     title: str | None = None,
@@ -1638,9 +1773,9 @@ async def api_grill(request):
 
 
 # --- /api/dispatch: run a studio agent-button action via headless `claude -p` ---
-# ON by default (ARCH_MAP_ALLOW_DISPATCH defaults to "1") — set ARCH_MAP_ALLOW_DISPATCH=0
-# to turn it off. Two guards make a
-# default-on agent button safe enough for a loopback dev server: (1) a same-origin
+# OFF by default (ARCH_MAP_ALLOW_DISPATCH defaults to "0") — set ARCH_MAP_ALLOW_DISPATCH=1
+# to opt in. Spawning an agent shells out, so it stays opt-in; two guards then make
+# an enabled agent button safe enough for a loopback dev server: (1) a same-origin
 # check so only the studio's own page can trigger a run (no cross-site/CSRF POST can
 # drive the agent), and (2) the server's 127.0.0.1 bind. The spawned agent runs
 # `claude -p` with acceptEdits (NOT bypass) + deny rules (no rm / git push / network).
@@ -1727,8 +1862,8 @@ async def api_dispatch(request):
     except (KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
-    # ON by default; ARCH_MAP_ALLOW_DISPATCH=0 (or false/no/off) turns it off.
-    if os.environ.get("ARCH_MAP_ALLOW_DISPATCH", "1").strip().lower() in ("0", "false", "no", "off"):
+    # OFF by default (opt-in): ARCH_MAP_ALLOW_DISPATCH must be 1/true/yes/on to enable.
+    if os.environ.get("ARCH_MAP_ALLOW_DISPATCH", "0").strip().lower() not in ("1", "true", "yes", "on"):
         return JSONResponse({"fallback": True, "reason": "dispatch-disabled", "prompt": prompt}, status_code=503)
     claude = shutil.which("claude")
     if not claude:
