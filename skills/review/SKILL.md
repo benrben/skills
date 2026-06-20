@@ -1,7 +1,7 @@
 ---
 name: review
 description: Review a diff, PR, or branch THROUGH the architecture map — which modules the change touches, whether it crosses a seam it shouldn't (new edges not on the map), whether it touches a danger-zone module without adding tests, and whether it erodes a deep module's interface. Often the branch is a board task's own git worktree — review OWNS the "review" column and is the final gate before a task merges to done. Use when asked to review a change, check a PR against the architecture, gate a merge, or answer "is this change safe / does it respect the seams." Read-only against the source and the module graph: it reports findings and routes them — stale-map findings to fathom:map, structural work to fathom:design, the fix to fathom:code; it moves the board card to done (clean) or back to plan/in-progress (findings). Its one permitted spine write is recording a risk or postmortem doc when a finding is worth keeping as durable truth, plus the board-column move. Do NOT use to find general bugs or style issues (use a code-review tool), to reconcile the map (fathom:map), or to edit source (fathom:code).
-allowed-tools: Read Grep Glob Bash mcp__arch-map__*
+allowed-tools: Read Grep Glob Bash ReadMcpResourceTool ListMcpResourcesTool mcp__arch-map__*
 ---
 
 # Review — the Change Gate
@@ -32,9 +32,11 @@ Those are the only writes review may make: no other doc type, no modules, no can
 
 ### 1. Resolve the map and the baseline
 
-- `archmap_list_maps()` → this repo's map id. No map → STOP; hand to **fathom:map** to seed one (a review without a map is just a generic code review — say so).
+**Reads of stored state are MCP resources** — read them with the built-in `ReadMcpResourceTool` (server `arch-map`, an `archmap://` uri; `ListMcpResourcesTool` enumerates them). They return **YAML** (compact); `archmap://{map}/doc/{id}` returns a **Markdown file** you read directly. Computed queries (`archmap_drift`/`archmap_verify_edges`/`archmap_scan_signals`) and the carved writes (`archmap_docs`/`archmap_plans` set_step_status) stay `archmap_*` calls.
+
+- Read `archmap://maps` → this repo's map id. No map → STOP; hand to **fathom:map** to seed one (a review without a map is just a generic code review — say so).
 - Identify the change under review: a PR (use `gh pr diff` / `gh pr view`), a branch (`git diff <base>...HEAD`), or the working tree (`git diff`). Establish the **base sha** the change builds on.
-- **If the change is a board task** (a card sitting in the `review` column — [../../fathom/BOARD.md](../../fathom/BOARD.md)), resolve its worktree: `archmap_board(map)` (or `archmap_worktrees(map, action="list")`) gives the card's `worktree` — its `branch`, `path`, and `base`. Review **that branch**: `git diff <base>...<branch>` (run it in the worktree `path`), and use the recorded `base` as the baseline `since_sha` in step 2. This is the per-task isolation the cycle runs on — fathom:code built it there, you gate it before it merges.
+- **If the change is a board task** (a card sitting in the `review` column — [../../fathom/BOARD.md](../../fathom/BOARD.md)), resolve its worktree: read `archmap://{map}/board` (or `archmap://{map}/worktrees`) for the card's `worktree` — its `branch`, `path`, and `base`. Review **that branch**: `git diff <base>...<branch>` (run it in the worktree `path`), and use the recorded `base` as the baseline `since_sha` in step 2. This is the per-task isolation the cycle runs on — fathom:code built it there, you gate it before it merges.
 
 ### 2. Which modules does this change touch?
 
@@ -45,7 +47,7 @@ archmap_drift(map, since_sha=<base sha>, root=<repo root>)
 `modulesTouched` is the review's scope: each touched module with the changed files it owns. Two findings fall out immediately:
 
 - **`unmappedFiles`** — changed files NO module owns. Either new structure the map doesn't know yet (a reconcile gap → fathom:map) or files that should belong to an existing module's `files` list. Name them; don't fix them.
-- Pull each touched module's record (`archmap_modules(map, action="get", ids=[...])`) for its depth, coverage, seam, and iface — the facts the next steps read against. Also pull any relevant spine docs for the touched modules (`archmap_docs`) — `adr` / `spec` / `risk` — to check the change against recorded decisions and contracts (e.g. a change that contradicts an `adr` or violates a `spec` is a finding).
+- Pull each touched module's record (`archmap://{map}/module/{id}`; the whole graph via `archmap://{map}/model`) for its depth, coverage, seam, and iface — the facts the next steps read against. Also pull any relevant spine docs for the touched modules (`archmap://{map}/docs?domain=<d>` or `?type=adr`/`?type=spec`/`?type=risk`, then `archmap://{map}/doc/{id}`) to check the change against recorded decisions and contracts (e.g. a change that contradicts an `adr` or violates a `spec` is a finding).
 
 ### 3. Does the change cross a seam it shouldn't?
 
