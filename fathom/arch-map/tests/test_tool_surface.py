@@ -23,7 +23,11 @@ def test_tools_are_registered_with_archmap_prefix():
         "archmap_ingest", "archmap_drift", "archmap_history",
         "archmap_verify_edges", "archmap_whatif",
     }
-    names = {t.name for t in asyncio.run(srv.mcp.list_tools())}
+    # FastMCP renamed the registry accessor across 3.x builds (get_tools -> dict,
+    # older list_tools -> list); use whichever this install exposes.
+    _raw = asyncio.run(srv.mcp.get_tools() if hasattr(srv.mcp, "get_tools") else srv.mcp.list_tools())
+    _tools = _raw.values() if hasattr(_raw, "values") else _raw
+    names = {t.name for t in _tools}
     # Lane 2 (optional prefab extra) contributes its own provider tools; only
     # the tools THIS server registers must carry the service prefix.
     ours = {n for n in names if "prefab" not in n}

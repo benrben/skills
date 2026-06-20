@@ -37,7 +37,6 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Literal
 import asyncio
-import fcntl
 import json
 import os
 import re
@@ -60,6 +59,10 @@ except Exception:  # pragma: no cover
 
 from .model import ArchModel, Module, Suggestion, Plan, WorkStep, Doc, Worktree
 from . import ledger
+from .store import Store
+from .map_registry import MapRegistry, _slug
+from .view_builder import TableSpec, BarSpec, _parse_view_spec, _view_filter, _build_view
+from .dispatch import _dispatch_line, _dispatch_same_origin, build_dispatch_argv
 from .coverage_ingest import module_coverage, read_report
 from .git_facts import GitFacts, NotARepo, UnknownSha
 from .import_graph import verify as verify_imports
@@ -111,7 +114,6 @@ mcp = FastMCP(
 # every write saves it back under a lock, so the stdio tools, the HTTP studio, and
 # other processes share ONE source of truth per map and survive restarts. A map
 # starts EMPTY — no sample is seeded; whatever you add is kept.
-LEGACY_STATE = HERE.parent / "arch_state.json"   # pre-multi-map single state file
 # Persistent map storage. Honors $ARCH_MAP_DATA_DIR (the plugin's .mcp.json sets this
 # to ${CLAUDE_PLUGIN_DATA}) so user maps survive plugin updates and read-only install
 # trees; falls back to maps/ beside the package for local dev. Created on first use.
@@ -120,203 +122,9 @@ MAPS_DIR = ((Path(_DATA_DIR).expanduser() / "maps") if _DATA_DIR else (HERE.pare
 MAPS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class Store:
-    """File-backed ArchModel: load-before-read, save-after-write. Same method
-    surface the tools already call, so store.<op>(...) works unchanged."""
-
-    def __init__(self, path: Path):
-        self.path = Path(path)
-
-    def _load(self) -> ArchModel:
-        return ArchModel.from_json(self.path) if self.path.exists() else ArchModel("arch-map", [])
-
-    def _write(self, fn) -> None:
-        # Serialize read-modify-write across processes (web app + desktop stdio
-        # server share one file) so concurrent writers can't clobber each other.
-        lock = self.path.with_name(self.path.name + ".lock")
-        with open(lock, "w") as lk:
-            fcntl.flock(lk, fcntl.LOCK_EX)
-            m = self._load()
-            fn(m)
-            m.save(self.path)
-
-    # reads
-    def to_dict(self) -> dict: return self._load().to_dict()
-    def to_view(self) -> dict: return self._load().to_view()
-    def orphans(self): return self._load().orphans()
-    def get_module(self, mid): return self._load().get_module(mid)
-    def get_modules(self, ids): return self._load().get_modules(ids)
-    def get_plan(self, pid): return self._load().get_plan(pid)
-    def get_doc(self, did): return self._load().get_doc(did)
-    def get_docs(self, ids): return self._load().get_docs(ids)
-    def get_worktree(self, wid): return self._load().get_worktree(wid)
-    def board(self, running=None): return self._load().board(running)
-    def queued_for_grilling(self): return self._load().queued_for_grilling()
-    @property
-    def modules(self): return self._load().modules
-    @property
-    def plans(self): return self._load().plans
-    @property
-    def docs(self): return self._load().docs
-    @property
-    def worktrees(self): return self._load().worktrees
-
-    # writes (load -> mutate -> save)
-    def set_depth(self, mid, s): self._write(lambda m: m.set_depth(mid, s))
-    def set_coverage(self, mid, f): self._write(lambda m: m.set_coverage(mid, f))
-    def mark_updated(self, mid, u=True): self._write(lambda m: m.mark_updated(mid, u))
-    def set_plane(self, mid, p): self._write(lambda m: m.set_plane(mid, p))
-    def set_lifecycle(self, mid, lc): self._write(lambda m: m.set_lifecycle(mid, lc))
-    def realize_module(self, mid, depth=None, coverage=None, files=None):
-        self._write(lambda m: m.realize_module(mid, depth, coverage, files))
-    def add_suggestion(self, mid, s): self._write(lambda m: m.add_suggestion(mid, s))
-    def resolve(self, sid): self._write(lambda m: m.resolve(sid))
-    def decide(self, sid, d, n="", adr="", expect=None):
-        self._write(lambda m: m.decide(sid, d, n, adr, expect))
-    def request_grilling(self, sid): self._write(lambda m: m.request_grilling(sid))
-    def mark_grilling(self, sid): self._write(lambda m: m.mark_grilling(sid))
-    def mark_grilled(self, sid): self._write(lambda m: m.mark_grilled(sid))
-    def add_module(self, mod): self._write(lambda m: m.add_module(mod))
-    def update_module(self, mid, **ch): self._write(lambda m: m.update_module(mid, **ch))
-    def delete_module(self, mid): self._write(lambda m: m.delete_module(mid))
-    def add_modules(self, mods): self._write(lambda m: m.add_modules(mods))
-    def update_modules(self, ups): self._write(lambda m: m.update_modules(ups))
-    def delete_modules(self, ids): self._write(lambda m: m.delete_modules(ids))
-    def create_plan(self, plan): self._write(lambda m: m.create_plan(plan))
-    def update_plan(self, pid, **ch): self._write(lambda m: m.update_plan(pid, **ch))
-    def add_work_steps(self, pid, steps): self._write(lambda m: m.add_work_steps(pid, steps))
-    def set_step_status(self, pid, sid, st): self._write(lambda m: m.set_step_status(pid, sid, st))
-    def set_step_fields(self, pid, sid, **ch): self._write(lambda m: m.set_step_fields(pid, sid, **ch))
-    def delete_plan(self, pid): self._write(lambda m: m.delete_plan(pid))
-    def add_worktree(self, wt): self._write(lambda m: m.add_worktree(wt))
-    def update_worktree(self, wid, **ch): self._write(lambda m: m.update_worktree(wid, **ch))
-    def delete_worktree(self, wid): self._write(lambda m: m.delete_worktree(wid))
-    def link_step_worktree(self, pid, sid, wid): self._write(lambda m: m.link_step_worktree(pid, sid, wid))
-    def add_doc(self, doc): self._write(lambda m: m.add_doc(doc))
-    def update_doc(self, did, **ch): self._write(lambda m: m.update_doc(did, **ch))
-    def delete_doc(self, did): self._write(lambda m: m.delete_doc(did))
-    def record_anchor(self, sha, ts, keep=200):
-        self._write(lambda m: ledger.record_anchor(m, sha, ts, keep))
-
-
-_MAP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-
-
-def _slug(s: str) -> str:
-    """Turn a free-text map name into a clean id: lowercase, alphanumeric runs
-    joined by single dashes ('Mr. Meeseeks' -> 'mr-meeseeks')."""
-    s = re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
-    return s or "default"
-
-
-class MapRegistry:
-    """A directory of named, file-backed maps (maps/<id>.json). Resolves a map id
-    to a Store, lists summaries for the switcher, and creates/deletes maps. Map
-    ids are slugs ([a-z0-9._-], no '/' and no leading dot) so a request can never
-    read or write outside the maps directory."""
-
-    def __init__(self, root: Path):
-        self.root = Path(root).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy()
-
-    def _migrate_legacy(self) -> None:
-        # Fold a pre-existing single arch_state.json into maps/<repo>.json once, so
-        # existing data shows up as a named map. Non-destructive (copy; keep original).
-        if LEGACY_STATE.exists() and not any(self.root.glob("*.json")):
-            try:
-                mid = _slug(json.loads(LEGACY_STATE.read_text()).get("repo") or "default")
-            except Exception:
-                mid = "default"
-            (self.root / f"{mid}.json").write_text(LEGACY_STATE.read_text(encoding="utf-8"), encoding="utf-8")
-
-    def path(self, map_id: str) -> Path:
-        if not _MAP_ID_RE.match(map_id or ""):
-            raise ValueError(f"invalid map id '{map_id}' (use lowercase a-z, 0-9, . _ -)")
-        p = (self.root / f"{map_id}.json").resolve()
-        if self.root not in p.parents:           # belt-and-suspenders vs traversal
-            raise ValueError(f"invalid map id '{map_id}'")
-        return p
-
-    def exists(self, map_id: str) -> bool:
-        try:
-            return self.path(map_id).exists()
-        except ValueError:
-            return False
-
-    def store(self, map_id: str) -> Store:
-        p = self.path(map_id)
-        if not p.exists():
-            raise KeyError(f"no map '{map_id}' (create it with create_project, "
-                           f"or call list_maps to see existing map ids)")
-        return Store(p)
-
-    def create(self, map_id: str, repo: str = "") -> Store:
-        p = self.path(map_id)
-        if p.exists():
-            raise KeyError(f"map '{map_id}' already exists")
-        ArchModel(repo or map_id, []).save(p)
-        return Store(p)
-
-    def ensure(self, map_id: str, repo: str = "") -> Store:
-        """Get the map, creating an empty one if it doesn't exist yet."""
-        try:
-            return self.store(map_id)
-        except KeyError:
-            return self.create(map_id, repo)
-
-    def delete(self, map_id: str) -> None:
-        p = self.path(map_id)
-        if not p.exists():
-            raise KeyError(f"no map '{map_id}'")
-        p.unlink()
-        lock = p.with_name(p.name + ".lock")
-        if lock.exists():
-            lock.unlink()
-
-    def rename(self, old_id: str, new_id: str, repo: str | None = None) -> Store:
-        """Rename a map (move maps/<old>.json -> <new>.json) and/or relabel its
-        repo. Pass new_id == old_id to only change the repo label."""
-        src = self.path(old_id)
-        if not src.exists():
-            raise KeyError(f"no map '{old_id}'")
-        dst = self.path(new_id)
-        if dst.exists() and dst != src:
-            raise KeyError(f"map '{new_id}' already exists")
-        data = json.loads(src.read_text())
-        if repo is not None:
-            data["repo"] = repo
-        dst.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        if dst != src:
-            src.unlink()
-            lock = src.with_name(src.name + ".lock")
-            if lock.exists():
-                lock.unlink()
-        return Store(dst)
-
-    def list(self) -> list[dict]:
-        out = []
-        for f in sorted(self.root.glob("*.json")):
-            try:
-                v = ArchModel.from_json(f).to_view()
-                out.append({"id": f.stem, "repo": v["repo"], "modules": len(v["modules"]),
-                            "openSuggestions": len(v["openSuggestions"]), "orphans": len(v["orphans"])})
-            except Exception:
-                out.append({"id": f.stem, "repo": "", "modules": 0,
-                            "openSuggestions": 0, "orphans": 0, "broken": True})
-        return out
-
-    def default_id(self) -> str:
-        files = sorted(self.root.glob("*.json"))
-        return files[0].stem if files else "default"
-
-    def resolve(self, map_id: str | None) -> Store:
-        """HTTP convenience: an explicit id must exist; no id falls back to the
-        default map (bootstrapping an empty one on a fresh install)."""
-        if map_id:
-            return self.store(map_id)            # raises KeyError -> 404/400
-        mid = self.default_id()
-        return self.store(mid) if self.exists(mid) else self.create(mid)
+# Store and MapRegistry now live in store.py / map_registry.py (extracted per
+# adr-split-spine-hub) and are imported above, so srv.Store / srv.MapRegistry /
+# srv._slug resolve unchanged for the tools, routes, and tests.
 
 
 REGISTRY = MapRegistry(MAPS_DIR)
@@ -414,136 +222,9 @@ def view_ui() -> str:
 # Both the render_view tool (MCP-App hosts) and GET /api/view (browser) call this,
 # so the model picks WHAT to show (a declarative spec) and the view renderer draws
 # it with the studio's design tokens — the "generative" lane, but on-brand.
-_STRENGTH_KEY = {"Strong": "strong", "Worth exploring": "worth", "Speculative": "speculative"}
-_VIEW_COLS = ("id", "label", "domain", "depth", "coverage", "tests", "files", "suggestion")
-
-
-def _has_tests(prose) -> bool:
-    """The `tests` field is prose; "none — browser-only" is a recorded FACT of no
-    tests, not a test reference, so it must not render as a checkmark."""
-    t = (prose or "").strip()
-    return bool(t) and not t.lower().startswith(("none", "n/a", "no "))
-
-_VALID_METRICS = frozenset({"depth", "coverage"})
-_VALID_GROUP_BY = frozenset({"module", "domain"})
-_VALID_AGG = frozenset({"avg", "count"})
-
-
-@dataclass
-class TableSpec:
-    of: str = "all"
-    columns: list = field(default_factory=lambda: ["id", "domain", "depth", "coverage"])
-    sortBy: str | None = None
-    sortDir: str = "asc"
-    title: str = ""
-
-
-@dataclass
-class BarSpec:
-    metric: str = "depth"
-    groupBy: str = "module"
-    agg: str = "avg"
-    of: str = "all"
-    title: str = ""
-
-
-def _parse_view_spec(spec: dict) -> TableSpec | BarSpec:
-    """Parse a freeform spec dict into a typed TableSpec or BarSpec.
-    Resolves aliases (filter->of, group->groupBy, sort->sortBy).
-    Raises ValueError on invalid kind, metric, groupBy, or agg.
-    """
-    raw = spec or {}
-    kind = (raw.get("kind") or "table").lower()
-    if kind not in ("table", "bar"):
-        raise ValueError(f"invalid view kind {kind!r}; expected 'table' or 'bar'")
-    of = raw.get("of") or raw.get("filter") or "all"
-    title = raw.get("title") or ""
-    if kind == "bar":
-        metric = (raw.get("metric") or "depth").lower()
-        if metric not in _VALID_METRICS:
-            raise ValueError(f"invalid metric {metric!r}; expected one of {sorted(_VALID_METRICS)}")
-        groupBy = (raw.get("groupBy") or raw.get("group") or "module").lower()
-        if groupBy not in _VALID_GROUP_BY:
-            raise ValueError(f"invalid groupBy {groupBy!r}; expected one of {sorted(_VALID_GROUP_BY)}")
-        agg = (raw.get("agg") or "avg").lower()
-        if agg not in _VALID_AGG:
-            raise ValueError(f"invalid agg {agg!r}; expected one of {sorted(_VALID_AGG)}")
-        return BarSpec(metric=metric, groupBy=groupBy, agg=agg, of=of, title=title)
-    sortRaw = raw.get("sortBy") or raw.get("sort")
-    if isinstance(sortRaw, dict):
-        sortDir = sortRaw.get("dir", "asc")
-        sortBy = sortRaw.get("by")
-    else:
-        sortBy = sortRaw
-        sortDir = raw.get("sortDir", "asc")
-    columns = list(raw.get("columns") or ["id", "domain", "depth", "coverage"])
-    return TableSpec(of=of, columns=columns, sortBy=sortBy, sortDir=sortDir, title=title)
-
-
-def _view_filter(modules: list[dict], of: str, model: dict) -> list[dict]:
-    """Select modules by a simple predicate keyword (or a domain name)."""
-    of = (of or "all").lower()
-    orphans = set(model.get("orphans", []))
-
-    def keep(m: dict) -> bool:
-        d, c = (m.get("depth") or 0), (m.get("coverage") or 0)
-        if of in ("", "all"): return True
-        if of in ("orphans", "orphan", "not-connected"): return m["id"] in orphans
-        if of == "leaks": return bool(m.get("leaksTo"))
-        if of in ("suggestions", "proposals", "open"): return bool(m.get("suggestion"))
-        if of == "updated": return bool(m.get("updated"))
-        if of in ("low-coverage", "low"): return c < 0.4
-        if of == "shallow": return d < 0.34
-        if of == "mid": return 0.34 <= d < 0.67
-        if of == "deep": return d >= 0.67
-        return m.get("domain") == of           # otherwise treat as a domain name
-    return [m for m in modules if keep(m)]
-
-
-def _build_view(model: dict, spec: TableSpec | BarSpec) -> dict:
-    """Turn a typed view spec + a full model into a prepared view payload the
-    renderer draws verbatim (numbers already scaled to 0..100 for display)."""
-    of = spec.of
-    sel = _view_filter(model.get("modules", []), of, model)
-    label = "all modules" if str(of).lower() in ("", "all") else of
-    kind = "bar" if isinstance(spec, BarSpec) else "table"
-    out = {"kind": kind, "title": spec.title or f"{kind} · {label}",
-           "repo": model.get("repo", ""), "count": len(sel)}
-
-    if isinstance(spec, BarSpec):
-        out["metric"], out["groupBy"] = spec.metric, spec.groupBy
-        if spec.groupBy == "domain":
-            buckets: dict[str, list[float]] = {}
-            for m in sel:
-                buckets.setdefault(m.get("domain", "—"), []).append(m.get(spec.metric) or 0)
-            if spec.agg == "count":
-                mx = max((len(v) for v in buckets.values()), default=1) or 1
-                bars = [{"label": d, "value": str(len(v)), "pct": round(len(v) / mx * 100)} for d, v in buckets.items()]
-            else:
-                bars = [{"label": d, "value": f"{round(sum(v) / len(v) * 100)}%", "pct": round(sum(v) / len(v) * 100)} for d, v in buckets.items()]
-        else:
-            bars = [{"label": m["id"], "value": f"{round((m.get(spec.metric) or 0) * 100)}%", "pct": round((m.get(spec.metric) or 0) * 100)} for m in sel]
-        bars.sort(key=lambda b: b["pct"], reverse=True)
-        out["bars"] = bars
-    else:
-        cols = [c for c in spec.columns if c in _VIEW_COLS]
-        cols = cols or ["id", "domain", "depth", "coverage"]
-        rows = []
-        for m in sel:
-            row = {}
-            for c in cols:
-                if c in ("depth", "coverage"): row[c] = round((m.get(c) or 0) * 100)
-                elif c == "suggestion":
-                    s = m.get("suggestion")
-                    row[c] = {"strength": _STRENGTH_KEY.get(s["strength"], "speculative"), "label": s["strength"]} if s else None
-                elif c == "files": row[c] = len(m.get("files") or [])
-                elif c == "tests": row[c] = "✓" if _has_tests(m.get("tests")) else ""
-                else: row[c] = m.get(c)
-            rows.append(row)
-        if spec.sortBy in cols:
-            rows.sort(key=lambda r: (r.get(spec.sortBy) is None, r.get(spec.sortBy)), reverse=(spec.sortDir == "desc"))
-        out["columns"], out["rows"] = cols, rows
-    return out
+# The view-builder (TableSpec / BarSpec / _parse_view_spec / _view_filter /
+# _build_view) now lives in view_builder.py (extracted per adr-split-spine-hub)
+# and is imported above; render_view and the /api/view route drive it unchanged.
 
 
 # --- Tools the project-agent drives. Every tool takes `map` — the named map it
@@ -1968,14 +1649,6 @@ async def api_grill(request):
 # http://127.0.0.1:<PORT>/mcp, so its writes land in the store the studio polls;
 # source edits land in the working tree for human review (nothing is committed).
 _DISPATCH_RUNNING: set = set()        # (map, kind, module) -> single-writer guard
-_DISPATCH_TOOLS = {                    # per-kind tool allowlist; only fix/realize/task edit
-    "fix":     "Read,Edit,Bash(git *),mcp__arch-map__*",
-    "realize": "Read,Edit,Bash(git *),mcp__arch-map__*",
-    "task":    "Read,Edit,Bash(git *),mcp__arch-map__*",
-    "grill":   "Read,mcp__arch-map__*",
-    "rescan":  "Read,mcp__arch-map__*",
-    "triage":  "Read,mcp__arch-map__*",
-}
 
 
 def _step_of(store: Store, plan_id: str, step_id: str):
@@ -2028,42 +1701,8 @@ def _dispatch_prompt(store: Store, map_id: str, kind: str, module: str = "",
     return f"Agent request ({kind})" + (f" for module '{module}'" if module else "") + "."
 
 
-def _dispatch_line(line: str) -> str:
-    """Condense one stream-json event into a short human progress line (or '')."""
-    try:
-        ev = json.loads(line)
-    except ValueError:
-        return ""
-    t = ev.get("type")
-    if t == "system" and ev.get("subtype") == "init":
-        return "agent started"
-    if t == "assistant":
-        for b in (ev.get("message", {}).get("content") or []):
-            if b.get("type") == "tool_use":
-                inp = b.get("input") or {}
-                target = inp.get("file_path") or inp.get("command") or inp.get("id") or inp.get("pattern") or ""
-                return (f"{b.get('name', 'tool')} {target}").strip()
-            if b.get("type") == "text" and (b.get("text") or "").strip():
-                return b["text"].strip()[:140]
-    if t == "result":
-        return "finished"
-    return ""
-
-
-def _dispatch_same_origin(request) -> bool:
-    """CSRF guard: only the studio's own page may trigger a dispatch. Reject explicit
-    cross-site fetches (Sec-Fetch-Site) and Origin/Host mismatches. Header-less callers
-    (curl, tests, same-origin XHR) are allowed — the point is to block a foreign web
-    page from POSTing to the loopback agent button."""
-    site = request.headers.get("sec-fetch-site")
-    if site and site not in ("same-origin", "same-site", "none"):
-        return False
-    origin = request.headers.get("origin")
-    if origin:
-        from urllib.parse import urlparse
-        if urlparse(origin).netloc != request.headers.get("host", ""):
-            return False
-    return True
+# _dispatch_line / _dispatch_same_origin / the tool allowlist / the claude -p argv
+# now live in dispatch.py (extracted per adr-split-spine-hub) and are imported above.
 
 
 @mcp.custom_route("/api/dispatch", ["POST"])
@@ -2129,21 +1768,7 @@ async def api_dispatch(request):
         return JSONResponse({"error": "already-running", "kind": kind, "module": label}, status_code=409)
 
     port = os.environ.get("ARCH_MAP_PORT", "8800")
-    mcp_cfg = json.dumps({"mcpServers": {"arch-map": {"type": "http", "url": f"http://127.0.0.1:{port}/mcp"}}})
-    argv = [
-        claude, "-p", prompt,
-        "--add-dir", run_dir,
-        "--permission-mode", "acceptEdits",
-        "--allowedTools", _DISPATCH_TOOLS.get(kind, "Read,mcp__arch-map__*"),
-        "--disallowedTools", "Bash(rm *),Bash(git push *),WebFetch,WebSearch",
-        "--mcp-config", mcp_cfg,
-        "--output-format", "stream-json", "--verbose",
-        "--append-system-prompt",
-        ("You are running headless from an arch-map studio button. Make the smallest "
-         "change that satisfies the request, then reconcile the modules you touched on "
-         "the arch-map spine via the arch-map MCP tools. Do not commit, push, or touch "
-         "files outside the worktree / repo you were launched in."),
-    ]
+    argv = build_dispatch_argv(claude, prompt, kind, run_dir, port)
 
     async def stream():
         def sse(event, data):

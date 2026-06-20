@@ -7,12 +7,23 @@ the real tool/route code against disposable maps — never the real maps/ dir.
 import pytest
 
 import arch_map.server as srv
+import arch_map.map_registry as mr
+
+# FastMCP 3.x's @mcp.tool / @mcp.resource bind a FunctionTool / FunctionResource
+# wrapper (not the raw function) under pytest, so calling srv.<tool>(...) directly —
+# as every tool/resource test does — raises "'FunctionTool' object is not callable".
+# Unwrap each fastmcp-wrapped binding back to its underlying .fn ONCE at import so the
+# tests exercise the real function. The MCP registration is untouched: it lives in
+# mcp's provider registry, not in these module bindings.
+for _name, _obj in list(vars(srv).items()):
+    if type(_obj).__module__.startswith("fastmcp") and callable(getattr(_obj, "fn", None)):
+        setattr(srv, _name, _obj.fn)
 
 
 @pytest.fixture
 def reg(tmp_path, monkeypatch):
     """A temp MapRegistry wired into the server module (legacy migration disabled)."""
-    monkeypatch.setattr(srv, "LEGACY_STATE", tmp_path / "no-legacy.json")
+    monkeypatch.setattr(mr, "LEGACY_STATE", tmp_path / "no-legacy.json")
     registry = srv.MapRegistry(tmp_path / "maps")
     monkeypatch.setattr(srv, "REGISTRY", registry)
     return registry
