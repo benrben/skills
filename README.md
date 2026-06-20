@@ -20,17 +20,55 @@ Five skills, one engineer cycle — **map → understand → design → code**, 
 
 ## The spine: `arch-map`
 
-The suite ships a [FastMCP](https://github.com/jlowin/fastmcp) server at [`arch-map/`](./fathom/arch-map/) — the persistent model every skill reads and writes. The agent keeps it current with a small tool surface (`archmap_show_map`, `archmap_scan_signals`, `archmap_board`, and six action-dispatchers — `archmap_modules`, `archmap_suggestions`, `archmap_grilling`, `archmap_plans`, `archmap_docs`, `archmap_worktrees` — e.g. `archmap_suggestions(action="flag", …)`, `archmap_worktrees(action="create", …)`) and a UI-capable host renders it inline via [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/): depth = node fill, coverage = ring, suggestions = ⚠ ring, leaks = red edge, orphans = a "not connected" tray — plus the **task board** (the Graph ↔ Board toggle). Registered for this repo in [`.mcp.json`](./.mcp.json). See the [arch-map README](./fathom/arch-map/README.md).
+The suite ships a [FastMCP](https://github.com/jlowin/fastmcp) server at [`arch-map/`](./fathom/arch-map/) — the persistent model every skill reads and writes. A UI-capable host renders it inline via [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/): depth = node fill, coverage = ring, suggestions = ⚠ ring, leaks = red edge, orphans = a "not connected" tray — plus the **task board** (the Graph ↔ Board toggle). Registered for this repo in [`.mcp.json`](./.mcp.json). See the [arch-map README](./fathom/arch-map/README.md).
+
+The spine has a strict split: **reads of stored state are MCP resources; writes and computed queries are tools.**
+
+### Reading stored state — `archmap://` resources (YAML; docs as Markdown)
+
+Every read of stored map state is an MCP **resource**, addressed by an `archmap://` URI. A structured resource returns **YAML** (`mime_type: application/yaml`) — not a JSON dict. A single doc returns **Markdown** (`mime_type: text/markdown`). The resources are the *only* way to read stored state:
+
+| resource URI | returns |
+|---|---|
+| `archmap://maps{?q}` | every project map (id, label, repo, counts) |
+| `archmap://{map}/model{?domain,plane,lifecycle,sort,dir,q,limit,offset}` | the full module model |
+| `archmap://{map}/digest{?domain}` | the map digest + staleness line |
+| `archmap://{map}/board` | the skill-cycle task board (Kanban) |
+| `archmap://{map}/module/{id}` | one module's detail |
+| `archmap://{map}/metrics{?sort,dir,limit,offset}` | per-module metrics (churn / coverage / size) |
+| `archmap://{map}/metrics/{module}` | one module's metrics |
+| `archmap://{map}/docs{?type,tag,status,domain,q}` | the doc summaries (YAML list) |
+| `archmap://{map}/doc/{id}` | one doc, as **Markdown** (YAML frontmatter + raw body; a `diagram` body is fenced as `mermaid`) |
+| `archmap://{map}/plans{?status}` | the Plans |
+| `archmap://{map}/plan/{id}` | one Plan |
+| `archmap://{map}/worktrees{?status}` | the per-task git worktrees |
+
+**Query-param vocabulary** (RFC 6570 — all optional): `domain` · `plane` · `lifecycle` · `type` · `tag` · `status` are **exact match**; `q` is a **case-insensitive substring** search (over module id/label/interface, doc title/summary, or map id/repo); `sort` = a field name with `dir` = `asc|desc`; `limit` + `offset` page the result — the returned payload carries `total_count`, `has_more`, and `next_offset`. Two examples:
+
+```
+archmap://payments/model?domain=billing&sort=depth&dir=desc&limit=20
+archmap://payments/docs?type=adr&status=accepted&q=retry
+```
+
+The first returns the 20 deepest modules in the `billing` domain; the second returns accepted ADRs whose title or summary contains "retry".
+
+### The 16 tools — writes + computed queries only
+
+Tools no longer read stored state. The remaining **16 tools** are **writes** and **computed queries** (a computed query derives a fresh answer from the code or the model rather than returning stored state): `archmap_create_map`, `archmap_rename_map`, `archmap_delete_map`, the dispatchers `archmap_modules` / `archmap_docs` / `archmap_plans` / `archmap_worktrees` / `archmap_suggestions` / `archmap_grilling` (now **write-only** — their read actions, e.g. modules `get`, docs `get`/`list`, plans `get`, worktrees `list`, were stripped and are resources instead), plus the computed queries `archmap_ingest`, `archmap_render_view`, `archmap_scan_signals`, `archmap_drift`, `archmap_verify_edges`, `archmap_whatif`, and `archmap_history`. One MCP **prompt** remains: `grill_candidate(map, suggestion_id)`. The five removed read tools (`archmap_list_maps`, `archmap_show_map`, `archmap_get_full_model`, `archmap_board`, `archmap_get_metrics`) are now the resources above.
+
+**Why YAML / Markdown:** YAML drops JSON's braces, quotes, and commas and leans on indentation for nesting, so a structured payload costs fewer tokens than the equivalent JSON. Returning a doc as Markdown (frontmatter + raw body) avoids JSON-escaping the prose entirely — the body is passed through verbatim. Lower token cost per read is the whole point.
+
+**Tradeoff:** an MCP client that supports tools but **not** resources can no longer read the map at all — every read now lives behind an `archmap://` resource. Such clients can still *write* (the 16 tools) but are blind to stored state. Full MCP clients (resources + tools) are unaffected.
 
 ## The task board & per-task worktrees
 
-The same spine projects every Plan's WorkSteps into a **task board** — a Kanban whose **columns are the skill cycle** (`todo · understand · plan · in-progress · review · done`, each column owned by a skill) and whose **rows are the agents** carrying each task. A card can be built in its own **git worktree** — an isolated branch — so several tasks (and the agents on them) run in parallel without colliding. The board is the cycle made *trackable*: a card flows left→right, its agent and worktree travelling with it. It's not a sixth skill — it's spine state + a studio surface the five skills drive (`archmap_board`, `archmap_worktrees`, and `archmap_plans` steps). In the studio a header **Graph ↔ Board** toggle (`b`) swaps the graph for the board; drag a card to move its stage, ＋ a worktree, ▶ dispatch an agent into it. Real `git worktree` work is ON by default and guarded like `/api/dispatch` (same-origin + `ARCH_MAP_ALLOW_WORKTREE`); see [BOARD.md](./fathom/BOARD.md).
+The same spine projects every Plan's WorkSteps into a **task board** — a Kanban whose **columns are the skill cycle** (`todo · understand · plan · in-progress · review · done`, each column owned by a skill) and whose **rows are the agents** carrying each task. A card can be built in its own **git worktree** — an isolated branch — so several tasks (and the agents on them) run in parallel without colliding. The board is the cycle made *trackable*: a card flows left→right, its agent and worktree travelling with it. It's not a sixth skill — it's spine state + a studio surface the five skills drive (read it via the `archmap://{map}/board` resource; mutate it via the `archmap_worktrees` and `archmap_plans` step tools). In the studio a header **Graph ↔ Board** toggle (`b`) swaps the graph for the board; drag a card to move its stage, ＋ a worktree, ▶ dispatch an agent into it. Real `git worktree` work is ON by default and guarded like `/api/dispatch` (same-origin + `ARCH_MAP_ALLOW_WORKTREE`); see [BOARD.md](./fathom/BOARD.md).
 
 ## Keep the map true: measured facts, drift, and the weekly pulse
 
 The spine measures its own facts instead of trusting estimates. `archmap_ingest(map, root=…)` computes **churn** from git history, **coverage** from a real test report (coverage.py XML/JSON or lcov), and **size** (implementation mass) from each module's measured LOC — normalized so 1.0 is the median module, which is what the `bulky-impl` signal reads — and records a reconcile **anchor** (git sha + per-module health snapshot). From there:
 
-- `archmap_drift(map)` — what changed since the last anchor; the map digest (`archmap_show_map`) opens with the same staleness line ("3 files changed, 2 modules touched since `a1b2c3d`").
+- `archmap_drift(map)` — what changed since the last anchor; the map digest (resource `archmap://{map}/digest`) opens with the same staleness line ("3 files changed, 2 modules touched since `a1b2c3d`").
 - `archmap_history(map)` — health/depth/coverage trends across anchors, per module or per domain.
 - `archmap_verify_edges(map)` — the recorded dependency edges checked against the code's real imports.
 
