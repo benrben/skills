@@ -193,7 +193,8 @@ def test_api_dispatch_cross_origin_refused(reg, client):
     assert "cross-origin" in r.json()["error"]
 
 def test_api_dispatch_disabled_falls_back(reg, client, monkeypatch):
-    # ARCH_MAP_ALLOW_DISPATCH=0 turns the default-on bridge off -> 503 + copy-paste prompt
+    # dispatch is OFF by default (opt-in); ARCH_MAP_ALLOW_DISPATCH=0 keeps it off
+    # -> 503 + copy-paste prompt (set explicitly so the test is independent of env)
     monkeypatch.setenv("ARCH_MAP_ALLOW_DISPATCH", "0")
     reg.create("m1", "M1")
     r = client.post("/api/dispatch", json={"map": "m1", "kind": "rescan", "module": "a"})
