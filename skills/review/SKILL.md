@@ -1,6 +1,7 @@
 ---
 name: review
-description: Review a diff, PR, or branch THROUGH the architecture map — which modules the change touches, whether it crosses a seam it shouldn't (new edges not on the map), whether it touches a danger-zone module without adding tests, and whether it erodes a deep module's interface. Use when asked to review a change, check a PR against the architecture, gate a merge, or answer "is this change safe / does it respect the seams." Strictly read-only against both the spine and the source: it reports findings and routes them — stale-map findings to fathom:map, friction worth fixing to fathom:deepen, structural redesign to fathom:plan. Do NOT use to find general bugs or style issues (use a code-review tool), to reconcile the map (fathom:map), or to edit source (fathom:code).
+description: Review a diff, PR, or branch THROUGH the architecture map — which modules the change touches, whether it crosses a seam it shouldn't (new edges not on the map), whether it touches a danger-zone module without adding tests, and whether it erodes a deep module's interface. Use when asked to review a change, check a PR against the architecture, gate a merge, or answer "is this change safe / does it respect the seams." Read-only against the source and the module graph: it reports findings and routes them — stale-map findings to fathom:map, structural work to fathom:design, the fix to fathom:code. Its one permitted spine write is recording a risk or postmortem doc when a finding is worth keeping as durable truth. Do NOT use to find general bugs or style issues (use a code-review tool), to reconcile the map (fathom:map), or to edit source (fathom:code).
+allowed-tools: Read Grep Glob Bash mcp__arch-map__*
 ---
 
 # Review — the Change Gate
@@ -11,14 +12,16 @@ This is what turns the map from a study aid into a working gate: every change ge
 
 ## Glossary
 
-Speak the [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) vocabulary exactly — module / interface / implementation / depth / seam / adapter / leverage / locality. Never "component," "service," "API," or "boundary." Two terms this skill leans on:
+Speak the [../../fathom/LANGUAGE.md](../../fathom/LANGUAGE.md) vocabulary exactly — module / interface / implementation / depth / seam / adapter / leverage / locality. Never "component," "service," "API," or "boundary." Two terms this skill leans on:
 
 - **Anchor** — a recorded reconcile event on the map (git sha + timestamp + per-module snapshot); the baseline drift is computed against.
 - **Halo** — the `updated` marker on a module; this skill never sets or clears it (that is fathom:map's).
 
-## Strictly read-only
+## Strictly read-only — one carved exception
 
-review writes **nothing**: no spine writes, no source edits, no halos, no candidates, no ADRs. Its entire output is the report and the hand-offs. If you find yourself wanting to fix what you found, you have left this skill — route it (see [Hand-offs](#hand-offs)).
+review never writes the source, never writes modules, candidates, or halos. Its entire output is the report and the hand-offs. If you find yourself wanting to fix what you found, you have left this skill — route it (see [Hand-offs](#hand-offs)).
+
+The **one** permitted spine write: when a finding is worth keeping as durable recorded truth — a seam crossing you had to wave through, an incident pattern this change repeats — record it as a `risk` or `postmortem` doc via `archmap_docs` (typed; see [../../fathom/DOC-TYPES.md](../../fathom/DOC-TYPES.md)). That is the only write review may make: no other doc type, no modules, no candidates, no halos, no source.
 
 ## Process
 
@@ -36,7 +39,7 @@ archmap_drift(map, since_sha=<base sha>, root=<repo root>)
 `modulesTouched` is the review's scope: each touched module with the changed files it owns. Two findings fall out immediately:
 
 - **`unmappedFiles`** — changed files NO module owns. Either new structure the map doesn't know yet (a reconcile gap → fathom:map) or files that should belong to an existing module's `files` list. Name them; don't fix them.
-- Pull each touched module's record (`archmap_modules(map, action="get", ids=[...])`) for its depth, coverage, seam, and iface — the facts the next steps read against.
+- Pull each touched module's record (`archmap_modules(map, action="get", ids=[...])`) for its depth, coverage, seam, and iface — the facts the next steps read against. Also pull any relevant spine docs for the touched modules (`archmap_docs`) — `adr` / `spec` / `risk` — to check the change against recorded decisions and contracts (e.g. a change that contradicts an `adr` or violates a `spec` is a finding).
 
 ### 3. Does the change cross a seam it shouldn't?
 
@@ -69,21 +72,21 @@ Lead with the verdict shape: **clean** / **findings to discuss** / **architectur
 2. Danger-zone touches without tests (step 4)
 3. Interface erosion on deep modules (step 5)
 4. Map gaps the change reveals — unmapped files, pre-existing undeclared edges (step 2/3) → fathom:map
-5. Friction the change rubs against but didn't cause → fathom:deepen
+5. Friction the change rubs against but didn't cause → fathom:design
 
 Be honest about confidence: if the map's record looks stale for a touched module, say the finding is conditional on it and route the reconcile.
 
 ## Hand-offs
 
 - **Map is missing / stale / has unmapped files** → **fathom:map** (the only actual-plane writer).
-- **A finding is worth fixing structurally** (shallow cluster, recurring leak) → **fathom:deepen** to flag and grill a candidate.
-- **The change needs new intended structure** → **fathom:plan**.
-- **The fix itself** → **fathom:code**, only after deepen/plan has decided a target.
-- **A load-bearing decision surfaced** (e.g. an accepted seam crossing) → **adr-writer**.
+- **A finding is worth fixing structurally** (shallow cluster, recurring leak) → **fathom:design** (improve mode) to flag and grill a candidate.
+- **The change needs new intended structure** → **fathom:design** (new mode).
+- **The fix itself** → **fathom:code**, only after design has decided a target.
+- **A load-bearing decision surfaced** (e.g. an accepted seam crossing) → record it as an `adr` doc on the spine: fathom:design writes it when it's a decision being made, fathom:map when it's already in the code. (review itself only records `risk` / `postmortem` — see [Strictly read-only](#strictly-read-only--one-carved-exception).)
 
 ## What review does NOT do
 
-- Does NOT write the spine (no halos, no candidates, no edges) or the source.
+- Does NOT write modules, candidates, halos, or edges, and does NOT touch the source — its only spine write is a `risk` / `postmortem` doc (see [Strictly read-only](#strictly-read-only--one-carved-exception)).
 - Does NOT do generic code review (bugs, style, naming) — it reviews **against the map** only.
-- Does NOT decide whether a flagged friction gets fixed — fathom:deepen grills, the user decides.
+- Does NOT decide whether a flagged friction gets fixed — fathom:design grills, the user decides.
 - Does NOT reconcile drift it discovers — it reports the gap and routes to fathom:map.

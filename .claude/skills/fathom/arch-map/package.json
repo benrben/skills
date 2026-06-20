@@ -1,9 +1,0 @@
-{
-  "name": "arch-map-studio",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Studio UI for arch-map. Dependency-free JS test harness: every *.test.js under arch_map/ui/ runs with plain Node + node:assert (no framework, no node_modules).",
-  "scripts": {
-    "test": "node ui-tests.js"
-  }
-}

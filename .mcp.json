@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "arch-map": {
-      "type": "http",
-      "url": "http://127.0.0.1:8800/mcp"
+      "command": "uv",
+      "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT}/fathom/arch-map", "arch-map"],
+      "env": {
+        "ARCH_MAP_DATA_DIR": "${CLAUDE_PLUGIN_DATA}"
+      }
     }
   }
 }

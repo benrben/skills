@@ -1,6 +1,7 @@
 {
-  "name": "fathom",
-  "owner": { "name": "Ben" },
+  "name": "benrben",
+  "owner": { "name": "benrben", "url": "https://github.com/benrben" },
+  "description": "Fathom — deep-module architecture skills (map, understand, design, code, review) + the arch-map MCP spine for Claude Code.",
   "plugins": [
     {
       "name": "fathom",

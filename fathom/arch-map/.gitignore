@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.coverage
+node_modules/
+
+arch_state.json*
+maps/*.lock
+maps/*.json

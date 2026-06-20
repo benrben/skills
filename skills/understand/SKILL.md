@@ -1,17 +1,18 @@
 ---
 name: understand
-description: Read-only guided tour of an existing arch-map — entry interfaces, the deepest modules, and leak/drift hot-spots — so a newcomer (human or agent) can comprehend a codebase's deep structure before touching it. The front door of the Fathom suite. Do NOT use for changing the map (that is fathom:map, which seeds and reconciles), for proposing refactors (fathom:deepen), for designing new structure (fathom:plan), or for editing source (fathom:code) — understand writes NOTHING to the spine; its one permitted artifact is exporting the tour to docs/TOUR.md when the user explicitly asks to save it.
+description: Read-only guided tour of an existing arch-map — entry interfaces, the deepest modules, leak/drift hot-spots, and the recorded docs (glossary, adr, spec, risk, runbook, diagram...) scoped to the modules it covers — so a newcomer (human or agent) can comprehend a codebase's deep structure before touching it. The front door of the Fathom suite — use when onboarding a repo that ALREADY has a map; an unmapped repo goes to fathom:map first. Do NOT use for changing the map (that is fathom:map, which seeds and reconciles), for improving shallow modules or designing new structure (that is fathom:design), or for editing source (that is fathom:code) — understand writes NOTHING, to the spine or to disk; if the user wants the tour saved it hands off to fathom:map to record it as a note or diagram doc on the spine.
+allowed-tools: Read Grep Glob Bash mcp__arch-map__*
 ---
 
 # Understand a Codebase Through Its Map
 
-Give a guided tour of an existing architecture map: walk the **entry interfaces** a newcomer would meet first, the **deepest modules** where the leverage lives, and the **leak / not-connected** hot-spots that explain the friction. The aim is comprehension — letting a human or an agent build an accurate mental model of a codebase's deep structure before any of the other Fathom skills touch it.
+Give a guided tour of an existing architecture map: walk the **entry interfaces** a newcomer would meet first, the **deepest modules** where the leverage lives, the **leak / not-connected** hot-spots that explain the friction, and the **recorded docs** (glossary, adr, spec, risk, runbook, diagram...) that say *why* the structure is the way it is. The aim is comprehension — letting a human or an agent build an accurate mental model of a codebase's deep structure before any of the other Fathom skills touch it. Comprehension is the **modules** plus the **signals** plus the **docs** the spine has recorded.
 
-This is the **front door** of the Fathom suite. It reads the shared spine the arch-map MCP maintains and narrates it. It is **strictly read-only**: it never seeds, reconciles, flags, decides, plans, or edits. (One artifact exception: on an explicit request it may save the finished tour to `docs/TOUR.md` — see step 5; the spine is still never written.) When you find yourself wanting to *change* the map or the code, you have left this skill — hand off (see [Hand-offs](#hand-offs)).
+This is the **front door** of the Fathom suite. It reads the shared spine the arch-map MCP maintains — the module graph *and* the typed docs that ride alongside it — and narrates it. It is **strictly read-only**: it never seeds, reconciles, flags, decides, designs, or edits, and it writes nothing — not to the spine, not to disk. If the user wants the tour saved, it hands off to [fathom:map](#hand-offs) to record it as a doc on the spine — see step 5. When you find yourself wanting to *change* the map or the code, you have left this skill — hand off (see [Hand-offs](#hand-offs)).
 
 ## Glossary
 
-Speak these terms exactly, the same way every Fathom skill does — don't drift into "component," "service," "API," or "boundary." Full definitions in [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md).
+Speak these terms exactly, the same way every Fathom skill does — don't drift into "component," "service," "API," or "boundary." Full definitions in [../../fathom/LANGUAGE.md](../../fathom/LANGUAGE.md).
 
 - **Module** — anything with an interface and an implementation (function, class, package, slice).
 - **Interface** — everything a caller must know to use the module: types, invariants, error modes, ordering, required configuration. Not just the type signature.
@@ -22,20 +23,22 @@ Speak these terms exactly, the same way every Fathom skill does — don't drift 
 - **Leverage** — what callers get from depth.
 - **Locality** — what maintainers get from depth: change, bugs, and knowledge concentrated in one place.
 
-Two principles do most of the explaining on a tour (see [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md) for the full set):
+Two principles do most of the explaining on a tour (see [../../fathom/LANGUAGE.md](../../fathom/LANGUAGE.md) for the full set):
 
 - **The interface is the test surface.** A module's interface is what callers *and* tests cross — so coverage at the interface tells you how trustworthy the module is to lean on.
 - **The deletion test** explains *why* a deep module earns its keep: imagine deleting it and watch complexity reappear across N callers.
 
-You may name what a leak or a shallow cluster *would* cost in those terms — but you do not propose the fix. That is [fathom:deepen](../deepen/SKILL.md)'s job.
+You may name what a leak or a shallow cluster *would* cost in those terms — but you do not propose the fix. That is [fathom:design](../design/SKILL.md)'s job.
 
 ## The map is the source of truth, not the code
 
-You read the **map**, not the repository. The map is the spine the other Fathom skills built: [fathom:map](#hand-offs) seeded the **actual** plane (what the code IS), [fathom:plan](#hand-offs) staged **intended** modules beside it (what a design WANTS), and [fathom:code](#hand-offs) realized some of those into built ones. Your tour reflects that staged reality:
+You read the **map**, not the repository. The map is the spine the other Fathom skills built: [fathom:map](#hand-offs) seeded the **actual** plane (what the code IS), [fathom:design](#hand-offs) staged **intended** modules beside it (what a design WANTS), and [fathom:code](#hand-offs) realized some of those into built ones. The spine also holds the project's **docs** — typed records (glossary, note, rule, rfc, adr, spec, ceiling, risk, runbook, postmortem, diagram) that fathom:map registered and fathom:design wrote for the decisions it made. Project docs live **only** on the spine; there are no doc files in the repo. Your tour reflects that staged reality and surfaces the docs that explain it:
 
 - **`plane`** is `"actual"` (what IS) or `"intended"` (what a plan WANTS). A newcomer's tour of "the codebase" is the **actual** plane; mention intended modules only to explain where the design is heading (and which actual modules they `supersede`).
 - **`lifecycle`** is `"planned"`, `"building"`, or `"built"`. Tour the **built** structure; flag planned-but-unbuilt modules as "designed, not yet here."
 - A **candidate** is the user-facing word for a Suggestion — an open deepening opportunity another run flagged. Surface candidates as *part of the map's story* ("this module already has a Strong candidate on it"); do not grill or decide them.
+
+Read the docs scoped to the modules you cover: `archmap_docs(map, action="list")` to see what's recorded, then `archmap_docs(map, action="get", ...)` to pull a body — an adr explaining a seam, a spec pinning an interface, a risk on a danger-zone module, a runbook for an entry point, a diagram of a domain. In a UI-capable host they ride alongside the graph; in a terminal you read them and narrate them. A good tour surfaces the relevant docs for the modules it walks, not a doc dump.
 
 If the map looks stale or wrong while you tour it — depth scores that don't match the code, missing modules, edges that no longer exist — that is a **reconcile** job, and it belongs to [fathom:map](#hand-offs), not here. Say so and hand off; never "fix" the map yourself.
 
@@ -102,6 +105,7 @@ The places that explain why the codebase feels harder than its size suggests. St
 - **Not-connected** (`orphans`) — modules with no edge in any direction. Either dead, or connected through a path the map doesn't yet record (a reconcile question for [fathom:map](#hand-offs)).
 - **Shallow clusters** — runs of low-`depth` modules in one domain, where understanding one concept means bouncing between many small modules with no **locality**. Name the friction; don't prescribe the merge.
 - **Open candidates** — modules already carrying a deepening candidate (the ⚠ ring). Report the candidate's `title` and `strength` (`"Strong"` / `"Worth exploring"` / `"Speculative"`) and that someone has already noticed this friction — then move on.
+- **Recorded docs** — when a module you're touring has a doc on the spine (`archmap_docs(map, action="list")`, then `action="get"` for the body), surface it: a `risk` on a danger-zone module, an `adr` explaining why a seam is where it is, a `spec` pinning an interface, a `runbook` for an entry point. The docs say *why* the friction is tolerated or *what* the constraint is — read them into the tour, don't dump them all.
 
 You may also use `archmap_get_metrics(map, module)` to pull a single module's raw numbers (fanIn, fanOut, instability, blastRadius, health) when a user asks "how bad is this one specifically?" That gives you the numbers; `archmap_scan_signals` gives you the interpretation.
 
@@ -109,21 +113,21 @@ Scope each lens to what the user asked for. "Give me a tour" earns all three acr
 
 ### 4. Narrate the tour
 
-Tell the story in the project's own domain vocabulary (the `domain` and `label` fields, set from CONTEXT.md) and the architecture vocabulary from [../fathom/LANGUAGE.md](../fathom/LANGUAGE.md). Talk about "the Order intake module," not "the OrderHandler" and not "the Order service."
+Tell the story in the project's own domain vocabulary (the `domain` and `label` fields, set from the spine's `glossary` docs) and the architecture vocabulary from [../../fathom/LANGUAGE.md](../../fathom/LANGUAGE.md). Talk about "the Order intake module," not "the OrderHandler" and not "the Order service."
 
 Structure a full tour as:
 
 1. **The shape** — domains as chapters, rough module counts, where the depth is concentrated and where it's thin.
 2. **Come in here** — the entry interfaces (Lens A), each with the facts a caller must know.
 3. **The deep core** — the highest-leverage modules (Lens B) and what each hides behind its interface, with a coverage read on how safely you can lean on it.
-4. **Mind these** — the hot-spots (Lens C): leaks, not-connected modules, shallow clusters, and any candidates already flagged.
-5. **Where you'd go next** — route the user to the right sibling skill for what they now want to do, without doing it yourself.
+4. **Mind these** — the hot-spots (Lens C): leaks, not-connected modules, shallow clusters, any candidates already flagged, and the docs that explain them (a `risk` or `adr` scoped to a module you just walked).
+5. **Where you'd go next** — end with a **named next action and its specific target**, without doing it yourself. Name the skill *and* the thing it acts on: e.g. "the billing-intake module is a danger-zone → **fathom:design** (improve mode) on `billing-intake`", "the new payouts feature is greenfield → **fathom:design** (new mode) for payouts", or "you've got a diff ready → **fathom:review** on that branch". A vague "you could refactor this" is not a hand-off; the named skill + target is.
 
 Be honest about confidence. If a module's `iface` text is thin or its `depth`/`coverage` look stale, say "the map records X here, but it may be out of date — [fathom:map](#hand-offs) can reconcile it." You are reporting the map's account of the codebase, not certifying it.
 
-### 5. Export the tour (only when asked)
+### 5. Save the tour (only when asked — by handing off)
 
-By default the tour lives in the conversation and nowhere else. On an **explicit user request** ("save the tour", "write this down for the team"), write it to `docs/TOUR.md` in the repo: overwrite the previous one, open with a dated header naming the map id and — if the map has anchors — the latest anchor's sha (`archmap_drift`'s `sinceSha`), so a reader knows exactly which state of the codebase the tour describes. This is the ONE write this skill may perform, and it is a repo artifact, never a spine write — the spine-read-only rule is unchanged. Never export unprompted.
+By default the tour lives in the conversation and nowhere else. This skill **writes nothing** — not to the spine, not to disk. On an **explicit user request** ("save the tour", "write this down for the team"), you do not write it yourself: hand off to [fathom:map](#hand-offs), which records it as a system-scoped `note` (or a `diagram` doc if the user wants the shape) on the spine — the one place project docs live. Tell the user that's where it will go and that map will stamp it with the map id and, if the map has anchors, the latest anchor's sha (`archmap_drift`'s `sinceSha`) so a reader knows which state of the codebase the tour describes. Never write a repo file; never write the spine directly.
 
 ### 6. Hand off
 
@@ -133,10 +137,10 @@ The tour ends by pointing at the door the user wants next. You never walk throug
 
 `understand` is the front door; every other Fathom skill is a room off it. Route by what the user wants to *do* now:
 
-- **"This part of the map looks wrong / out of date / is missing modules"** → **fathom:map**. It is the only skill (besides code) that writes the actual plane: it seeds via Explore subagents and reconciles depth/coverage/edges to match reality. It writes; understand only explains. *(This is the distinction that keeps the two skills apart: map verifies accuracy by mutating; understand assumes the map and narrates it.)*
-- **"This shallow cluster / leak is worth fixing"** → **fathom:deepen**. It finds friction in existing shallow modules, presents candidates, and grills the chosen one. You may have *pointed at* the friction on the tour; deepen decides whether to act and attaches the candidate.
-- **"I want to design the new/changed structure here"** → **fathom:plan**. It designs the intended deep-module graph — seams, interfaces (design-it-twice), dependency categories, sequenced WorkSteps.
+- **"This part of the map looks wrong / out of date / is missing modules"** → **fathom:map**. It is the only skill (besides code) that writes the actual plane: it seeds via Explore subagents and reconciles depth/coverage/edges to match reality, and it is the doc **registrar** (glossary, note, rule, risk, runbook, postmortem, diagram, plus adr it discovers in the code). It writes; understand only explains. *(This is the distinction that keeps the two skills apart: map verifies accuracy by mutating; understand assumes the map and narrates it.)*
+- **"Friction in these existing shallow modules is worth fixing"** → **[fathom:design](../design/SKILL.md)** (improve mode). It finds friction in existing shallow modules, presents deepening candidates, and grills the chosen one. You may have *pointed at* the friction on the tour; design decides whether to act and attaches the candidate.
+- **"I want to design the new/changed structure here"** → **[fathom:design](../design/SKILL.md)** (new mode). It designs the intended deep-module graph from scratch — seams, interfaces (design-it-twice), dependency categories, sequenced WorkSteps.
 - **"Build it / execute this candidate or WorkStep"** → **fathom:code**. The only source editor: it refactors shallow→deep or builds to a planned interface (interface = test surface), then realizes the module and hands back to map to reconcile.
-- **"Record why we decided this"** → **adr-writer**, offered by the sibling that made the decision (deepen / plan / code). understand surfaces existing `adrRef`s on candidates as part of the story, but it does not write ADRs.
+- **"Record why we decided this"** → it becomes an `adr` doc on the spine, written by **[fathom:design](../design/SKILL.md)** when it makes the decision, or by **fathom:map** when the decision is already settled in the code. understand surfaces existing `adr` docs scoped to the modules it tours as part of the story, but it does not write them.
 
 If the tour was the whole request, stop after step 4 — a clean read needs no hand-off.
