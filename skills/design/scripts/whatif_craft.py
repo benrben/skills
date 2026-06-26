@@ -16,7 +16,7 @@ def main():
         import os
         sys.path.insert(0, os.path.join(os.path.abspath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")), "fathom", "arch-map"))
-        from arch_map.server import SIGNAL_REGISTRY
+        from arch_map.signals import SIGNAL_REGISTRY
     except Exception as e:
         print("needs the arch_map package on the path (run inside the plugin):", e); return
     mx = {"churn": 0, "blastRadius": 0, "inCycle": False, "fanOut": 0, "fanIn": 0,

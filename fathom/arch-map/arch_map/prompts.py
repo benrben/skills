@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from fastmcp.exceptions import PromptError
 
-from . import server as srv
+from .base import REGISTRY                          # map access (no longer reaches up into server)
+from .grill_text import _grill_prompt_for_suggestion
 
 
 def register(mcp) -> None:
@@ -35,7 +36,7 @@ def register(mcp) -> None:
             suggestion_id: the candidate id (from a flag ack / the module record).
         """
         try:
-            return srv._grill_prompt_for_suggestion(
-                srv.REGISTRY.store(map), map, suggestion_id)
+            return _grill_prompt_for_suggestion(
+                REGISTRY.store(map), map, suggestion_id)
         except (KeyError, ValueError) as e:
             raise PromptError(str(e).strip("'\"")) from e

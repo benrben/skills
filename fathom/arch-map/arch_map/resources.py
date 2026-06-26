@@ -27,7 +27,7 @@ from __future__ import annotations
 from fastmcp.exceptions import ResourceError
 from fastmcp.resources import ResourceContent
 
-from . import server as srv
+from . import reads                   # the read-projection leaf (no longer reaches up into server)
 from .serialize import _yaml          # the ONE serializer both surfaces share (serialize.py)
 
 # MIME types for the two surfaces. YAML for every structured payload (cuts JSON's
@@ -113,7 +113,7 @@ def register(mcp) -> None:
         """Every architecture map (id, repo label, module/proposal counts). `q`
         filters on id/repo (case-insensitive substring)."""
         def run():
-            out = srv.list_maps(limit=0, offset=0)   # limit<=0 -> the whole list
+            out = reads.list_maps(limit=0, offset=0)   # limit<=0 -> the whole list
             ms = out["maps"]
             if q:
                 ms = [m for m in ms if _q_match(m.get("id", ""), q)
@@ -134,7 +134,7 @@ def register(mcp) -> None:
         lifecycle (exact match), q (substring over id/label/iface), sort+dir, and
         limit/offset paging (paging metadata rides in the payload)."""
         def run():
-            full = srv.get_full_model(map)            # raises KeyError -> no phantom map
+            full = reads.get_full_model(map)            # raises KeyError -> no phantom map
             mods = full.get("modules") or []
             if domain:
                 mods = [m for m in mods if m.get("domain") == domain]
@@ -160,19 +160,19 @@ def register(mcp) -> None:
     def digest(map: str, domain: str = ""):
         """A map's digest (counts, orphans, open suggestions, worst-health modules).
         Pass `domain` to get the full module records for just that domain."""
-        return _recoverable(lambda: _yaml_block(srv.show_map(map, domain=domain)))
+        return _recoverable(lambda: _yaml_block(reads.show_map(map, domain=domain)))
 
     # ---- board ---------------------------------------------------------------
     @mcp.resource("archmap://{map}/board", mime_type=_YAML_MIME)
     def board(map: str):
         """A map's task board — the SAME projection the studio board renders."""
-        return _recoverable(lambda: _yaml_block(srv.board(map)))
+        return _recoverable(lambda: _yaml_block(reads.board(map)))
 
     # ---- one module ----------------------------------------------------------
     @mcp.resource("archmap://{map}/module/{id}", mime_type=_YAML_MIME)
     def module(map: str, id: str):
         """One module's full record."""
-        return _recoverable(lambda: _yaml_block(srv.get_module(map, id)))
+        return _recoverable(lambda: _yaml_block(reads.get_module(map, id)))
 
     # ---- metrics: all (sort/page) -------------------------------------------
     @mcp.resource("archmap://{map}/metrics{?sort,dir,limit,offset}",
@@ -182,7 +182,7 @@ def register(mcp) -> None:
         """Every module's computed graph metrics, keyed by id. sort+dir order by a
         metric field; limit/offset page (paging metadata rides in the payload)."""
         def run():
-            out = srv.get_metrics(map, module=None, limit=0, offset=0)
+            out = reads.get_metrics(map, module=None, limit=0, offset=0)
             metrics = out["metrics"]                  # {id: {fanIn, ...}}
             rows = [{"id": mid, **vals} for mid, vals in metrics.items()]
             rows = _sort_rows(rows, sort, dir)
@@ -197,7 +197,7 @@ def register(mcp) -> None:
     @mcp.resource("archmap://{map}/metrics/{module}", mime_type=_YAML_MIME)
     def metrics_one(map: str, module: str):
         """One module's computed graph metrics."""
-        return _recoverable(lambda: _yaml_block(srv.get_metrics(map, module=module)))
+        return _recoverable(lambda: _yaml_block(reads.get_metrics(map, module=module)))
 
     # ---- docs list -----------------------------------------------------------
     @mcp.resource("archmap://{map}/docs{?type,tag,status,domain,q}",
@@ -208,7 +208,7 @@ def register(mcp) -> None:
         domain (the doc's resolved scope contains a module of that domain), q
         (substring over title/summary)."""
         def run():
-            full = srv.list_docs(map, include_membership=False, limit=0, offset=0)
+            full = reads.list_docs(map, include_membership=False, limit=0, offset=0)
             rows = full["docs"]
             if type:
                 rows = [d for d in rows if d.get("type") == type]
@@ -217,7 +217,7 @@ def register(mcp) -> None:
             if tag:
                 rows = [d for d in rows if tag in (d.get("tags") or [])]
             if domain:
-                mdl = srv.get_full_model(map)
+                mdl = reads.get_full_model(map)
                 in_dom = {m["id"] for m in (mdl.get("modules") or [])
                           if m.get("domain") == domain}
                 membership = mdl.get("docMembership") or {}
@@ -240,7 +240,7 @@ def register(mcp) -> None:
         scope/supersedes/adrRef/author/created/updated) + the raw markdown body
         verbatim. A `diagram` doc's body is wrapped in a fenced mermaid block."""
         def run():
-            d = srv.get_doc(map, id)
+            d = reads.get_doc(map, id)
             meta = {k: d.get(k) for k in _FRONTMATTER_KEYS if k in d}
             body = d.get("body") or ""
             if d.get("type") == "diagram":
@@ -253,17 +253,17 @@ def register(mcp) -> None:
     def plans(map: str, status: str = ""):
         """The plans list (id/title/status/step+module counts). `status` filters
         exactly (draft|active|done|abandoned)."""
-        return _recoverable(lambda: _yaml_block(srv.list_plans(map, status=status)))
+        return _recoverable(lambda: _yaml_block(reads.list_plans(map, status=status)))
 
     # ---- one plan ------------------------------------------------------------
     @mcp.resource("archmap://{map}/plan/{id}", mime_type=_YAML_MIME)
     def plan(map: str, id: str):
         """One plan's full record (its steps included)."""
-        return _recoverable(lambda: _yaml_block(srv.get_plan(map, id)))
+        return _recoverable(lambda: _yaml_block(reads.get_plan(map, id)))
 
     # ---- worktrees list ------------------------------------------------------
     @mcp.resource("archmap://{map}/worktrees{?status}", mime_type=_YAML_MIME)
     def worktrees(map: str, status: str = ""):
         """The spine worktrees (the STORED state) + the live git worktree list.
         `status` filters the spine worktrees exactly (active|merged|removed)."""
-        return _recoverable(lambda: _yaml_block(srv.list_worktrees(map, status=status)))
+        return _recoverable(lambda: _yaml_block(reads.list_worktrees(map, status=status)))

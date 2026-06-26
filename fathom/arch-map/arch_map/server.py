@@ -75,6 +75,17 @@ from .import_graph import verify as verify_imports
 from .whatif import preview_merge
 from .worktrees import Worktrees, WorktreeError, slug as _wt_slug, default_path as _wt_default_path
 from .serialize import _yaml          # the ONE serializer shared with resources.py (serialize.py)
+from .signals import SIGNAL_REGISTRY, _CRAFT_SIGNALS, _compute_signals  # signal registry leaf
+from .grill_text import (CANON_GRILL_PROMPT, _first_open, _grill_text,    # grilling-text leaf
+                         _grill_prompt, _grill_prompt_for_suggestion)
+from .base import (REGISTRY, _guard, _fail, _BOARD_RUNNING,               # shared runtime base leaf
+                   _running_keys, _repo_root, _safe_git_worktrees)
+from .reads import (list_maps, show_map, get_full_model, get_metrics,    # read-projection leaf
+                    get_module, get_modules, board, list_plans, get_plan,
+                    list_worktrees, get_doc, list_docs)
+from .actions import (STUDIO_DIR, STUDIO_INDEX, VIEW_INDEX, _ASSET_CT,    # studio action/dispatch/UI core
+                      _inline_app, _apply_doc, _apply_action, _overlay_running,
+                      _DISPATCH_RUNNING, _step_of, _dispatch_prompt, _call_tool)
 
 HERE = Path(__file__).parent
 # The unified **studio** — one workspace combining the dependency graph (canvas)
@@ -84,17 +95,8 @@ HERE = Path(__file__).parent
 # live under ui/studio/ and are read fresh per request (edit-and-reload, no
 # restart). The legacy network.html / decisions.html it replaced are kept only for
 # history.
-STUDIO_DIR = (HERE / "ui" / "studio").resolve()
-STUDIO_INDEX = STUDIO_DIR / "index.html"
-VIEW_INDEX = STUDIO_DIR / "view.html"   # on-brand ad-hoc view renderer (tables / charts)
-_ASSET_CT = {
-    ".html": "text/html; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".js": "application/javascript; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".svg": "image/svg+xml",
-    ".map": "application/json; charset=utf-8",
-}
+# STUDIO_DIR / STUDIO_INDEX / VIEW_INDEX / _ASSET_CT now live in actions.py
+# (server-cleanup s5) and are imported above.
 
 mcp = FastMCP(
     "arch-map",
@@ -187,17 +189,9 @@ mcp.add_middleware(YamlToolOutput())
 # Persistent map storage. Honors $ARCH_MAP_DATA_DIR (the plugin's .mcp.json sets this
 # to ${CLAUDE_PLUGIN_DATA}) so user maps survive plugin updates and read-only install
 # trees; falls back to maps/ beside the package for local dev. Created on first use.
-_DATA_DIR = os.environ.get("ARCH_MAP_DATA_DIR")
-MAPS_DIR = ((Path(_DATA_DIR).expanduser() / "maps") if _DATA_DIR else (HERE.parent / "maps")).resolve()
-MAPS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# Store and MapRegistry now live in store.py / map_registry.py (extracted per
-# adr-split-spine-hub) and are imported above, so srv.Store / srv.MapRegistry /
-# srv._slug resolve unchanged for the tools, routes, and tests.
-
-
-REGISTRY = MapRegistry(MAPS_DIR)
+# Store/MapRegistry live in store.py / map_registry.py; the MAPS_DIR data dir and the
+# REGISTRY singleton now live in base.py (server-cleanup) and are imported above, so
+# srv.REGISTRY / srv.Store / srv.MapRegistry / srv._slug resolve unchanged.
 
 # --- Lane 2: generative Prefab UI for ad-hoc charts/tables -------------------
 if _HAS_PREFAB:
@@ -243,31 +237,7 @@ _RES_APP = {"app": UI_RESOURCE_APP} if _HAS_APPS else {}
 _MAX_RESULT = {"anthropic/maxResultSizeChars": 25000}
 
 
-def _inline_app(index_path: Path) -> str:
-    """Inline a ui/studio page for the MCP-App sandbox.
-
-    A host renders the resource in a sandboxed iframe that can't reach the HTTP
-    server, so we inline its `/assets/*` CSS/JS (read fresh, so edits propagate)
-    and set window.__ARCH_APP__ before any script runs. That flag flips the page's
-    data layer into **host mode** — it connects via @modelcontextprotocol/ext-apps
-    and drives everything through tools instead of /api. The elkjs + ext-apps CDN
-    tags stay (whitelisted by _UI_CSP). Same files the browser serves, so the inline
-    render mirrors the browser exactly."""
-    html = index_path.read_text(encoding="utf-8")
-
-    def _rel(p: str) -> str:                       # "/assets/shared/ui.css" -> "shared/ui.css"
-        return p.lstrip("/").removeprefix("assets/")
-
-    def _css(m) -> str:
-        return f"<style>\n{(STUDIO_DIR / _rel(m.group(1))).read_text(encoding='utf-8')}\n</style>"
-
-    def _js(m) -> str:
-        return f"<script>\n{(STUDIO_DIR / _rel(m.group(1))).read_text(encoding='utf-8')}\n</script>"
-
-    html = re.sub(r'<link rel="stylesheet" href="(/assets/[^"]+)">', _css, html)
-    html = re.sub(r'<script src="(/assets/[^"]+)"></script>', _js, html)
-    # flip into host mode before any script runs (works for pages with or without state.js)
-    return html.replace("</head>", "<script>window.__ARCH_APP__ = true;</script>\n</head>", 1)
+# _inline_app (the MCP-App sandbox inliner) now lives in actions.py (server-cleanup s5).
 
 
 @mcp.resource(UI_URI, mime_type="text/html;profile=mcp-app", **_RES_APP)
@@ -316,23 +286,8 @@ def _ack(store: Store, changed: str | None = None) -> dict:
     return ack
 
 
-# Every string an agent reads is an instruction: when a dispatcher fails, the error
-# must carry the call context, the atomicity guarantee, and a next step — not a bare
-# KeyError. Writes go through Store (load -> mutate -> save under one lock), so a
-# failed write means NOTHING was persisted.
-def _guard(call: str, write: bool, hint: str, fn):
-    try:
-        return fn()
-    except (KeyError, ValueError) as e:            # expected — keep the type, add context
-        msg = e.args[0] if e.args else str(e)
-        raise type(e)(_fail(call, str(msg), write, hint)) from e
-    except Exception as e:  # unexpected — still reach the agent with context
-        raise ValueError(_fail(call, f"{type(e).__name__}: {e}", write, hint)) from e
-
-
-def _fail(call: str, msg: str, write: bool, hint: str) -> str:
-    atomic = " Nothing was written — writes are all-or-nothing." if write else ""
-    return f"{call} failed: {msg}.{atomic}" + (f" {hint}" if hint else "")
+# The _guard / _fail error envelope (every tool + read wraps its work in it) now
+# lives in base.py (server-cleanup) and is imported above.
 
 
 # --- READ HELPERS (resource-only surface) ------------------------------------
@@ -342,20 +297,10 @@ def _fail(call: str, msg: str, write: bool, hint: str) -> str:
 # (NOT tools) so the resources, the studio /api/* routes, and the interface tests
 # reuse one projection — no read logic is duplicated. They never auto-create a map:
 # the read goes through REGISTRY.store(map), which raises KeyError for an unknown id.
-def list_maps(limit: int = 50, offset: int = 0) -> dict:
-    """List the available architecture maps (id, repo label, module/proposal counts).
-    Maps are shared — any agent can read or write any of them; pass the id as `map`.
-    Use `limit` (default 50) and `offset` to page `maps`; the response carries
-    total_count / has_more / next_offset. Read via resource archmap://maps{?q}."""
-    def run():
-        all_maps = REGISTRY.list()
-        page = all_maps[offset:offset + limit] if limit and limit > 0 else all_maps[offset:]
-        end = offset + limit if (limit and limit > 0) else len(all_maps)
-        return {"maps": page, "default": REGISTRY.default_id(),
-                "total_count": len(all_maps),
-                "has_more": end < len(all_maps),
-                "next_offset": end if end < len(all_maps) else None}
-    return _guard("archmap://maps", False, "", run)
+# The READ PROJECTIONS (list_maps / show_map / get_full_model / get_metrics /
+# get_module / get_modules / board / list_plans / get_plan / list_worktrees /
+# get_doc / list_docs) now live in reads.py (server-cleanup) and are imported above,
+# so the studio routes, the archmap:// resources, and the tests reuse one projection.
 
 
 @mcp.tool(name="archmap_create_map", **_APP)
@@ -408,102 +353,10 @@ def delete_map(map: str) -> dict:
     return _guard(call, True, hint, run)
 
 
-def show_map(map: str, domain: str = "", ids: list[str] | None = None) -> dict:
-    """Render a map — a DIGEST by default, module records only on request. Reads
-    only an EXISTING map (it never auto-creates one); use archmap_create_map first.
-
-    No filter -> digest: module/domain counts, orphans, open suggestions, and the
-    ten worst-health modules. It deliberately does NOT return every module record
-    (that grows with the map); pass `domain="<d>"` or `ids=[...]` to get the full
-    view records for just that slice, or call archmap_get_full_model for everything.
-    Inside an MCP-App host this drives the inline studio: the result tells the
-    studio which `map` to render and it pulls the full model itself."""
-    call = f"archmap_show_map(map='{map}')"
-    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
-    return _guard(call, False, hint, lambda: _show_map_impl(map, domain, ids))
+# show_map / _show_map_impl -> reads.py (server-cleanup)
 
 
-def _show_map_impl(map: str, domain: str, ids: list[str] | None) -> dict:
-    store = REGISTRY.store(map)                       # raises KeyError — no phantom map on a read
-    v = store.to_view()
-    if domain or ids:
-        want = set(ids or [])
-        sel = [m for m in v["modules"]
-               if (m["id"] in want) or (domain and m.get("domain") == domain)]
-        return {"map": map, "repo": v["repo"], "count": len(sel), "modules": sel}
-    domains: dict[str, int] = {}
-    for m in v["modules"]:
-        d = m.get("domain") or "—"
-        domains[d] = domains.get(d, 0) + 1
-    worst = sorted(v["modules"], key=lambda m: (m.get("metrics") or {}).get("health", 100))[:10]
-    return {
-        "map": map, "repo": v["repo"],
-        "moduleCount": len(v["modules"]),
-        "domains": domains,
-        "staleness": ledger.staleness_line(store._load(), GitFacts(os.getcwd())),
-        "orphans": v["orphans"],
-        "openSuggestions": v["openSuggestions"],
-        "plans": len(v.get("plans", [])),
-        "docs": len(v.get("docs", [])),
-        "worstHealth": [{"id": m["id"], "domain": m.get("domain"),
-                         "depth": m.get("depth"), "coverage": m.get("coverage"),
-                         "health": (m.get("metrics") or {}).get("health")} for m in worst],
-        "hint": "digest only — pass domain= or ids=[...] for module records; "
-                "archmap_get_full_model(map) for the whole model",
-    }
-
-
-_FULL_MODEL_SECTIONS = ("modules", "plans", "docs", "board")
-
-
-def get_full_model(
-    map: str,
-    include: list[str] | None = None,
-    module_limit: int = 0,
-    module_offset: int = 0,
-) -> dict:
-    """Return a map's FULL model — every module's interface, files, tests, and
-    suggestion bodies — which is what the inline studio renders. Heavier than
-    archmap_show_map (the digest), so the studio calls this once it knows the
-    map and after each edit; agents normally use archmap_show_map.
-
-    With NO extra args the result is byte-for-byte today's whole model. To bound it:
-      include: keep only these top-level sections (subset of
-               ["modules","plans","docs","board"]); "docs" also keeps docMembership,
-               "board" also keeps worktrees. Sections you omit are dropped.
-      module_limit / module_offset: page the modules list (only when module_limit>0).
-               Adds {"truncated", "next_offset", "total_modules"} so the caller can
-               fetch the rest with a follow-up call."""
-    call = f"archmap_get_full_model(map='{map}')"
-    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
-    return _guard(call, False, hint, lambda: _get_full_model_impl(
-        map, include, module_limit, module_offset))
-
-
-def _get_full_model_impl(map: str, include: list[str] | None,
-                         module_limit: int, module_offset: int) -> dict:
-    v = REGISTRY.store(map).to_dict()                 # raises KeyError — no phantom map on a read
-    v["map"] = map
-    if module_limit and module_limit > 0:
-        all_mods = v.get("modules") or []
-        total = len(all_mods)
-        end = module_offset + module_limit
-        v["modules"] = all_mods[module_offset:end]
-        v["truncated"] = end < total
-        v["next_offset"] = end if end < total else None
-        v["total_modules"] = total
-    if include is not None:
-        keep = set(include)
-        # each requested section keeps its computed companion key
-        if "docs" in keep:
-            keep.add("docMembership")
-        if "board" in keep:
-            keep.add("worktrees")
-        droppable = set(_FULL_MODEL_SECTIONS) | {"docMembership", "worktrees"}
-        for key in list(v):
-            if key in droppable and key not in keep:
-                v.pop(key, None)
-    return v
+# get_full_model / _get_full_model_impl (+ _FULL_MODEL_SECTIONS) -> reads.py
 
 
 @mcp.tool(name="archmap_render_view", meta=_MAX_RESULT, **_VIEW_APP)
@@ -549,97 +402,12 @@ def render_view(
     return _guard(call, False, hint, run)
 
 
-def get_metrics(map: str, module: str | None = None,
-                        limit: int = 50, offset: int = 0) -> dict:
-    """Return computed graph metrics for one module or all modules in `map`:
-    fanIn, fanOut, instability, blastRadius, coupling, inCycle, health, churn.
-    These are derived from the dependency graph — no extra data needed.
-
-    Pass `module` for a single module's metrics. With no `module`, returns a page of
-    all modules' metrics (keyed by id, ordered by id) — use `limit` (default 50) and
-    `offset` to page; the response carries total_count / has_more / next_offset."""
-    call = "archmap://{map}/metrics"
-    hint = "Read maps via resource archmap://maps, or create one with archmap_create_map."
-
-    def run():
-        model = REGISTRY.store(map)._load()
-        all_metrics = model.compute_metrics()
-        if module:
-            if module not in model.modules:
-                raise KeyError(f"no module '{module}' in map '{map}'. "
-                               f"Read archmap://{map}/metrics for all modules, or "
-                               f"archmap://{map}/model to list module ids.")
-            return {"map": map, "module": module, "metrics": all_metrics[module]}
-        ids = sorted(all_metrics)
-        page = ids[offset:offset + limit] if limit and limit > 0 else ids[offset:]
-        end = offset + limit if (limit and limit > 0) else len(ids)
-        return {"map": map,
-                "metrics": {mid: all_metrics[mid] for mid in page},
-                "total_count": len(ids),
-                "has_more": end < len(ids),
-                "next_offset": end if end < len(ids) else None}
-    return _guard(call, False, hint, run)
+# get_metrics -> reads.py (server-cleanup)
 
 
-def _craft(m):
-    return getattr(m, "craft", None) or {}
-
-
-_T = {"maxFnLen": 50, "maxArgs": 4, "maxNesting": 4, "methodCount": 12, "magicNumbers": 3,
-      "commentedOut": 1, "size": 2.0, "depthGap": 0.3}   # craft thresholds — tunable per project
-
-
-# Declarative signal registry — the SINGLE source of truth for what fires, its family,
-# and the human why/how. _compute_signals iterates it; archmap_signal_registry exposes
-# it so the studio + docs render from THIS list instead of re-encoding the thresholds.
-SIGNAL_REGISTRY = [
-    ("danger-zone", "architecture", lambda m, mx: mx["churn"] >= 0.4 and m.coverage < 0.4,
-     "high churn + low coverage (highest risk)", "add tests before the next change lands"),
-    ("critical-path-untested", "architecture", lambda m, mx: mx["blastRadius"] >= 10 and m.coverage < 0.6,
-     "wide blast radius + low coverage", "cover the interface; a break here ripples far"),
-    ("circular-dep", "architecture", lambda m, mx: mx["inCycle"],
-     "part of a dependency cycle", "break the cycle behind a seam so the parts test alone"),
-    ("needs-refactor", "architecture", lambda m, mx: mx["fanOut"] >= 6 and m.depth < 0.5,
-     "high fan-out + low depth", "consolidate behind a deeper interface"),
-    ("god-module", "architecture", lambda m, mx: mx["fanIn"] >= 8 and mx["fanOut"] >= 6,
-     "high fan-in AND fan-out", "split responsibilities; it does too much for too many"),
-    ("bottleneck", "architecture", lambda m, mx: mx["fanIn"] >= 8 and m.depth < 0.4,
-     "high fan-in + low depth", "deepen; many depend on a shallow interface"),
-    ("test-first", "architecture", lambda m, mx: mx["blastRadius"] >= 5 and m.coverage < 0.3,
-     "wide blast radius + very low coverage", "write interface tests first, here"),
-    ("unstable-api", "architecture", lambda m, mx: mx["instability"] > 0.7 and mx["fanIn"] >= 3,
-     "fragile yet depended-upon", "stabilize behind a thin, unchanging contract"),
-    ("split-candidate", "architecture", lambda m, mx: mx["fanOut"] >= 5 and mx["coupling"] >= 3,
-     "high fan-out across domains", "split along the domain seam"),
-    ("bulky-impl", "architecture", lambda m, mx: m.size >= 2.0 and m.depth < 0.5,
-     "large implementation mass for little depth (MINIMALISM.md)", "climb the ladder behind the seam"),
-    ("leaky-seam", "architecture", lambda m, mx: bool(m.leaksTo),
-     "has seam violations (leaksTo)", "route the access through the interface"),
-    ("long-function", "craft", lambda m, mx: _craft(m).get("maxFnLen", 0) >= _T["maxFnLen"],
-     "a function exceeds ~50 lines", "extract named steps until each reads at one level"),
-    ("too-many-args", "craft", lambda m, mx: _craft(m).get("maxArgs", 0) >= _T["maxArgs"],
-     "a function takes >= 4 arguments", "wrap related arguments in an object"),
-    ("deep-nesting", "craft", lambda m, mx: _craft(m).get("maxNesting", 0) >= _T["maxNesting"],
-     "nesting >= 4 levels deep", "extract the inner blocks into named functions"),
-    ("large-class", "craft", lambda m, mx: m.size >= _T["size"] and _craft(m).get("methodCount", 0) >= _T["methodCount"],
-     "a large module with many methods", "split by responsibility (SRP)"),
-    ("untested-interface", "craft", lambda m, mx: m.depth >= 0.6 and m.coverage < 0.5,
-     "a deep module whose interface is thinly covered", "the interface is the test surface; cover it"),
-    ("magic-number", "craft", lambda m, mx: _craft(m).get("magicNumbers", 0) >= _T["magicNumbers"],
-     "unnamed numeric literals", "replace with named constants"),
-    ("comment-smell", "craft", lambda m, mx: _craft(m).get("commentedOutBlocks", 0) >= _T["commentedOut"],
-     "commented-out code / noise", "delete it; version control remembers"),
-    ("depth-overstated", "architecture",
-     lambda m, mx: getattr(m, "depthProxy", 0) > 0 and (m.depth - m.depthProxy) >= _T["depthGap"],
-     "judged depth far above the measured leverage proxy (honesty check)",
-     "re-run the deletion test; the interface may be wider than it looks"),
-]
-_CRAFT_SIGNALS = {sid for sid, fam, *_ in SIGNAL_REGISTRY if fam == "craft"}
-
-
-def _compute_signals(m, mx: dict) -> list[str]:
-    """The signal ids that fire for a module + its metrics, from SIGNAL_REGISTRY."""
-    return [sid for sid, fam, fn, why, how in SIGNAL_REGISTRY if fn(m, mx)]
+# The signal registry (_craft/_T/SIGNAL_REGISTRY/_CRAFT_SIGNALS/_compute_signals)
+# now lives in signals.py (server-cleanup) and is imported above, so scan_signals,
+# the /api/model route, and the tests read it unchanged.
 
 
 @mcp.tool(name="archmap_scan_signals", meta=_MAX_RESULT)
@@ -725,23 +493,11 @@ def scan_signals(map: str, signal: str | None = None, family: str | None = None,
 # digest its staleness line (reconcile-ledger), and recorded edges are checked
 # against real imports (import-graph). `root` is the repo work tree; it defaults
 # to the server's cwd.
-def _repo_root(root: str) -> str:
-    return root or os.getcwd()
-
-
 # --- worktrees: per-task isolated branches (the board's isolation unit) -------
 # Real `git worktree` work lives in worktrees.py; here we guard it (default ON,
 # same gate philosophy as /api/dispatch) and pick a default location OUTSIDE the
 # main working tree so the checkout never nests in the repo it forks from.
-_BOARD_RUNNING: set = set()        # (map, planId, stepId) — a task agent is live in its worktree
-
-
-def _running_keys(map_id: str) -> set:
-    """The (planId, stepId) pairs a task agent is actively dispatched on, for `map`
-    — the board's ⚙ live marker. Ephemeral per-process state, never persisted."""
-    return {(p, s) for (m, p, s) in _BOARD_RUNNING if m == map_id}
-
-
+# _BOARD_RUNNING / _running_keys (the ephemeral board run-set) live in base.py.
 def _worktree_exec_allowed() -> bool:
     """Real `git worktree` provisioning is ON unless ARCH_MAP_ALLOW_WORKTREE is
     0/false/no/off — then create/remove degrade to a copy-paste command (fallback),
@@ -758,13 +514,7 @@ def _worktree_base(root: str) -> "Path":
     return Path(_repo_root(root)).resolve().parent / ".fathom-worktrees"
 
 
-def _safe_git_worktrees(wm: "Worktrees") -> list[dict]:
-    """`git worktree list`, or [] when there's no repo/git — sync/list never error
-    just because the server isn't running inside a git work tree."""
-    try:
-        return wm.list()
-    except (NotARepo, UnknownSha, WorktreeError):
-        return []
+# _repo_root / _safe_git_worktrees now live in base.py (server-cleanup), imported above.
 
 
 @mcp.tool(name="archmap_ingest")
@@ -1077,14 +827,7 @@ def _modules_impl(map: str, action: str, id: str, raw_flds: dict,
 
 # Standalone module READS (resource-only surface): the resources call these, and the
 # interface tests that read back a write call them too. They never auto-create a map.
-def get_module(map: str, id: str) -> dict:
-    """One module's full record — backs resource archmap://{map}/module/{id}."""
-    return REGISTRY.store(map).get_module(id)
-
-
-def get_modules(map: str, ids: list[str]) -> dict:
-    """Several modules' records by id — used by the model resource + tests."""
-    return {"map": map, "modules": REGISTRY.store(map).get_modules(ids)}
+# get_module / get_modules -> reads.py (server-cleanup)
 
 
 @mcp.tool(name="archmap_suggestions", **_APP)
@@ -1292,43 +1035,7 @@ def _plans_impl(map, action, plan_id, title, domain, intent, status,
 
 
 # Standalone plan READS (resource-only surface). Never auto-create a map.
-def get_plan(map: str, plan_id: str) -> dict:
-    """One plan's full record — backs resource archmap://{map}/plan/{id}."""
-    return REGISTRY.store(map).get_plan(plan_id)
-
-
-def list_plans(map: str, status: str = "") -> dict:
-    """The plans list (view projection) — backs archmap://{map}/plans{?status}.
-    Optional exact status filter (draft|active|done|abandoned)."""
-    v = REGISTRY.store(map).to_view()
-    plans = v.get("plans", [])
-    if status:
-        plans = [p for p in plans if p.get("status") == status]
-    return {"map": map, "plans": plans}
-
-
-def board(map: str) -> dict:
-    """The TASK BOARD: every WorkStep projected into the skill-cycle Kanban — columns
-    `todo | understand | plan | in-progress | review | done` (each column owned by a
-    Fathom skill: understand→understand, plan→design, in-progress→code, review→review),
-    swimlanes grouped by the agent handling each task, and the per-task git worktree
-    each card is built in. Read-only; the SAME projection the studio board renders.
-
-    Returns {columns, counts (per column), lanes:[{agent, cards}], cards, worktrees}.
-    Each card carries planId/stepId/title/column/blocked/priority/agent/targets and its
-    worktree (branch + path) or null, plus a `running` flag when a task agent is live in
-    its worktree. Use to see/track work across the cycle from a terminal agent — moves
-    are made with archmap_plans(action='set_step'|'set_step_status') and worktrees with
-    archmap_worktrees."""
-    call = f"archmap_board(map='{map}')"
-    hint = "List existing maps via archmap_list_maps, or create one with archmap_create_map."
-
-    def run():
-        model = REGISTRY.store(map)._load()          # raises KeyError — no phantom map on a read
-        out = model.board(running=_running_keys(map))
-        out["map"] = map
-        return out
-    return _guard(call, False, hint, run)
+# get_plan / list_plans / board -> reads.py (server-cleanup)
 
 
 @mcp.tool(name="archmap_worktrees", **_APP)
@@ -1455,16 +1162,7 @@ def _worktrees_impl(map, action, *, branch="", path="", base="", plan_id="",
 
 
 # Standalone worktree READS (resource-only surface). Never auto-create a map.
-def list_worktrees(map: str, status: str = "", root: str = "") -> dict:
-    """Spine worktrees + the live `git worktree list` — backs archmap://{map}/worktrees.
-    The resource surfaces only the STORED `worktrees`; gitWorktrees is the computed
-    companion the studio/tests also read. Optional exact status filter."""
-    model = REGISTRY.store(map)._load()
-    wts = [asdict(w) for w in model.worktrees.values()]
-    if status:
-        wts = [w for w in wts if w.get("status") == status]
-    return {"map": map, "worktrees": wts,
-            "gitWorktrees": _safe_git_worktrees(Worktrees(_repo_root(root)))}
+# list_worktrees -> reads.py (server-cleanup)
 
 
 def _worktrees_sync(store: Store, map: str, wm: Worktrees) -> dict:
@@ -1586,8 +1284,7 @@ def docs(
         supersedes, adrRef, author, created, updated))
 
 
-_DOC_SUMMARY_KEYS = ("id", "type", "title", "summary", "status", "tags",
-                     "author", "scopeLabel", "drift")
+# _DOC_SUMMARY_KEYS -> reads.py (server-cleanup)
 
 
 def _docs_impl(map, action, doc_id, type, title, scope, summary, body, status, tags,
@@ -1619,69 +1316,18 @@ def _docs_impl(map, action, doc_id, type, title, scope, summary, body, status, t
 
 
 # Standalone doc READS (resource-only surface). Never auto-create a map.
-def get_doc(map: str, doc_id: str) -> dict:
-    """One doc's full record (scope resolved) — backs archmap://{map}/doc/{id}."""
-    return REGISTRY.store(map).get_doc(doc_id)
+# get_doc -> reads.py (server-cleanup)
 
 
-def list_docs(map: str, include_membership: bool = False,
-              limit: int = 50, offset: int = 0) -> dict:
-    """The slim doc summaries (no bodies), paged — backs archmap://{map}/docs.
-    include_membership adds the moduleId->docIds map."""
-    d = REGISTRY.store(map).to_dict()
-    slim = [{**{k: doc.get(k) for k in _DOC_SUMMARY_KEYS},
-             "moduleCount": len(doc.get("resolvedModuleIds") or [])}
-            for doc in d["docs"]]
-    page = slim[offset:offset + limit] if limit and limit > 0 else slim[offset:]
-    end = offset + limit if (limit and limit > 0) else len(slim)
-    out = {"map": map, "docs": page,
-           "total_count": len(slim),
-           "has_more": end < len(slim),
-           "next_offset": end if end < len(slim) else None}
-    if include_membership:
-        out["docMembership"] = d["docMembership"]
-    return out
+# list_docs -> reads.py (server-cleanup)
 
 
 _WS_FIELDS = {f.name for f in fields(WorkStep)}
 
-CANON_GRILL_PROMPT = (
-    "Enter the /deepen grilling loop for {head} (map '{map}', module '{module}'"
-    "{sid}, depth {depth:.2f}, coverage {cov:.0%}). Call grilling(action='mark') as you "
-    "begin, then grilling(action='finish', decision=accepted|deferred|rejected, note, adr) "
-    "to close it; "
-    "offer an ADR on a load-bearing rejection."
-)
-
-
-def _first_open(m: Module):
-    """The module's first still-open candidate (undecided, not closed), or None."""
-    return next((s for s in m.suggestions if s.decision == "" and s.status != "done"), None)
-
-
-def _grill_text(map: str, m: Module, s) -> str:
-    """The canonical /deepen walkthrough text for one module + (optional) candidate.
-    Single source of truth shared by the archmap_grilling(start) tool, the
-    archmap:// flow, and the grill_candidate prompt — given the already-resolved
-    module and suggestion so each caller resolves them however it keys (module-first
-    for the tool, suggestion-first for the prompt)."""
-    head = s.title if s else f"the {m.label} module"
-    sid = f", suggestion '{s.id}'" if s else ""
-    return CANON_GRILL_PROMPT.format(head=head, map=map, module=m.id, sid=sid,
-                                     depth=m.depth, cov=m.coverage)
-
-
-def _grill_prompt(store: Store, map: str, module: str) -> str:
-    m = store.modules[module]
-    return _grill_text(map, m, _first_open(m))
-
-
-def _grill_prompt_for_suggestion(store: Store, map: str, suggestion_id: str) -> str:
-    """Build the SAME walkthrough text the archmap_grilling(start) tool builds, but
-    keyed by suggestion id (raises KeyError if the suggestion — and thus its map —
-    does not exist; never creates anything)."""
-    m, s = store._load()._find_suggestion(suggestion_id)
-    return _grill_text(map, m, s)
+# The grilling walkthrough text (CANON_GRILL_PROMPT / _first_open / _grill_text /
+# _grill_prompt / _grill_prompt_for_suggestion) now lives in grill_text.py
+# (server-cleanup) and is imported above, so the grilling tool, the routes, and
+# the grill_candidate prompt share one source of truth.
 
 
 # --- Plans + work steps (fathom:plan creates; fathom:code executes) ----------
@@ -1692,15 +1338,7 @@ def _grill_prompt_for_suggestion(store: Store, map: str, suggestion_id: str) -> 
 # functions below AND the /api/docs route — so docs are the first citizen of the
 # unified-dispatch shape the open `http-backend-strong` candidate proposes, NOT a
 # fourth copy of the legacy triple-dispatch (_apply_action / _call_tool / tools).
-def _apply_doc(store: Store, action: str, body: dict) -> None:
-    if action == "add":
-        store.add_doc(Doc.from_dict(body["doc"]))
-    elif action == "update":
-        store.update_doc(body["doc_id"], **body.get("fields", {}))
-    elif action == "delete":
-        store.delete_doc(body["doc_id"])
-    else:
-        raise ValueError(f"unknown doc action '{action}'")
+# _apply_doc now lives in actions.py (server-cleanup s5); the docs() tool + /api/docs share it.
 
 
 # --- HTTP studio app (browser UI -> saved back to the server) ---------------
@@ -1710,42 +1348,7 @@ def _apply_doc(store: Store, action: str, body: dict) -> None:
 # triage/edit to /api/act with the map in the body — mutating maps/<id>.json under
 # a lock. It polls /api/model every 2.5s so changes from the agent/desktop/other
 # tabs converge. Launch with `python -m arch_map.web`.
-def _apply_action(store: Store, action: str, body: dict) -> None:
-    if action == "decide":
-        store.decide(body["suggestion_id"], body["decision"], body.get("note", ""),
-                     body.get("adr", ""), body.get("expect"))
-    elif action == "resolve":
-        store.resolve(body["suggestion_id"])
-    elif action == "request_grilling":
-        store.request_grilling(body["suggestion_id"])
-    elif action == "set_step_status":
-        store.set_step_status(body["plan_id"], body["step_id"], body["status"])
-    elif action == "set_step_fields":
-        store.set_step_fields(body["plan_id"], body["step_id"], **body.get("fields", {}))
-    elif action == "update_plan":
-        store.update_plan(body["plan_id"], **body.get("fields", {}))
-    elif action == "set_depth":
-        store.set_depth(body["module"], float(body["score"]))
-    elif action == "set_coverage":
-        store.set_coverage(body["module"], float(body["fraction"]))
-    elif action == "update":
-        store.update_module(body["module"], **body.get("fields", {}))
-    elif action == "add":
-        store.add_module(Module.from_dict(body["module"]))
-    elif action == "delete":
-        store.delete_module(body["module"])
-    elif action == "flag":
-        # the studio's what-if card flags ONE candidate through the existing FSM;
-        # grilling and deciding stay with fathom:deepen
-        s = body.get("suggestion") or {}
-        if not (body.get("module") and s.get("title") and s.get("strength")):
-            raise ValueError("flag needs module and suggestion {title, strength}")
-        sid = f"{body['module']}-{s['strength']}".lower().replace(" ", "-")
-        store.add_suggestion(body["module"], Suggestion(
-            sid, s["title"], s["strength"], s.get("category", ""),
-            s.get("problem", ""), s.get("solution", ""), s.get("wins") or []))
-    else:
-        raise ValueError(f"unknown action '{action}'")
+# _apply_action (the studio /api/act mutation applier) now lives in actions.py (server-cleanup s5).
 
 
 @mcp.custom_route("/", ["GET"])
@@ -1794,16 +1397,7 @@ async def api_maps(request):
     return JSONResponse({"maps": REGISTRY.list(), "default": REGISTRY.default_id(), "created": created})
 
 
-def _overlay_running(model_dict: dict, map_id: str) -> None:
-    """Stamp the board cards a task agent is live on with running=True. The board in
-    to_dict() is computed without the ephemeral run set (model.py stays pure); this
-    overlays it per request so every polling studio tab shows the ⚙ marker."""
-    keys = _running_keys(map_id)
-    if not keys:
-        return
-    for c in (model_dict.get("board") or {}).get("cards", []):
-        if (c.get("planId"), c.get("stepId")) in keys:
-            c["running"] = True            # cards are shared refs with lanes -> both update
+# _overlay_running (the board ⚙ run-marker overlay) now lives in actions.py (server-cleanup s5).
 
 
 @mcp.custom_route("/api/model", ["GET"])
@@ -1973,57 +1567,7 @@ async def api_grill(request):
 # browser falls back to copy-paste. The agent reaches the SAME arch-map MCP over
 # http://127.0.0.1:<PORT>/mcp, so its writes land in the store the studio polls;
 # source edits land in the working tree for human review (nothing is committed).
-_DISPATCH_RUNNING: set = set()        # (map, kind, module) -> single-writer guard
-
-
-def _step_of(store: Store, plan_id: str, step_id: str):
-    """The WorkStep (plan_id, step_id) or None — no raise (a dispatch must degrade)."""
-    p = store.plans.get(plan_id) if plan_id else None
-    return next((s for s in p.steps if s.id == step_id), None) if p else None
-
-
-def _dispatch_prompt(store: Store, map_id: str, kind: str, module: str = "",
-                     modules: list | None = None, suggestion_id: str = "",
-                     plan_id: str = "", step_id: str = "") -> str:
-    """The per-kind agent instruction — mirrors the studio's client-side dispatchPrompt
-    so host and browser send identical wording."""
-    m = store.modules.get(module) if module else None
-    if kind == "fix":
-        s = _first_open(m) if m else None
-        lines = [f"Fix module '{module}'" + (f" ({m.label}, domain '{m.domain}')" if m else "") + "."]
-        if s and getattr(s, "problem", ""):
-            lines.append("Why: " + s.problem)
-        if s and getattr(s, "solution", ""):
-            lines.append("How: " + s.solution)
-        return "\n".join(lines)
-    if kind == "rescan":
-        return f"Re-scan module '{module}' for fresh signals."
-    if kind == "realize":
-        return f"Realize planned module '{module}' — build it to its intended interface."
-    if kind == "triage":
-        ids = ", ".join(modules or [])
-        return "Triage the top critical modules: " + (ids or "(none)") + "."
-    if kind == "grill":
-        return _grill_prompt(store, map_id, module)
-    if kind == "task":
-        st = _step_of(store, plan_id, step_id)
-        wt = store.worktrees.get(st.worktree) if (st and st.worktree) else None
-        lines = [f"Build task '{step_id}'" + (f" — {st.title}" if st else "")
-                 + f" (plan '{plan_id}', map '{map_id}'). This is a fathom:code build step."]
-        if st and st.interface:
-            lines.append("Interface (the test surface to build to): " + st.interface)
-        if st and st.targets:
-            lines.append("Target module(s): " + ", ".join(st.targets))
-        if st and st.adapters:
-            lines.append("Dependency category / adapters: " + ", ".join(st.adapters))
-        if wt and wt.path:
-            lines.append(f"You are running INSIDE this task's worktree at {wt.path} "
-                         f"(branch '{wt.branch}'). Make ALL edits here, on this branch.")
-        lines.append("When the interface tests pass, reconcile the modules you touched on "
-                     "the arch-map spine and move the card to the 'review' column "
-                     "(archmap_plans set_step_status). Do not commit or push.")
-        return "\n".join(lines)
-    return f"Agent request ({kind})" + (f" for module '{module}'" if module else "") + "."
+# _DISPATCH_RUNNING / _step_of / _dispatch_prompt now live in actions.py (server-cleanup s5).
 
 
 # _dispatch_line / _dispatch_same_origin / the tool allowlist / the claude -p argv
@@ -2127,33 +1671,7 @@ async def api_dispatch(request):
 
 # The graph UI (network.html) calls tools by their MCP name; dispatch them here
 # so the same page works both as an MCP App (desktop) and served over HTTP.
-def _call_tool(store: Store, name: str, a: dict) -> None:
-    if name == "set_depth":
-        store.set_depth(a["module"], float(a["score"]))
-    elif name == "set_coverage":
-        store.set_coverage(a["module"], float(a["fraction"]))
-    elif name == "update_module":
-        store.update_module(a["module"], **a.get("fields", {}))
-    elif name == "delete_module":
-        store.delete_module(a["module"])
-    elif name == "add_module":
-        store.add_module(Module.from_dict(a))
-    elif name == "resolve":
-        store.resolve(a["suggestion_id"])
-    elif name == "decide":
-        store.decide(a["suggestion_id"], a["decision"], a.get("note", ""), a.get("adr", ""))
-    elif name == "request_grilling":
-        store.request_grilling(a["suggestion_id"])
-    elif name == "mark_grilled":
-        store.mark_grilled(a["suggestion_id"])
-    elif name == "start_grilling":
-        # A browser can't trigger an agent turn — but it CAN persist the request so
-        # a terminal /deepen (or an MCP-App host's sendMessage) picks it up.
-        s = _first_open(store.modules[a["module"]]) if a.get("module") else None
-        if s:
-            store.request_grilling(s.id)
-    else:
-        raise ValueError(f"unknown tool '{name}'")
+# _call_tool (the legacy graph-UI tool dispatch) now lives in actions.py (server-cleanup s5).
 
 
 @mcp.custom_route("/map", ["GET"])

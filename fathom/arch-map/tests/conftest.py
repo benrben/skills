@@ -7,6 +7,9 @@ the real tool/route code against disposable maps — never the real maps/ dir.
 import pytest
 
 import arch_map.server as srv
+import arch_map.base as base
+import arch_map.reads as reads
+import arch_map.prompts as prompts
 import arch_map.map_registry as mr
 
 # FastMCP 3.x's @mcp.tool / @mcp.resource bind a FunctionTool / FunctionResource
@@ -22,10 +25,15 @@ for _name, _obj in list(vars(srv).items()):
 
 @pytest.fixture
 def reg(tmp_path, monkeypatch):
-    """A temp MapRegistry wired into the server module (legacy migration disabled)."""
+    """A temp MapRegistry wired into every module that binds REGISTRY (legacy
+    migration disabled). REGISTRY now lives in base.py and is imported into
+    server / reads / prompts (server-cleanup); patch all bindings so the tools,
+    the HTTP routes, the read projections, and the grill prompt resolve the SAME
+    throwaway maps dir — never the real maps/."""
     monkeypatch.setattr(mr, "LEGACY_STATE", tmp_path / "no-legacy.json")
     registry = srv.MapRegistry(tmp_path / "maps")
-    monkeypatch.setattr(srv, "REGISTRY", registry)
+    for mod in (base, srv, reads, prompts):
+        monkeypatch.setattr(mod, "REGISTRY", registry, raising=False)
     return registry
 
 
