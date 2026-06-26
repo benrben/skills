@@ -19,6 +19,14 @@ import re
 from pathlib import Path
 
 _PY_EXT = {".py", ".pyi"}
+# Brace / C-like languages the brace scanner reads meaningfully. A file whose suffix
+# is in NEITHER _PY_EXT nor here is NOT code (markdown, json, yaml, toml, shell, txt,
+# config) — craft smells (long function, magic number, deep nesting, commented-out
+# code) are defined for SOURCE, so such files scan to zeros instead of mis-reading
+# prose code-fences and numbers as functions and magic literals.
+_BRACE_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".java", ".c", ".cc",
+              ".cpp", ".cxx", ".h", ".hpp", ".hh", ".cs", ".go", ".rs", ".swift",
+              ".kt", ".kts", ".scala", ".php", ".m", ".mm"}
 _CTRL = {"if", "for", "while", "switch", "catch", "return", "sizeof", "synchronized",
          "with", "do", "else", "elif", "when", "using", "match", "lock"}
 _DECL2 = re.compile(r'([A-Za-z_]\w*)\s*\(([^;{}]*)\)')
@@ -144,10 +152,15 @@ def _scan_brace(lines):
 
 
 def _scan_uncached(text: str, path: str = "") -> dict:
+    zero = {"maxFnLen": 0, "maxArgs": 0, "maxNesting": 0,
+            "methodCount": 0, "magicNumbers": 0, "commentedOutBlocks": 0}
     try:
+        suffix = Path(path).suffix.lower()
+        if suffix not in _PY_EXT and suffix not in _BRACE_EXT:
+            return dict(zero)            # non-code file (markdown/json/config): craft smells N/A
         raw = text.splitlines()
         clean = _denoise(text)
-        if Path(path).suffix.lower() in _PY_EXT:
+        if suffix in _PY_EXT:
             maxLen, maxArgs, maxNest, methods = _scan_py(clean)
         else:
             maxLen, maxArgs, maxNest, methods = _scan_brace(clean)
@@ -155,8 +168,7 @@ def _scan_uncached(text: str, path: str = "") -> dict:
                 "methodCount": methods, "magicNumbers": _magic(clean),
                 "commentedOutBlocks": _commented_out(raw)}
     except Exception:
-        return {"maxFnLen": 0, "maxArgs": 0, "maxNesting": 0,
-                "methodCount": 0, "magicNumbers": 0, "commentedOutBlocks": 0}
+        return dict(zero)
 
 
 def _norm(p) -> str:

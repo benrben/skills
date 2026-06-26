@@ -51,6 +51,19 @@ def test_unreadable_degrades_to_zero():
     assert f["maxFnLen"] == 0 and f["methodCount"] == 0
 
 
+def test_non_code_files_scan_to_zero():
+    """Markdown / json / config are NOT source — craft smells don't apply, so a
+    prose doc full of code-fence examples and numbers reads as all-zeros instead of
+    mis-firing long-function / magic-number / comment-smell."""
+    md = ("# Heading\n\nA function over 50 lines and 9 magic numbers like 7, 42, 99.\n\n"
+          "```python\ndef big(a, b, c, d, e):\n    if a:\n        for x in a:\n"
+          "            while b:\n                do()  # x = old()\n```\n")
+    for path in ("doc.md", "config.json", "data.yaml", "run.sh", "notes.txt"):
+        f = scan_text(md, path)
+        assert f == {"maxFnLen": 0, "maxArgs": 0, "maxNesting": 0,
+                     "methodCount": 0, "magicNumbers": 0, "commentedOutBlocks": 0}, path
+
+
 def test_module_craft_aggregates(tmp_path):
     (tmp_path / "a.java").write_text(_JAVA)
     mod = Module(id="m1", label="M1", domain="d", depth=0.5, size=1.0, seam="", files=["a.java"])
