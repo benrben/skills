@@ -83,6 +83,7 @@ The target already carries them: for an accepted candidate the `solution` text n
 If the interface is genuinely underspecified or wrong, do **not** design a new one here. Hand back to **fathom:design** — for system-level redesign or for alternative-interface exploration (its INTERFACE-DESIGN loop). fathom:code executes a chosen interface; it does not run design-it-twice.
 
 ### 4. Establish the safety net before moving any code
+> **Craft —** write the tests to [`../../fathom/craft/TESTS.md`](../../fathom/craft/TESTS.md): clean, one concept each, F.I.R.S.T. The interface is the test surface.
 
 Tests describe behaviour, not the current shape, so they survive the refactor and define "done."
 
@@ -92,6 +93,7 @@ Tests describe behaviour, not the current shape, so they survive the refactor an
 Run the net green before touching implementation (mode a) or use it red→green to drive the build (mode b).
 
 ### 5. Execute by dependency category
+> **Craft —** behind the *fixed* seam, write the implementation to the craft rules — [`FUNCTIONS`](../../fathom/craft/FUNCTIONS.md), [`NAMING`](../../fathom/craft/NAMING.md), [`ERRORS`](../../fathom/craft/ERRORS.md), [`COMMENTS`](../../fathom/craft/COMMENTS.md). `MINIMALISM.md` says how *little*; craft says how *well*. Never widen or collapse the seam to satisfy a craft rule — that is a fathom:design candidate.
 
 Place the seam by the candidate's / WorkStep's category. Use the four [../../fathom/DEEPENING.md](../../fathom/DEEPENING.md) categories verbatim:
 
@@ -159,3 +161,7 @@ fathom:code MUST NOT:
 - **Override a recorded `adr` doc** — on conflict it stops and surfaces it.
 - **Proceed without a chosen target** — with no accepted candidate and no WorkStep it hands back to fathom:design rather than inventing one.
 - **Test past the interface** — if a test must reach behind the seam, that is the signal the target is wrong; hand back.
+
+## Scripts
+
+- `scripts/scaffold_characterization.py <repo_root> <file>…` — emit characterization-test stubs at a module's public interface, the safety net for a mode-(a) refactor (§4) before any code moves.

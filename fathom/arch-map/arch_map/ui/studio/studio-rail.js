@@ -180,6 +180,7 @@ window.Studio = window.Studio || {};
     },
     {
       id: "circular",
+      reg: "circular-dep",   // server SIGNAL_REGISTRY id (differs from the client id)
       sev: "bad",
       label: "Circular dependency",
       icon: "↺",
@@ -235,6 +236,7 @@ window.Studio = window.Studio || {};
     },
     {
       id: "split-me",
+      reg: "split-candidate",   // server SIGNAL_REGISTRY id (differs from the client id)
       sev: "info",
       label: "Split candidate",
       icon: "⊕",
@@ -262,14 +264,116 @@ window.Studio = window.Studio || {};
       how: "Invert the dependency or route through an interface. The module being leaked into should not be aware of its caller.",
       dynamic: (m) => `Imports ${(m.leaks || []).length} module(s) it shouldn't — a seam violation that creates hidden coupling.`,
     },
+    // ---- craft signals (family: "craft") — code-level smells read off m.craft ----
+    {
+      id: "long-function",
+      sev: "warn",
+      family: "craft",
+      label: "Long function",
+      icon: "¶",
+      check: (m) => (m.craft?.maxFnLen || 0) >= 50,
+      why: "A function this long hides several responsibilities behind one name.",
+      how: "Extract named steps until each reads at one level of abstraction.",
+      dynamic: (m) => `Its longest function runs ${(m.craft?.maxFnLen || 0)} lines — several responsibilities behind one name.`,
+    },
+    {
+      id: "too-many-args",
+      sev: "warn",
+      family: "craft",
+      label: "Too many arguments",
+      icon: "⋯",
+      check: (m) => (m.craft?.maxArgs || 0) >= 4,
+      why: "Every argument is another case the reader and the tests must cover.",
+      how: "Wrap related arguments in an object; drop flags by splitting the function.",
+      dynamic: (m) => `Takes up to ${(m.craft?.maxArgs || 0)} arguments — every one is another case to cover.`,
+    },
+    {
+      id: "deep-nesting",
+      sev: "warn",
+      family: "craft",
+      label: "Deep nesting",
+      icon: "❯",
+      check: (m) => (m.craft?.maxNesting || 0) >= 4,
+      why: "Deep nesting means tangled control flow.",
+      how: "Extract inner blocks into named functions; return early.",
+      dynamic: (m) => `Control flow nests ${(m.craft?.maxNesting || 0)} levels deep — tangled and hard to follow.`,
+    },
+    {
+      id: "large-class",
+      sev: "warn",
+      family: "craft",
+      label: "Large class",
+      icon: "▤",
+      check: (m) => (m.size || 1) >= 2.0 && (m.craft?.methodCount || 0) >= 12,
+      why: "A class with many methods usually has more than one responsibility.",
+      how: "Split along cohesion lines — methods that share fields belong together.",
+      dynamic: (m) => `${(m.craft?.methodCount || 0)} methods in one large unit — usually more than one responsibility.`,
+    },
+    {
+      id: "untested-interface",
+      sev: "bad",
+      family: "craft",
+      label: "Untested interface",
+      icon: "◌",
+      check: (m) => m.depth >= 60 && m.coverage < 50,
+      why: "A deep module's interface is its contract — untested, every caller is at risk.",
+      how: "Write tests at the interface (the test surface), not past it.",
+      dynamic: (m) => `Deep (depth ${m.depth}) but only ${m.coverage}% covered — its contract is untested.`,
+    },
+    {
+      id: "magic-number",
+      sev: "info",
+      family: "craft",
+      label: "Magic numbers",
+      icon: "#",
+      check: (m) => (m.craft?.magicNumbers || 0) >= 3,
+      why: "Bare numbers hide intent and drift out of sync.",
+      how: "Replace with named constants.",
+      dynamic: (m) => `${(m.craft?.magicNumbers || 0)} bare numbers hide intent and drift out of sync.`,
+    },
+    {
+      id: "comment-smell",
+      sev: "info",
+      family: "craft",
+      label: "Comment smell",
+      icon: "“",
+      check: (m) => (m.craft?.commentedOutBlocks || 0) >= 1,
+      why: "Commented-out code is dead weight that rots and misleads.",
+      how: "Delete it — version control remembers.",
+      dynamic: (m) => `${(m.craft?.commentedOutBlocks || 0)} block(s) of commented-out code — dead weight that rots.`,
+    },
   ];
+
+  // The server is the single source of truth for a signal's why/how (the lambda
+  // predicates can't cross the wire, so those stay local). Build an id→entry index
+  // from the fetched model.signalRegistry; lookup by the signal's registry id
+  // (`reg` when the client id differs from the server's, else the id). Returns null
+  // when the registry is absent so callers fall back to the hardcoded text.
+  function signalRegistryIndex() {
+    const reg = S.model && S.model.signalRegistry;
+    if (!Array.isArray(reg) || !reg.length) return null;
+    const ix = {};
+    reg.forEach(e => { if (e && e.id) ix[e.id] = e; });
+    return ix;
+  }
 
   function computeSignals(m) {
     if (!m || !m.metrics) return [];
     const mx = m.metrics;
+    const ix = signalRegistryIndex();
     try {
       return SIGNALS.filter(s => { try { return s.check(m, mx); } catch(e) { return false; } })
-        .map(s => ({ ...s, why: s.dynamic ? s.dynamic(m, mx) : s.why }));
+        .map(s => {
+          const reg = ix ? ix[s.reg || s.id] : null;   // server entry, if any
+          // why: keep the client's dynamic interpolation (it carries live per-module
+          // values the static registry can't); else prefer the registry text; else local.
+          const why = s.dynamic ? s.dynamic(m, mx) : (reg && reg.why) || s.why;
+          // how: no dynamic variant — single-source from the registry when present.
+          const how = (reg && reg.how) || s.how;
+          // family: only the "craft" marker drives styling (.sig-fam-craft); keep the
+          // local value so architecture signals stay unmarked exactly as before.
+          return { ...s, why, how, family: s.family };
+        });
     } catch(e) { return []; }
   }
 
@@ -282,7 +386,7 @@ window.Studio = window.Studio || {};
       <h5>Recommendations</h5>
       <div class="sig-list">
         ${sigs.map(s => `
-          <div class="sig-card sig-${s.sev}">
+          <div class="sig-card sig-${s.sev}${s.family ? " sig-fam-" + s.family : ""}">
             <div class="sig-hd">
               <span class="sig-icon">${s.icon}</span>
               <span class="sig-label">${s.label}</span>
@@ -633,7 +737,10 @@ window.Studio = window.Studio || {};
   /* ============ issues panel ============ */
   let ipOpen = false;
   let ipFilter = "all";   // "all" | "bad" | "warn" | "info"
+  let ipFamily = "all";   // "all" | "architecture" | "craft" — signal-family lens
   let ipSearch = "";
+  // a signal's family ("craft" is tagged on the entry; everything else is architecture).
+  function sigFamily(s) { return s.family === "craft" ? "craft" : "architecture"; }
 
   const SEV_ORDER = { bad: 0, warn: 1, info: 2 };
   const SEV_LABEL = { bad: "🔴 Critical", warn: "🟠 Warn", info: "🟡 Info" };
@@ -675,23 +782,39 @@ window.Studio = window.Studio || {};
       ].join("") || `<span class="ip-ct ok">✓ clean</span>`;
     }
 
-    // filter chips (+ #11 batch "triage top criticals" footer button)
+    // does any module carry a craft-family signal? (gates the family chip row)
+    const hasCraft = all.some(({ sigs }) => sigs.some((s) => sigFamily(s) === "craft"));
+
+    // filter chips (severity row + #11 batch button; an additive family row when craft
+    // signals are present — architecture | craft, reusing .ip-chip styling).
     if (ipFiltersEl) {
       const chips = [["all","All"], ["bad","🔴 Critical"], ["warn","🟠 Warn"], ["info","🟡 Info"]];
+      const famChips = [["all","All"], ["architecture","Architecture"], ["craft","¶ Craft"]];
       ipFiltersEl.innerHTML = chips.map(([k, label]) =>
         `<button class="ip-chip${ipFilter === k ? " active" : ""}" data-ipf="${k}">${label}</button>`
       ).join("") +
+        (hasCraft ? `<span class="ip-fam-row">` + famChips.map(([k, label]) =>
+          `<button class="ip-chip ip-fam${ipFamily === k ? " active" : ""}${k === "craft" ? " craft" : ""}" data-ipfam="${k}">${label}</button>`
+        ).join("") + `</span>` : "") +
         (total ? `<button class="dispatch-btn batch" id="dispatchTop" title="Ask the agent to triage the worst modules">Triage top criticals →</button>` : "");
       ipFiltersEl.querySelectorAll("[data-ipf]").forEach((b) => b.onclick = () => {
         ipFilter = b.dataset.ipf;
         renderIssuesPanel();
       });
+      ipFiltersEl.querySelectorAll("[data-ipfam]").forEach((b) => b.onclick = () => {
+        ipFamily = b.dataset.ipfam;
+        renderIssuesPanel();
+      });
     }
+    // if a previously-chosen craft filter no longer applies (craft signals all cleared),
+    // fall back to "all" so the panel never gets stuck showing nothing.
+    if (!hasCraft && ipFamily !== "all") ipFamily = "all";
 
     // list
     const q = ipSearch.toLowerCase();
     const filtered = all.filter(({ m, sigs }) => {
       if (ipFilter !== "all" && !sigs.some((s) => s.sev === ipFilter)) return false;
+      if (ipFamily !== "all" && !sigs.some((s) => sigFamily(s) === ipFamily)) return false;
       if (q && !m.id.toLowerCase().includes(q) && !m.label.toLowerCase().includes(q) && !m.domain.toLowerCase().includes(q)) return false;
       return true;
     });

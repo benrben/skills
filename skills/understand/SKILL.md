@@ -78,6 +78,7 @@ archmap_render_view(map, columns=["id","domain","depth","coverage"], sort_by="de
 `archmap_render_view` only *shapes and draws* what's already in the map — it is a read, not a write.
 
 ### 3. Walk the three lenses
+> **Craft —** alongside the architecture lenses, surface craft debt read-only (`archmap_scan_signals(map, family="craft")` + the craft `rule` docs) so a newcomer sees both altitudes. See [`../../fathom/craft/README.md`](../../fathom/craft/README.md).
 
 A good tour is three passes over the same map, each answering a question a newcomer actually has. Pull full module records as you go — the digest gives the skeleton, but the interface text, files, and tests live in the full model:
 

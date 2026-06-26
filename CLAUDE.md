@@ -5,6 +5,7 @@ skills/
   <skill-name>/SKILL.md   # one folder per skill — auto-discovered by the plugin loader
   README.md               # index listing every skill, name linked to its SKILL.md
 fathom/                   # shared substrate (arch-map MCP spine + format docs); NOT a skill, at the repo root
+#   craft/                 # line-level craft substrate (Clean Code, generalized); referenced by skills, not a skill
 .mcp.json                 # launches the bundled stdio spine: uv run --project ${CLAUDE_PLUGIN_ROOT}/fathom/arch-map arch-map
 ```
 

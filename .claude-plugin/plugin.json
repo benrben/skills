@@ -1,6 +1,6 @@
 {
   "name": "fathom",
   "description": "Deep-module architecture suite — map, understand, design, code, review — sharing the arch-map MCP spine. Turns shallow modules into deep ones for testability and AI-navigability.",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "author": { "name": "benrben", "url": "https://github.com/benrben" }
 }

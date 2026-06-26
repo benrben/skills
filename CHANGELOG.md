@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- **Craft dimension.** A line-level craft layer (Clean Code, generalized) beneath the architecture altitude: the `fathom/craft/` substrate (naming, functions, errors, tests, structure, comments, smells) referenced by the skills; a `craft_ingest` source measurer; seven craft signals (`long-function`, `too-many-args`, `deep-nesting`, `large-class`, `untested-interface`, `magic-number`, `comment-smell`) via `archmap_scan_signals(family="craft")`; `review` gained a craft pass (§4a).
+- **Measured indicators (`measure.py`).** `depthProxy` (leverage = implementation ÷ interface-surface, median-normalized), `cohesion`, `ifaceSize`, and import-implied `dependsOn` — measured facts the map curates instead of judging. A `depth-overstated` signal holds judged `depth` accountable to the proxy. Plus `infer_category` (DEEPENING), `interface_coverage`, and `cluster_by_imports`.
+- **Declarative signal registry.** `SIGNAL_REGISTRY` is the single source for every signal's id/family/why/how (was an if-ladder); exposed in `/api/model`, so the studio renders from it. Studio gains a **craft-lens** toggle + an `architecture|craft` issues filter; thresholds are tunable (`_T`); the craft parser strips strings/comments and memoizes by content sha.
+- **Skill scripts.** `map/{seed,measure}`, `design/{propose,whatif_craft}`, `review/check_interface`, `code/scaffold_characterization` — the deterministic work runs as bundled scripts, not re-reasoning.
+- **Tool surface unchanged (16).** All additive: new measured `Module` fields, signals via the registry, scripts (not tools). 20 new tests; full suite + ui-tests green.
+
+
 ## 0.4.0
 
 - **Read → resource migration.** Reads of stored map state are now MCP **resources**, not tools. Removed the five read tools (`archmap_list_maps`, `archmap_show_map`, `archmap_get_full_model`, `archmap_board`, `archmap_get_metrics`) and stripped the read actions from the dispatchers (modules `get`; docs `get`/`list`; plans `get`; worktrees `list`), making those dispatchers write-only. The full `archmap://` resource surface (maps, model, digest, board, module, metrics, docs, doc, plans, plan, worktrees) carries RFC 6570 query params for filter (`domain`/`plane`/`lifecycle`/`type`/`tag`/`status` exact, `q` substring), `sort`/`dir`, and `limit`/`offset` paging (`total_count`/`has_more`/`next_offset` in the payload). **16 tools remain** — writes + computed queries (`ingest`/`render_view`/`scan_signals`/`drift`/`verify_edges`/`whatif`/`history`) — plus the `grill_candidate` prompt.

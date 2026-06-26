@@ -24,6 +24,7 @@ window.Studio = window.Studio || {};
   S.filter     = "all";
   S.search     = "";
   S.allEdges   = false;
+  S.craftLens  = false;   // craft-lens overlay: tint nodes carrying code-craft smells
 
   /* ================================================================ *
    *  PRIVATE STATE
@@ -665,6 +666,7 @@ window.Studio = window.Studio || {};
     applyTransform();
     refreshVisualState();
     applyDocBadges();
+    applyCraftLens();   // re-apply the craft-lens tint/badge to the freshly built nodes
     drawMinimap();
 
     // sync overview button
@@ -779,6 +781,7 @@ window.Studio = window.Studio || {};
       el.dataset.sig = sig;
     });
     refreshVisualState();
+    if (S.craftLens) applyCraftLens();   // keep craft tint/badges fresh after a soft update
   }
 
   // #10/#15: flash a set of node cards (reused by agent-narration + nav). Respects
@@ -1265,6 +1268,50 @@ window.Studio = window.Studio || {};
   }
   S.applyDocBadges = applyDocBadges;
 
+  // ---- craft-lens: tint modules carrying >=1 code-craft smell (item: craft-lens) ----
+  // Reuses the rail's signal predicates (S.crossRefs -> computeSignals) as the single
+  // source of "carries a craft signal", so the thresholds never diverge from the
+  // inspector / issues panel. Least-invasive: toggles a class + a count badge on the
+  // existing node elements; the canvas layout/render pipeline is untouched. When the
+  // lens is off it just strips the class + badge.
+  function craftCount(id) {
+    if (!S.crossRefs) return 0;   // rail not booted yet — treat as none
+    try {
+      const sigs = (S.crossRefs(id) || {}).signals || [];
+      return sigs.filter(s => s.family === "craft").length;
+    } catch (e) { return 0; }
+  }
+  function applyCraftLens() {
+    const on = !!S.craftLens;
+    if (els.stage) els.stage.classList.toggle("craft-lens-on", on);
+    Object.keys(nodeEl).forEach(id => {
+      if (id.startsWith("super:")) return;
+      const el = nodeEl[id];
+      if (!el) return;
+      const n = on ? craftCount(id) : 0;
+      el.classList.toggle("craft-hot", n > 0);
+      let badge = el.querySelector(".craft-badge");
+      if (n > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "craft-badge";
+          badge.title = "code-craft smells";
+          el.appendChild(badge);
+        }
+        badge.textContent = "¶ " + n;
+      } else if (badge) {
+        badge.remove();
+      }
+    });
+  }
+  S.applyCraftLens = applyCraftLens;
+  S.toggleCraftLens = function (on) {
+    S.craftLens = on === undefined ? !S.craftLens : !!on;
+    const btn = document.getElementById("craftBtn");
+    if (btn) btn.setAttribute("aria-pressed", S.craftLens ? "true" : "false");
+    applyCraftLens();
+  };
+
   // ---- zoom-to-scope: frame the lit modules (the "show models by doc" jump) --
   // Individual module nodes only exist in DETAIL layout, so in overview we switch to
   // detail first, then frame. The frame math mirrors S.fit but over the scope's bbox.
@@ -1533,6 +1580,7 @@ window.Studio = window.Studio || {};
     const zoomIn       = document.getElementById("zoomIn");
     const zoomOut      = document.getElementById("zoomOut");
     const allEdgesBtn  = document.getElementById("allEdgesBtn");
+    const craftBtn     = document.getElementById("craftBtn");
     const overviewBtn  = document.getElementById("overviewBtn");
 
     if (fitBtn)      fitBtn.onclick      = () => S.fit(true);
@@ -1543,6 +1591,7 @@ window.Studio = window.Studio || {};
       e.currentTarget.setAttribute("aria-pressed", S.allEdges);
       refreshVisualState();
     };
+    if (craftBtn) craftBtn.onclick = () => S.toggleCraftLens();
     if (overviewBtn) overviewBtn.onclick = () => {
       // button-driven toggle preserves the user's pan/zoom (#13) once a mode is seen.
       if (mode === "overview") enterDetail(undefined, { keepView: true }); else enterOverview();

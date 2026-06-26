@@ -111,6 +111,8 @@ claude mcp add arch-map -- uv run --project /path/to/fathom/fathom/arch-map arch
 
 ## The shared substrate (`fathom/`)
 
+Fathom also carries a **craft layer** ([`fathom/craft/`](./fathom/craft/README.md)) — the line-level discipline from *Clean Code* (names, functions, errors, tests, structure, comments, smells), generalized to any language and wired into `code` (write it well behind the seam), `review` (the craft pass), and `design` (structural smells).
+
 - [`LANGUAGE.md`](./fathom/LANGUAGE.md) — the shared vocabulary
 - [`DOC-TYPES.md`](./fathom/DOC-TYPES.md) — the eleven spine doc types, their owners, lifecycles, and the ADR three-gate test
 - [`DEEPENING.md`](./fathom/DEEPENING.md) — how to deepen a cluster safely, by dependency category

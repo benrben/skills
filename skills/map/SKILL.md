@@ -90,6 +90,7 @@ archmap_modules(map, action="add", items=[ {id,label,domain, depth,size,seam,ifa
 `id`/`label`/`domain` required. Add all nodes before relying on edges to render.
 
 ### 5. Inspect and find every indicator
+> **Craft —** the indicator scan also runs the **craft** signal family (`archmap_scan_signals(map, family="craft")`) — long functions, too many args, duplication, dead code, magic numbers, untested interfaces — fed by `craft_ingest`. See [`../../fathom/craft/SMELLS.md`](../../fathom/craft/SMELLS.md).
 
 ```
 ReadMcpResourceTool(server="arch-map", uri="archmap://{map}/digest")    # digest + worst health (resource)
@@ -112,6 +113,7 @@ Start with the drift report: `archmap_drift(map, root=<repo>)` names changed fil
 - **Measure and anchor** — finish with `archmap_ingest(map, root=<repo>, coverage_report=<path if available>)`: churn from git, size from LOC, optional coverage, and the reconcile **anchor** (HEAD sha + snapshot) that drift and history read against.
 
 ### 7. Capture the docs — the registrar's job
+> **Craft —** seed the project's craft conventions as `rule` docs from [`../../fathom/craft/`](../../fathom/craft/README.md) (naming, comments, tests, simple-design), and route *domain* names into the `glossary` doc ([`../../fathom/CONTEXT-FORMAT.md`](../../fathom/CONTEXT-FORMAT.md)).
 
 `map` keeps the spine's doc set complete and accurate. Reading the code surfaces durable truth that belongs in docs ([../../fathom/DOC-TYPES.md](../../fathom/DOC-TYPES.md)); write/refresh them, each scoped to the modules it covers:
 
@@ -155,3 +157,12 @@ If mapping surfaces a load-bearing concept the `glossary` docs don't name, add t
 ## Why this is a deep module
 
 `map` is the deletion test applied at repo scale, plus the single home of recorded truth. The whole codebase's structure *and* its docs (decisions, vocabulary, risks, runbooks, diagrams) sit behind one small interface — the spine's tools — so callers, human and skill, get **leverage** (read the map instead of re-deriving) and **locality** (one place to learn or correct the architecture and its rationale). Its seam is sharp: it writes the actual-plane modules and the doc registry, and reads everything else, composing with `fathom:design` (candidates, intended structure, decisions made now) and `fathom:code` (source) without overlap. Delete `map` and keeping the picture-of-what-is true becomes nobody's job — every sibling would re-derive structure ad hoc, drift would never reconcile, and the recorded truth would scatter back into stale files.
+
+## Scripts — measure, don't guess
+
+The map's measured fields and its initial skeleton come from bundled scripts, so the agent *curates facts* instead of authoring guesses. Run them; don't reason them.
+
+- `scripts/seed.py <repo_root>` — cluster source into candidate modules with import-implied `dependsOn` (fast bootstrap of an empty map). Review, then commit keepers with `archmap_modules(action="add", items=[…])`.
+- `scripts/measure.py <repo_root> <model.json>` — per-module **depthProxy** / **cohesion** / **ifaceSize** + the import-implied edges + a **depth-honesty diff** (judged `depth` vs the measured proxy). Feed the facts back with `archmap_modules(action="update")`; a large gap surfaces as the **`depth-overstated`** signal. (`<model.json>` = the `archmap://{map}/model` resource.)
+
+These never replace the deletion-test judgement for `depth` — they give the agent a measured starting point and hold the judgement accountable.

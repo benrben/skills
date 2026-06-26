@@ -67,6 +67,7 @@ Both modes end the same way: a target on the spine + sequenced build steps + the
 ## IMPROVE mode — deepen what exists
 
 ### 1. Find the friction
+> **Craft —** a *structural* craft smell (a god function, a class with no cohesion, a leaking train-wreck — see [`../../fathom/craft/STRUCTURE.md`](../../fathom/craft/STRUCTURE.md) / [`SMELLS.md`](../../fathom/craft/SMELLS.md)) is friction worth a candidate; a line-level smell is fathom:code's craft pass, not a candidate.
 
 Start from the map's shallow nodes, leak edges, and thin-coverage rings, and the signal triage:
 
@@ -108,6 +109,7 @@ Restate the request as **what behaviour must exist** and **what must NOT change*
 Sketch **at least two** decompositions that differ in a load-bearing way — seam placement, module count, what each interface hides. Compare in prose on depth / leverage / locality / testability, run the **deletion test** on every proposed module on paper, and **reject any decomposition that produces shallow modules.** Make an opinionated call. A `diagram` doc of the chosen graph is the natural artifact here.
 
 ### 3. Specify each interface as a promise — and the test surface
+> **Craft —** the promise includes its **error modes** ([`../../fathom/craft/ERRORS.md`](../../fathom/craft/ERRORS.md)) and names the deep structure ([`STRUCTURE.md`](../../fathom/craft/STRUCTURE.md) — SRP/cohesion = depth, boundaries = seams/adapters).
 
 For every intended module write the full interface: types, invariants, ordering, error modes, config, performance. State that **this is the test surface**; if it forces a test past the seam, the module is the wrong shape — revisit. Where an existing deep module (stdlib / platform / installed dep) already does what sits behind a seam, **name it** so `fathom:code` delegates rather than hand-rolls ([../../fathom/MINIMALISM.md](../../fathom/MINIMALISM.md)). Persist each interface as a **spec doc** scoped to its module.
 
@@ -196,3 +198,8 @@ State the headline: the target(s), what each supersedes (NEW) or which candidate
 ## Why this is a deep module
 
 `design` concentrates *every "what should exist?" decision* behind one small interface — "improve this" or "build this" in, a target + sequenced steps + the docs that justify it out. The old split (deepen vs plan) forced the caller to know in advance whether the answer was a refactor of existing code or new structure — but that's exactly the thing being decided. Merging them puts the branch where it belongs (inside the skill) and keeps one grilling rigor for both. Delete `design` and the decision scatters: `map` would start recommending, `code` would start inventing targets, and the spine would hold structure nobody grilled.
+
+## Scripts — grill a measured list
+
+- `scripts/propose.py <model.json>` — rank deepening candidates worst-first from the map's signals + metrics + craft, with a pre-inferred dependency category. Grill the **top** candidate (IMPROVE mode) instead of finding friction by hand. (`<model.json>` = the `archmap://{map}/model` resource, which embeds per-module metrics.)
+- `scripts/whatif_craft.py <model.json> <module_id>` — preview which signals a craft pass would clear vs. which are structural (real deepening work). Decide before grilling.

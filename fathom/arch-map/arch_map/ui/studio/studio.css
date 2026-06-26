@@ -460,3 +460,42 @@
   font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; line-height: 1;
   padding: 3px 5px; border-radius: 999px; box-shadow: var(--shadow-sm); pointer-events: none;
 }
+
+/* ---------- craft signals (family: "craft") ---------- *
+ * Code-level smells (long function, magic numbers, deep nesting…) share the
+ * inspector's .sig-card; the family marker re-tints the accent to --craft so a
+ * reader can tell craft smells apart from the architecture signals at a glance.
+ * Additive: severity colors (.sig-bad/.sig-warn/.sig-info) still drive the rest. */
+.sig-card.sig-fam-craft { border-left-color: var(--craft); }
+.sig-card.sig-fam-craft .sig-icon { color: var(--craft); }
+.sig-card.sig-fam-craft .sig-hd { background: color-mix(in oklch, var(--craft) 12%, var(--panel)); }
+
+/* ---------- craft-lens: graph overlay for code-craft smells ---------- *
+ * The toolbar "Craft" toggle (studio-graph.js S.toggleCraftLens) marks every node
+ * carrying >=1 craft-family signal with .craft-hot + a corner count badge, tinted
+ * with --craft to match the inspector's craft signal cards. Purely additive: it
+ * only adds an outline + badge over the existing card; layout is untouched. */
+.node.craft-hot {
+  outline: 2px solid var(--craft); outline-offset: 1px;
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--craft) 22%, transparent);
+}
+/* corner bubble — mirrors .doc-badge, sits on the opposite (left) corner so the two
+ * lenses can light up the same card without overlapping. */
+.craft-badge {
+  position: absolute; top: -7px; left: -7px; z-index: 5;
+  background: var(--craft); color: oklch(0.99 0.01 280);
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; line-height: 1;
+  padding: 3px 5px; border-radius: 999px; box-shadow: var(--shadow-sm); pointer-events: none;
+}
+/* when the lens is on, gently de-emphasize cards with no craft smells so the hot ones pop */
+.stage.craft-lens-on .node:not(.craft-hot):not(.supernode) { opacity: .55; }
+/* the Craft toolbar toggle, when pressed, reads in the --craft hue */
+#craftBtn[aria-pressed="true"] { border-color: var(--craft); color: var(--craft); }
+
+/* issues-panel family lens (architecture | craft) — a second chip group, set off from
+ * the severity chips by a divider; the active craft chip reads in the --craft hue. */
+.ip-fam-row {
+  display: inline-flex; gap: 5px; align-items: center;
+  padding-left: 8px; margin-left: 3px; border-left: 1px solid var(--border);
+}
+.ip-chip.ip-fam.craft.active { background: var(--craft); border-color: var(--craft); color: oklch(0.99 0.01 280); }

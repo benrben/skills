@@ -115,6 +115,8 @@ a:focus-visible,
   --leak: oklch(0.555 0.245 27);
   --intended: oklch(0.55 0.20 300);
   --warn: oklch(0.74 0.15 78);
+  /* craft smells (code-level): a distinct teal, separate from cov/warn/leak/accent */
+  --craft: oklch(0.62 0.12 196);
 
   --strong: oklch(0.6 0.15 152);
   --worth: oklch(0.7 0.15 78);
@@ -164,6 +166,8 @@ a:focus-visible,
   --leak: oklch(0.70 0.225 27);
   --intended: oklch(0.70 0.18 300);
   --warn: oklch(0.78 0.15 78);
+  /* craft smells (code-level): a distinct teal, separate from cov/warn/leak/accent */
+  --craft: oklch(0.74 0.13 196);
 
   --strong: oklch(0.72 0.16 152);
   --worth: oklch(0.78 0.15 78);

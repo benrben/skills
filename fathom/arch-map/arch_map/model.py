@@ -143,6 +143,10 @@ class Module:
     suggestions: list[Suggestion] = field(default_factory=list)
     churn: float = 0.0          # commit frequency 0..1 (set by fathom:map via git log)
     tags: list[str] = field(default_factory=list)   # free-text labels; the anti-rot lever for query-scoped docs
+    craft: dict = field(default_factory=dict)        # line-level craft facts (maxFnLen/maxArgs/maxNesting/methodCount/magicNumbers/commentedOutBlocks) from craft_ingest; feeds the craft signal family
+    depthProxy: float = 0.0                          # measured leverage proxy (impl/iface, median-normalized) from measure.py; compared against the judged depth
+    cohesion: float = 1.0                            # internal file interconnectedness (measure.py)
+    ifaceSize: int = 0                               # public/exported symbol count, the seam width (measure.py)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Module":

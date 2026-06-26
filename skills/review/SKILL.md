@@ -68,6 +68,10 @@ Overlay the signals on the touched set:
 - A touched module carrying `danger-zone`, `critical-path-untested`, or `test-first` **without test changes in the diff** is the highest-severity finding: the riskiest code changed with no new safety net. (Check the diff for changes under the module's recorded `tests` surface.)
 - A touched `bottleneck` or high blast-radius module deserves a "wide blast radius" note even when tested.
 
+### 4a. Does it carry craft smells?
+
+Run `archmap_scan_signals(map, family="craft")` over the touched modules and read the project's craft `rule` docs (`archmap://{map}/docs?type=rule`). Report craft findings — long functions, too many arguments, duplication, dead code, magic numbers, an untested deep interface, a comment smell — each citing the `rule` or signal, and route the fix to **fathom:code**. This is a disciplined pass gated **through the spine** (computed signals + recorded rules), not ad-hoc nitpicking. The catalog is [`../../fathom/craft/SMELLS.md`](../../fathom/craft/SMELLS.md).
+
 ### 5. Does it erode an interface?
 
 For each touched module that is **deep** (high recorded depth), read the diff against its recorded `iface` text: does the change widen the interface (new required parameters, new error modes callers must handle, leaked internals)? A deep module's value is its small interface — flag erosion explicitly, quoting the recorded promise.
@@ -97,6 +101,10 @@ Be honest about confidence: if the map's record looks stale for a touched module
 ## What review does NOT do
 
 - Does NOT write modules, candidates, halos, or edges, and does NOT touch the source — its only spine writes are a `risk` / `postmortem` doc and the **board-column move** on the task it gates (see [Strictly read-only](#strictly-read-only--one-carved-exception)).
-- Does NOT do generic code review (bugs, style, naming) — it reviews **against the map** only.
+- Does NOT do ad-hoc style nitpicking or hunt generic bugs — its **craft pass** (§4a) is gated through the spine (craft signals + `rule` docs), not opinions. Unrelated bugs/style still belong in a normal code-review tool.
 - Does NOT decide whether a flagged friction gets fixed — fathom:design grills, the user decides.
 - Does NOT reconcile drift it discovers — it reports the gap and routes to fathom:map.
+
+## Scripts
+
+- `scripts/check_interface.py <repo_root> <model.json>` — per-module **interface-coverage** (do tests assert at the public surface?) and the import-implied **undeclared edges** (a seam crossing born in the change). Read-only input to §3 (seam) and §4a (craft).
