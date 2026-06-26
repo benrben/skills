@@ -1,0 +1,12 @@
+def w0(x):
+    return x
+def w1(x):
+    return x
+def w2(x):
+    return x
+def w3(x):
+    return x
+def w4(x):
+    return x
+def w5(x):
+    return x
